@@ -41,7 +41,7 @@ translate-gemma/*
 # Whisper
 whisper/*
 !whisper/detect_language.py
-!whisper/whisper_modal_asr.py
+!whisper/whisper_local.py
 !whisper/whisper_modal_asr.py
 !whisper/.python-version
 !whisper/pyproject.toml

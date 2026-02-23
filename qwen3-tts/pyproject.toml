@@ -1,0 +1,34 @@
+[project]
+name = "qwen3-tts"
+version = "0.1.0"
+description = "Qwen3 TTS worker for video dubbing pipeline"
+requires-python = ">=3.11"
+
+dependencies = [
+    "torch",
+    "torchaudio",
+    "torchvision",
+    "qwen-tts",
+    "soundfile",
+    "deep-translator",
+    "demucs==4.0.1",
+]
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+extra-index-url = ["https://download.pytorch.org/whl/cu124"]
+
+[tool.uv.sources]
+torch      = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+torchaudio  = { index = "pytorch-cu124" }
+packaging  = { index = "pypi" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"

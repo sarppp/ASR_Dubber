@@ -1,0 +1,37 @@
+[project]
+name = "nemo"
+version = "0.1.0"
+description = "NeMo ASR project"
+requires-python = ">=3.12,<3.13"  # ← tightened
+dependencies = [
+    "numpy<2.0",
+    "modal",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "soundfile",
+    "librosa",
+    "nemo-toolkit[asr]>=2.0.0,<2.2.0",
+    "pyarrow<17.0.0",
+    "cuda-python>=12.3",
+    "pysrt>=1.1.2",
+]
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+extra-index-url = ["https://download.pytorch.org/whl/cu124"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+torchaudio = { index = "pytorch-cu124" }
+packaging = { index = "pypi" }  # ← force PyPI, not PyTorch index
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
