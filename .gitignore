@@ -1,12 +1,48 @@
-# Ignore python cache and environment files
-__pycache__/
-.venv/
-.pytest_cache/
+# Start by ignoring everything
+/*
 
-# Ignore media and output files
-*.mp4
-*.wav
-*.mp3
-end_product/
-tests/
-helpers/
+# Bring back the top-level items we care about
+!/.gitignore
+!/README.md
+!/run_pipeline.py
+!/nemo/
+!/qwen3-tts/
+!/translate-gemma/
+!/whisper/
+
+# Inside nemo/: ignore everything, then unignore the exact files
+nemo/*
+!nemo/nemo.py
+!nemo/nemo_modal_app.py
+!nemo/nemo_diarization_report.py
+!nemo/canary_patch.py
+!nemo/.python-version
+!nemo/pyproject.toml
+!nemo/uv.lock
+
+# Inside qwen3-tts/
+qwen3-tts/*
+!qwen3-tts/dub.py
+!qwen3-tts/qwen_tts_worker.py
+!qwen3-tts/dubber_modal.py
+!qwen3-tts/.python-version
+!qwen3-tts/pyproject.toml
+!qwen3-tts/uv.lock
+
+# Repeat for translate-gemma/
+translate-gemma/*
+!translate-gemma/clean_subs.py
+!translate-gemma/translate.py
+!translate-gemma/translate_diarize.py
+!translate-gemma/.python-version
+!translate-gemma/pyproject.toml
+!translate-gemma/uv.lock
+
+# Whisper
+whisper/*
+!whisper/detect_language.py
+!whisper/whisper_modal_asr.py
+!whisper/whisper_modal_asr.py
+!whisper/.python-version
+!whisper/pyproject.toml
+!whisper/uv.lock
