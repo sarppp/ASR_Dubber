@@ -1,0 +1,12 @@
+# Ignore python cache and environment files
+__pycache__/
+.venv/
+.pytest_cache/
+
+# Ignore media and output files
+*.mp4
+*.wav
+*.mp3
+end_product/
+tests/
+helpers/
