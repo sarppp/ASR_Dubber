@@ -56,6 +56,8 @@ NEMO_PY       = NEMO_DIR      / ".venv" / "bin" / "python"
 QWEN_PY       = QWEN_DIR      / ".venv" / "bin" / "python"
 WHISPER_PY    = WHISPER_DIR   / ".venv" / "bin" / "python"
 TRANSLATE_PY  = TRANSLATE_DIR / ".venv" / "bin" / "python"
+CLEAN_SUBS_SCRIPT = TRANSLATE_DIR / "clean_subs.py"
+END_PRODUCT_DIR   = NEMO_DIR / "end_product"
 
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_BIN         = os.getenv("OLLAMA_BIN", "ollama")   # native binary path
@@ -91,11 +93,73 @@ def _python(venv_py: Path, fallback_dir: Path) -> list:
 
 # ── Source language detection ─────────────────────────────────────────────────
 
-def _find_video() -> Path | None:
-    """Find a video file in nemo/ dir."""
+def _normalize_base(s: str) -> str:
+    """Lowercase + collapse any run of non-alphanumeric chars to '_' for fuzzy matching.
+    'Debate 101 with Harvard\'s former...' == 'Debate_101_with_Harvard_s_former...'
+    """
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+
+def _video_already_processed(video: Path, target_lang: str | None = None) -> bool:
+    """Return True only if this exact video+target_lang pair has a finished run dir."""
+    if not END_PRODUCT_DIR.exists():
+        return False
+    base = _normalize_base(re.split(r"[._]nemo|__", video.stem)[0])
+    for run_dir in END_PRODUCT_DIR.iterdir():
+        if not run_dir.is_dir():
+            continue
+        dir_base = _normalize_base(re.split(r"[._]nemo|__", run_dir.name)[0])
+        if base != dir_base:
+            continue
+        # If we know the target lang, only count it processed if this lang pair exists
+        if target_lang and f"_to_{target_lang}" not in run_dir.name:
+            continue
+        return True
+    return False
+
+
+def _find_video(target_lang: str | None = None) -> Path | None:
+    """Find the newest unprocessed video file in nemo/ dir."""
     VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
-    videos = [f for f in NEMO_DIR.iterdir() if f.suffix.lower() in VIDEO_EXT]
+    videos = sorted(
+        (f for f in NEMO_DIR.iterdir() if f.suffix.lower() in VIDEO_EXT),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    for video in videos:
+        if not _video_already_processed(video, target_lang=target_lang):
+            return video
     return videos[0] if videos else None
+
+
+def _find_srt_for_video(video_base: str, pattern: str) -> Path | None:
+    """
+    Find an SRT matching `pattern` (a glob) for this video_base.
+    Checks nemo/ first, then end_product/<run_dir>/ as fallback
+    (clean_subs.py moves files there after a completed run).
+    Uses normalized comparison so spaces vs underscores don't matter.
+    """
+    norm_base = _normalize_base(video_base)
+
+    # 1. Live location — nemo/
+    for srt in sorted(NEMO_DIR.glob(pattern)):
+        srt_base = _normalize_base(re.split(r"[._]nemo|__", srt.stem)[0])
+        if srt_base == norm_base:
+            return srt
+
+    # 2. Archived location — end_product/<any run_dir>/
+    if END_PRODUCT_DIR.exists():
+        for run_dir in sorted(END_PRODUCT_DIR.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            dir_base = _normalize_base(re.split(r"[._]nemo|__", run_dir.name)[0])
+            if dir_base != norm_base:
+                continue
+            for srt in sorted(run_dir.glob(pattern)):
+                srt_base = _normalize_base(re.split(r"[._]nemo|__", srt.stem)[0])
+                if srt_base == norm_base:
+                    return srt
+    return None
 
 
 def _detect_source_language(video_path: Path, whisper_model: str = "medium") -> str | None:
@@ -111,7 +175,8 @@ def _detect_source_language(video_path: Path, whisper_model: str = "medium") -> 
 
     whisper_py = str(WHISPER_PY) if WHISPER_PY.exists() else "python"
 
-    print(f"🔍 Detecting source language (Whisper, 30s sample)...", flush=True)
+    print(f"🔍 Detecting source language from '{video_path.name}' (Whisper, 30s sample)...",
+          flush=True)
     try:
         result = subprocess.run(
             [whisper_py, str(detect_script), str(video_path),
@@ -265,6 +330,51 @@ def _find_translate_script() -> Path:
     sys.exit(1)
 
 
+def _derive_run_label(source_lang: str, target_lang: str, video: Path | None = None) -> str:
+    """Create a stable folder name per video/language pair."""
+    # Prefer SRT that matches the current video's base name
+    base = None
+    if video:
+        video_base_norm = _normalize_base(re.split(r"[._]nemo|__", video.stem)[0])
+        for srt in sorted(NEMO_DIR.glob(f"*.nemo.{source_lang}.diarize.srt")):
+            if _normalize_base(re.split(r"[._]nemo|__", srt.stem)[0]) == video_base_norm:
+                base = srt.stem
+                break
+    if not base:
+        diarize_srts = sorted(NEMO_DIR.glob(f"*.nemo.{source_lang}.diarize.srt"))
+        if diarize_srts:
+            base = diarize_srts[0].stem
+    if not base:
+        base = video.stem if video else None
+
+    if not base:
+        base = f"run_{int(time.time())}"
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    base_label = f"{slug}__{source_lang}_to_{target_lang}"
+    candidate = base_label
+    idx = 2
+    while (END_PRODUCT_DIR / candidate).exists():
+        candidate = f"{base_label}__{idx}"
+        idx += 1
+    return candidate
+
+
+def _finalize_outputs(run_label: str, dub_workdir: Path | None = None) -> None:
+    """Clean subtitles and gather all outputs into nemo/end_product/<run>."""
+    if not CLEAN_SUBS_SCRIPT.exists():
+        print(f"⚠️  {CLEAN_SUBS_SCRIPT.name} not found — skipping cleanup")
+        return
+
+    clean_cmd = _python(TRANSLATE_PY, TRANSLATE_DIR) + [
+        CLEAN_SUBS_SCRIPT.name,
+        "--run-label", run_label,
+    ]
+    if dub_workdir:
+        clean_cmd += ["--dub-workdir", str(dub_workdir)]
+    _run(clean_cmd, cwd=TRANSLATE_DIR, label="Step 4 — Clean + gather outputs")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -291,45 +401,84 @@ def main():
                    help="Skip translation (translated SRT already exists)")
     p.add_argument("--skip-dub",       action="store_true",
                    help="Skip dubbing (only transcribe + translate)")
+    p.add_argument("--run-mode",       default="full",
+                   choices=["transcribe", "translate", "full"],
+                   help=("Convenience preset: transcribe (Step 1 only), "
+                         "translate (Steps 1-2), or full (default)"))
+    p.add_argument("--input-dir",      default=None, metavar="DIR",
+                   help="Folder containing input video(s) (default: nemo/)")
+    p.add_argument("--output-dir",     default=None, metavar="DIR",
+                   help="Folder for final outputs / end_product (default: nemo/end_product/)")
     args = p.parse_args()
+
+    # Convenience presets for common partial runs
+    if args.run_mode == "transcribe":
+        args.skip_translate = True
+        args.skip_dub = True
+    elif args.run_mode == "translate":
+        args.skip_dub = True
+
+    # ── Apply input/output dir overrides ────────────────────────────────────
+    global NEMO_DIR, END_PRODUCT_DIR
+    if args.input_dir:
+        NEMO_DIR = Path(args.input_dir).resolve()
+        print(f"📂 Input dir  : {NEMO_DIR}")
+    if args.output_dir:
+        END_PRODUCT_DIR = Path(args.output_dir).resolve()
+        print(f"📂 Output dir : {END_PRODUCT_DIR}")
+    END_PRODUCT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── Validate dirs ─────────────────────────────────────────────────────────
     for name, d in [("nemo", NEMO_DIR), ("qwen3-tts", QWEN_DIR)]:
         if not d.exists():
             print(f"❌  {name}/ not found at {d}"); sys.exit(1)
 
-    # ── Step 0: Detect source language ───────────────────────────────────────
+    # ── Step 0: Pick video + detect source language ──────────────────────────
     source_lang = args.language
 
-    # First try: parse from existing diarized SRT filename (free, instant)
+    # Pin video FIRST — every skip-check anchors off the same file.
+    # _find_video skips videos that already have a run-dir for this target lang.
+    video = _find_video(target_lang=args.target_lang)
+    if not video:
+        print(f"❌  No unprocessed video found in {NEMO_DIR} for target '{args.target_lang}'")
+        sys.exit(1)
+
+    # Stable base = stem up to the first '.nemo' or '__' marker
+    # "Debate 101..." -> "Debate 101..."   "impost_trimmed_2min" -> "impost_trimmed_2min"
+    video_base = re.split(r"[._]nemo|__", video.stem)[0]
+    print(f"🎬 Selected video : {video.name}  (base: '{video_base}')", flush=True)
+
+    # Try to infer source lang from an existing diarized SRT for THIS video only
+    # Also checks end_product/ in case clean_subs.py already moved files there
     if not source_lang:
-        existing = sorted(NEMO_DIR.glob("*.nemo.*.diarize.srt"))
-        if existing:
-            m = re.search(r"\.nemo\.([a-z]{2,3})\.diarize\.srt$", existing[0].name)
+        srt = _find_srt_for_video(video_base, "*.nemo.*.diarize.srt")
+        if srt:
+            m = re.search(r"\.nemo\.([a-z]{2,3})\.diarize\.srt$", srt.name)
             if m:
                 source_lang = m.group(1)
-                print(f"⏭️  Source language from existing SRT: '{source_lang}' ({existing[0].name})")
+                print(f"⏭️  Source language from existing SRT: '{source_lang}' ({srt.name})")
 
-    # Second try: Whisper detection (only if no SRT exists yet)
+    # Fall back to Whisper detection on the chosen video
     if not source_lang:
-        video = _find_video()
-        if not video:
-            print(f"❌  No video found in {NEMO_DIR}"); sys.exit(1)
         source_lang = _detect_source_language(video, whisper_model=args.whisper_model)
         if not source_lang:
             print("❌  Language detection failed. Pass --language explicitly.")
             sys.exit(1)
 
     # ── Step 1: NeMo ──────────────────────────────────────────────────────────
-    existing_diarize_srts = sorted(NEMO_DIR.glob(f"*.nemo.{source_lang}.diarize.srt"))
-    if args.skip_nemo or existing_diarize_srts:
-        if existing_diarize_srts:
-            print(f"⏭️  Skipping NeMo — SRT already exists: {existing_diarize_srts[0].name}")
+    # Only skip if an SRT exists whose base name matches THIS video
+    # (checks both nemo/ and end_product/ in case files were already moved)
+    existing_diarize_srt = _find_srt_for_video(video_base, f"*.nemo.{source_lang}.diarize.srt")
+
+    if args.skip_nemo or existing_diarize_srt:
+        if existing_diarize_srt:
+            print(f"⏭️  Skipping NeMo — SRT already exists: {existing_diarize_srt.name}")
         else:
             print("⏭️  Skipping NeMo (--skip-nemo)")
     else:
         nemo_cmd = _python(NEMO_PY, NEMO_DIR) + [
-            "nemo.py", "--language", source_lang, "--diarize"
+            "nemo.py", str(video),   # positional arg — subprocess handles spaces fine
+            "--language", source_lang, "--diarize",
         ]
         if args.trim:
             nemo_cmd += ["--trim", str(args.trim)]
@@ -338,11 +487,14 @@ def main():
     print(f"\n🌐 Source: {source_lang}  →  Target: {args.target_lang}")
 
     # ── Step 2: Translate (Gemma via Ollama) ──────────────────────────────────
-    existing_translated_srts = sorted(NEMO_DIR.glob(f"*.diarize_{args.target_lang}.srt"))
+    # Only skip if the translated SRT belongs to THIS video
+    # (checks both nemo/ and end_product/ in case files were already moved)
+    existing_translated_srt = _find_srt_for_video(video_base, f"*.diarize_{args.target_lang}.srt")
+
     ollama_proc = None
-    if args.skip_translate or existing_translated_srts:
-        if existing_translated_srts:
-            print(f"⏭️  Skipping translation — SRT already exists: {existing_translated_srts[0].name}")
+    if args.skip_translate or existing_translated_srt:
+        if existing_translated_srt:
+            print(f"⏭️  Skipping translation — SRT already exists: {existing_translated_srt.name}")
         else:
             print("⏭️  Skipping translation (--skip-translate)")
     elif not args.skip_translate:
@@ -373,11 +525,25 @@ def main():
         finally:
             _ollama_stop(ollama_proc)
     # ── Step 3: Dub ───────────────────────────────────────────────────────────
+    dub_workdir = QWEN_DIR / "output" / "dub" / video_base  # always defined for finalize
     if not args.skip_dub:
+        # Find the translated SRT — checks nemo/ AND end_product/ (post-clean location)
+        dub_srt = _find_srt_for_video(video_base, f"*.diarize_{args.target_lang}.srt")
+        if dub_srt is None:
+            print(f"❌  No translated SRT found for '{video_base}' in {NEMO_DIR} or {END_PRODUCT_DIR}")
+            sys.exit(1)
+        print(f"📄 Using SRT : {dub_srt}")
+
+        # Per-video workdir (defined above, create it now)
+        dub_workdir.mkdir(parents=True, exist_ok=True)
+
         dub_cmd = _python(QWEN_PY, QWEN_DIR) + [
             "dub.py",
+            str(video),          # explicit video — no auto-discovery
+            str(dub_srt),        # explicit SRT   — no auto-discovery
             "--language",  args.target_lang,
             "--qwen-mode", args.qwen_mode,
+            "--workdir",   str(dub_workdir),
         ]
         if args.no_demucs:
             dub_cmd.append("--no-demucs")
@@ -386,12 +552,18 @@ def main():
     else:
         print("⏭️  Skipping dub (--skip-dub)")
 
-    print(f"""
-╔══════════════════════════════════════════════════════════╗
-║                  ✅  Pipeline complete!                   ║
-║  Output: qwen3-tts/output/dub/output/final_dub.mp4       ║
-╚══════════════════════════════════════════════════════════╝
-""")
+    run_label = _derive_run_label(source_lang, args.target_lang, video=video)
+    _finalize_outputs(run_label, dub_workdir=dub_workdir if not args.skip_dub else None)
+
+    summary_lines = [
+        "╔══════════════════════════════════════════════════════════╗",
+        "║                  ✅  Pipeline complete!                   ║",
+    ]
+    if not args.skip_dub:
+        summary_lines.append("║  Dub : qwen3-tts/output/dub/output/final_dub.mp4       ║")
+    summary_lines.append(f"║  End : {END_PRODUCT_DIR / run_label}                      ║")
+    summary_lines.append("╚══════════════════════════════════════════════════════════╝")
+    print("\n" + "\n".join(summary_lines) + "\n")
 
 
 if __name__ == "__main__":
