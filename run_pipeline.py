@@ -5,24 +5,57 @@ run_pipeline.py — Master runner for the ASR dubbing pipeline
 Place in ASR/ root. Runs all three steps end-to-end.
 
 Usage:
-  python run_pipeline.py --target-lang fr              # auto-detect source lang
-  python run_pipeline.py --target-lang fr --trim 30   # first 30s only
-  python run_pipeline.py --target-lang fr --skip-nemo  # SRT already exists
-  python run_pipeline.py --target-lang fr --skip-translate
-  python run_pipeline.py --target-lang fr --qwen-mode custom
+# Basic — auto-detects source lang, processes next unprocessed video
+uv run python run_pipeline.py --target-lang fr
 
-Source language is auto-detected from the diarized SRT filename after NeMo runs.
-If skipping NeMo, pass --language explicitly.
+# With trim (first 30s only)
+uv run python run_pipeline.py --target-lang fr --trim 30
 
-# Force source language manually (skips Whisper detection)
-python run_pipeline.py --target-lang fr --language de
+# Custom input/output folders
+uv run python run_pipeline.py --target-lang fr --input-dir /path/to/videos --output-dir /path/to/results
 
-# Default now uses medium (works with all whisper builds)
-python run_pipeline.py --target-lang fr --trim 30
+# Force source language (skip Whisper detection)
+uv run python run_pipeline.py --target-lang fr --language de
 
-# Explicitly choose model
-python run_pipeline.py --target-lang fr --trim 30 --whisper-model small
-python run_pipeline.py --target-lang fr --trim 30 --whisper-model medium
+# Partial runs
+uv run python run_pipeline.py --target-lang fr --run-mode transcribe   # Step 1 only
+uv run python run_pipeline.py --target-lang fr --run-mode translate    # Steps 1-2 only
+uv run python run_pipeline.py --target-lang fr --run-mode full         # All steps (default)
+
+# Skip individual steps (when files already exist)
+uv run python run_pipeline.py --target-lang fr --skip-nemo
+uv run python run_pipeline.py --target-lang fr --skip-translate
+uv run python run_pipeline.py --target-lang fr --skip-dub
+
+# Voice mode (default is clone)
+uv run python run_pipeline.py --target-lang fr --qwen-mode clone       # clones original speakers
+uv run python run_pipeline.py --target-lang fr --qwen-mode custom      # uses fixed Qwen voices
+
+# Faster — skip background music preservation
+uv run python run_pipeline.py --target-lang fr --no-demucs
+
+# Whisper model for language detection
+uv run python run_pipeline.py --target-lang fr --whisper-model large-v3
+
+### NEMO
+# Precision
+uv run python run_pipeline.py --target-lang fr --precision fp16   # older GPUs
+uv run python run_pipeline.py --target-lang fr --precision fp32   # max accuracy
+uv run python run_pipeline.py --target-lang fr --precision bf16   # default
+
+# Force chunk size — auto-detected from VRAM (capped at 600s max)
+# Lower if getting OOM, e.g. 120 = 2 min chunks
+uv run python run_pipeline.py --target-lang fr --chunk-override 120
+
+# VRAM tuning
+uv run python run_pipeline.py --target-lang fr --reserve-gb 3.0
+uv run python run_pipeline.py --target-lang fr --safety-factor 0.7
+
+# Override model
+uv run python run_pipeline.py --target-lang fr --nemo-model nvidia/parakeet-tdt-1.1b
+
+# Combine freely
+uv run python run_pipeline.py --target-lang fr --trim 30 --precision fp16 --reserve-gb 2.0
 
 ASR/
 ├── run_pipeline.py          ← goes here
@@ -32,6 +65,8 @@ ASR/
 ├── nemo/
 ├── gemma-translate/
 └── qwen3-tts/
+
+
 """
 
 import argparse
@@ -244,7 +279,6 @@ def _ollama_start() -> subprocess.Popen | None:
             "--name", "ollama",
             "-e", "OLLAMA_HOST=0.0.0.0",
             "-e", "OLLAMA_FLASH_ATTENTION=1",
-            "-v", f"{OLLAMA_MODELS_DIR}:/root/.ollama",
             "-p", "11434:11434",
         ]
         # Add GPU flags if nvidia-smi is available
@@ -257,8 +291,12 @@ def _ollama_start() -> subprocess.Popen | None:
         cmd.append(OLLAMA_DOCKER_IMAGE)
 
         print(f"   Models dir : {OLLAMA_MODELS_DIR}", flush=True)
-        if not Path(OLLAMA_MODELS_DIR).exists():
-            print(f"   ⚠️  Models dir does not exist — Ollama will have no models!", flush=True)
+        if Path(OLLAMA_MODELS_DIR).exists():
+            # Mount existing local models dir so Ollama finds them immediately
+            cmd += ["-v", f"{OLLAMA_MODELS_DIR}:/root/.ollama"]
+        else:
+            # Remote/fresh machine — model is baked into the image or will be pulled
+            print(f"   ℹ️  Models dir not found locally — Ollama will use image-baked or pull models", flush=True)
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # Docker run -d exits immediately; the container runs in background
         # proc here is just the `docker run` CLI process, not the container
@@ -450,6 +488,17 @@ def main():
                    help="Folder containing input video(s) (default: nemo/)")
     p.add_argument("--output-dir",     default=None, metavar="DIR",
                    help="Folder for final outputs / end_product (default: nemo/end_product/)")
+    # ── NeMo tuning flags (passed through to nemo.py) ────────────────────────
+    p.add_argument("--precision",      default="bf16", choices=["fp32", "fp16", "bf16"],
+                   help="ASR precision (default: bf16 — use fp16 on older GPUs, fp32 for max accuracy)")
+    p.add_argument("--nemo-model",     default=None, metavar="MODEL",
+                   help="Override NeMo model name (default: auto-selected by language)")
+    p.add_argument("--chunk-override", default=None, type=int, metavar="SEC",
+                   help="Force NeMo audio chunk size in seconds (default: auto from VRAM)")
+    p.add_argument("--reserve-gb",     default=None, type=float, metavar="GB",
+                   help="VRAM reserve for NeMo chunk estimation (default: 1.5)")
+    p.add_argument("--safety-factor",  default=None, type=float, metavar="F",
+                   help="VRAM safety multiplier for NeMo chunking (default: 0.85)")
     args = p.parse_args()
 
     # Convenience presets for common partial runs
@@ -518,11 +567,20 @@ def main():
             print("⏭️  Skipping NeMo (--skip-nemo)")
     else:
         nemo_cmd = _python(NEMO_PY, NEMO_DIR) + [
-            "nemo.py", str(video),   # positional arg — subprocess handles spaces fine
+            "nemo.py", str(video),
             "--language", source_lang, "--diarize",
+            "--precision", args.precision,
         ]
         if args.trim:
             nemo_cmd += ["--trim", str(args.trim)]
+        if args.nemo_model:
+            nemo_cmd += ["--nemo-model", args.nemo_model]
+        if args.chunk_override:
+            nemo_cmd += ["--chunk-override", str(args.chunk_override)]
+        if args.reserve_gb:
+            nemo_cmd += ["--reserve-gb", str(args.reserve_gb)]
+        if args.safety_factor:
+            nemo_cmd += ["--safety-factor", str(args.safety_factor)]
         _run(nemo_cmd, cwd=NEMO_DIR, label="Step 1/3 — NeMo transcription + diarization")
 
     print(f"\n🌐 Source: {source_lang}  →  Target: {args.target_lang}")

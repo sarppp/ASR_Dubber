@@ -6,7 +6,8 @@
 - **Hardware-resilient & Cloud**: runs on a single GPU with aggressive cache reuse, chunked ASR, adaptive chunking, OOM retries, and staged demucs. Also fully compatible with **Modal** for offloading heavy ASR and TTS tasks to serverless A100/H100 infrastructure.
 - **Reproducible**: every sub-project keeps its own `pyproject.toml` + `uv.lock`, so a `uv sync` brings it back on any machine.
 
-> **Still on the roadmap:** add automatic lip-synchronization (phoneme alignment + face-reenactment) once the audio stack is fully synchronized as I plan to do.
+> **Still on the roadmap:**
+> - Add automatic lip-synchronization (phoneme alignment + face-reenactment) once the audio stack is fully synchronized as I plan to do.
 
 | Pipeline Stage | Video Preview |
 | :--- | :--- |
@@ -287,6 +288,8 @@ Ensuring the dubbed audio matches the on-screen action is handled through automa
 
 * **Isolated Worker Execution:** TTS synthesis is decoupled into a dedicated `qwen_tts_worker.py`. This allows the main script to manage the heavy FFmpeg/Demucs logic while the worker handles specialized `torch` environments and `bfloat16` model loading.
 
+* **Clean stale workdirs when reprocessing edits:** If you rerun the same video with a different trim or target language, delete `qwen3-tts/output/dub/<video_base>` before launching the pipeline (if pipeline is running in `full` mode) so new segments don’t reuse mismatched checkpoints from the earlier cut. Again, this only matters for Step 3 (Qwen dub); NeMo + translate already key their outputs by file name/trim, so they resume safely without manual cleanup. I have not changed it because I don't think it's needed. Quite rare case but simple to fix but also simple to delete that folder, just run `rm -rf qwen3-tts/output/dub/<video_base>` in Linux.
+
 * **Automatic Video Trimming:** To ensure a clean finish, the script automatically trims the final video output to match the end of the last subtitle segment.
 
 
@@ -376,6 +379,66 @@ python run_pipeline.py --target-lang fr --trim 60 --run-mode transcribe
 # Translate-only pass when NeMo output already exists and source language is known
 python run_pipeline.py --target-lang es --language de --run-mode translate
 ```
+
+
+
+### Argument Reference & Flag Mapping
+
+
+
+#### run_pipeline.py (master orchestrator)
+
+| Flag | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `--target-lang` | ✅ | — | Language of the final dub (e.g., `fr`, `es`, `en`). |
+| `--language` |  | auto (Whisper / existing SRT) | Force source language and skip Whisper detection. |
+| `--trim SEC` |  | `0` (full) | Only process the first N seconds — great for quick experiments. |
+| `--run-mode {transcribe,translate,full}` |  | `full` | Convenience presets that flip the `--skip-*` flags for you. |
+| `--skip-nemo / --skip-translate / --skip-dub` |  | `False` | Manually resume from any stage when artifacts already exist. |
+| `--input-dir / --output-dir` |  | `nemo/` / `nemo/end_product/` | Override where videos are pulled from and where finished runs land. |
+| `--whisper-model` |  | `medium` | Whisper size for auto language ID (`tiny`, `base`, `small`, `medium`, `large-v3`, `turbo`). |
+| `--qwen-mode {clone,custom}` |  | `clone` | Switch between zero-shot cloning or fixed speaker presets. |
+| `--no-demucs` |  | `False` | Skip background music separation for faster dubbing. |
+| `--precision {fp32,fp16,bf16}` |  | `bf16` | ASR precision passed straight through to `nemo.py`. Use `fp16` on older GPUs or `fp32` for max accuracy. |
+| `--nemo-model MODEL` |  | auto | Force a specific NeMo checkpoint (e.g., `nvidia/parakeet-tdt-1.1b`). |
+| `--chunk-override SEC` |  | auto | Lock NeMo chunk size if VRAM auto-detect over/underestimates (auto sizing caps at 600 s — e.g., pass `120` for fixed 2‑minute chunks). |
+| `--reserve-gb GB` |  | `1.5` | VRAM the chunk estimator should keep free. Increase when hitting OOM. |
+| `--safety-factor F` |  | `0.85` | Multiplier applied to the detected free VRAM before computing chunk length. |
+
+> **NeMo tuning flags** (`--precision`, `--nemo-model`, `--chunk-override`, `--reserve-gb`, `--safety-factor`) are forwarded verbatim to `nemo/nemo.py`. If you don’t specify them, `run_pipeline.py` leaves them unset so NeMo falls back to its own defaults.
+
+Example combos:
+
+```bash
+# Old GPU that struggles with bf16 auto-chunking
+uv run python run_pipeline.py --target-lang fr --precision fp16 --reserve-gb 3.0
+
+# Force 2-minute chunks, custom model, 45-second trim preview
+uv run python run_pipeline.py \
+  --target-lang fr --trim 45 --chunk-override 120 --nemo-model nvidia/parakeet-tdt-1.1b
+```
+
+
+
+#### nemo/nemo.py (ASR + diarization)
+
+Running `uv run --project nemo python nemo.py --help` lists every low-level flag. For quick reference:
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `video` (positional) | auto-detect newest pending | Optional explicit video path. If omitted, NeMo scans the current folder for files without matching `.nemo.<lang>.srt`. |
+| `--all` | `False` | Process every pending video instead of just the newest one. |
+| `--language` | `en` | Source language (drives model auto-selection and SRT suffixes). |
+| `--nemo-model` | `nvidia/parakeet-tdt-0.6b-v2` or auto multilingual | Override the exact NeMo checkpoint to download/run. |
+| `--precision {fp32,fp16,bf16}` | `bf16` | Controls CUDA dtype; `fp32` is safest, `fp16/bf16` are faster and lighter. |
+| `--translate` | `False` | Canary-only: translate to English directly inside NeMo (pipeline normally handles translation via Gemma). |
+| `--diarize` | `False` | Attach `[Speaker N]` labels to the generated SRT. `run_pipeline.py` always enables this so downstream TTS can map voices. |
+| `--trim SEC` | `0` | Only decode the first N seconds (mirrors the pipeline’s `--trim`). |
+| `--safety-factor` | `0.85` | VRAM safety multiplier used by `_estimate_chunk_sec()`. |
+| `--reserve-gb` | `1.5` | VRAM (in GB) to keep unused before computing chunk length. |
+| `--chunk-override SEC` | auto | Hard-code the chunk size (seconds). Useful when auto-estimates are still too large/small. |
+
+Because `run_pipeline.py` invokes `nemo.py` under the hood, you can tweak NeMo without leaving the one-command workflow. For example, `--precision fp32 --chunk-override 90` on the pipeline CLI becomes `... nemo.py ... --precision fp32 --chunk-override 90` during Step 1.
 
 
 
