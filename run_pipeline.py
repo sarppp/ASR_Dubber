@@ -62,7 +62,7 @@ END_PRODUCT_DIR   = NEMO_DIR / "end_product"
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_BIN         = os.getenv("OLLAMA_BIN", "ollama")   # native binary path
 OLLAMA_DOCKER_IMAGE = os.getenv("OLLAMA_DOCKER_IMAGE", "ollama/ollama")
-OLLAMA_MODELS_DIR  = os.getenv("OLLAMA_MODELS_DIR", "/home/sarpk/python-tools/.ollama_models")
+OLLAMA_MODELS_DIR  = os.getenv("OLLAMA_MODELS_DIR", str(Path.home() / "python-tools" / ".ollama_models"))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -256,6 +256,9 @@ def _ollama_start() -> subprocess.Popen | None:
             print("   No GPU detected — running Ollama on CPU", flush=True)
         cmd.append(OLLAMA_DOCKER_IMAGE)
 
+        print(f"   Models dir : {OLLAMA_MODELS_DIR}", flush=True)
+        if not Path(OLLAMA_MODELS_DIR).exists():
+            print(f"   ⚠️  Models dir does not exist — Ollama will have no models!", flush=True)
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # Docker run -d exits immediately; the container runs in background
         # proc here is just the `docker run` CLI process, not the container
@@ -373,6 +376,44 @@ def _finalize_outputs(run_label: str, dub_workdir: Path | None = None) -> None:
     if dub_workdir:
         clean_cmd += ["--dub-workdir", str(dub_workdir)]
     _run(clean_cmd, cwd=TRANSLATE_DIR, label="Step 4 — Clean + gather outputs")
+
+
+# ── SRT validation ───────────────────────────────────────────────────────────
+
+def _validate_translated_srt(srt_path: Path, target_lang: str) -> None:
+    """
+    Sanity-check a translated SRT before passing it to the dub step.
+    Fails hard if the file is empty, has no text, or still contains
+    the original-language speaker tags with no translated content
+    (which happens when the translation model was not found).
+    """
+    import re as _re
+    text = srt_path.read_text(encoding="utf-8", errors="ignore").strip()
+
+    if not text:
+        print(f"❌  Translated SRT is empty: {srt_path.name}")
+        sys.exit(1)
+
+    # Count subtitle blocks (non-empty lines after timestamp lines)
+    content_lines = [
+        l.strip() for l in text.splitlines()
+        if l.strip()
+        and not l.strip().isdigit()
+        and "-->" not in l
+    ]
+    if not content_lines:
+        print(f"❌  Translated SRT has no content lines: {srt_path.name}")
+        sys.exit(1)
+
+    # Heuristic: if every content line is just a [Speaker X] tag with nothing after,
+    # translation silently failed (model returned empty strings)
+    speaker_only = [l for l in content_lines if _re.fullmatch(r"\[Speaker\s+\d+\]", l)]
+    if len(speaker_only) == len(content_lines):
+        print(f"❌  Translated SRT contains only speaker tags — translation failed silently.")
+        print(f"   Check Ollama is running and 'translategemma:4b' is pulled.")
+        sys.exit(1)
+
+    print(f"✅  SRT validation passed ({len(content_lines)} content lines)")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -533,6 +574,10 @@ def main():
             print(f"❌  No translated SRT found for '{video_base}' in {NEMO_DIR} or {END_PRODUCT_DIR}")
             sys.exit(1)
         print(f"📄 Using SRT : {dub_srt}")
+
+        # Validate SRT has actual translated content — catch silent translation failures
+        # before wasting GPU time on dubbing an empty/broken file
+        _validate_translated_srt(dub_srt, args.target_lang)
 
         # Per-video workdir (defined above, create it now)
         dub_workdir.mkdir(parents=True, exist_ok=True)
