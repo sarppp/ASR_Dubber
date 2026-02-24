@@ -139,13 +139,15 @@ def parse_srt(path: Path) -> List[Dict]:
 # Audio extraction (raw, no separation)
 # ---------------------------------------------------------------------------
 
-def extract_audio(video_path: Path, out_wav: Path) -> None:
-    """Extract full mono 16 kHz WAV from video (used for clone refs when --no-demucs)."""
+def extract_audio(video_path: Path, out_wav: Path, trim_sec: float = 0) -> None:
+    """Extract mono 16 kHz WAV from video (used for clone refs when --no-demucs).
+    If trim_sec > 0, only extracts the first trim_sec seconds."""
     if out_wav.exists():
         log.info(f"✓ Reusing {out_wav.name}")
         return
+    trim_flag = ["-t", f"{trim_sec:.3f}"] if trim_sec > 0 else []
     subprocess.run(
-        ["ffmpeg", "-i", str(video_path), "-vn", "-acodec", "pcm_s16le",
+        ["ffmpeg", "-i", str(video_path), "-vn", *trim_flag, "-acodec", "pcm_s16le",
          "-ar", "16000", "-ac", "1", str(out_wav), "-y", "-loglevel", "error"],
         check=True,
     )
@@ -155,10 +157,12 @@ def extract_audio(video_path: Path, out_wav: Path) -> None:
 # Demucs vocal separation (optional)
 # ---------------------------------------------------------------------------
 
-def separate_audio(video_path: Path, temp_dir: Path) -> Tuple[Path, Optional[Path]]:
+def separate_audio(video_path: Path, temp_dir: Path, trim_sec: float = 0) -> Tuple[Path, Optional[Path]]:
     """
     Run demucs htdemucs to split vocals from background.
     Returns (vocals_path, background_path).
+    If trim_sec > 0, only the first trim_sec seconds are extracted before demucs
+    (much faster when --trim was used upstream).
     """
     demucs_out = temp_dir / "demucs_out"
     raw_wav    = temp_dir / "input_raw.wav"
@@ -171,14 +175,18 @@ def separate_audio(video_path: Path, temp_dir: Path) -> Tuple[Path, Optional[Pat
         log.info("✓ Reusing existing demucs separation")
         return vocals, bg
 
-    log.info("🎶 Separating vocals with demucs…")
+    trim_flag = ["-t", f"{trim_sec:.3f}"] if trim_sec > 0 else []
+    if trim_sec > 0:
+        log.info(f"🎶 Separating vocals with demucs (first {trim_sec:.1f}s only)…")
+    else:
+        log.info("🎶 Separating vocals with demucs…")
     subprocess.run(
-        ["ffmpeg", "-i", str(video_path), "-vn", "-acodec", "pcm_s16le",
+        ["ffmpeg", "-i", str(video_path), "-vn", *trim_flag, "-acodec", "pcm_s16le",
          str(raw_wav), "-y", "-loglevel", "error"],
         check=True,
     )
     subprocess.run(
-        ["demucs", "-n", "htdemucs", "--two-stems=vocals",
+        [sys.executable, "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals",
          str(raw_wav), "-o", str(demucs_out)],
         check=True,
     )
@@ -263,9 +271,6 @@ def build_voice_map(segments: List[Dict]) -> Dict[str, str]:
             voice_map[spk] = QWEN_MALE_VOICES[mi % len(QWEN_MALE_VOICES)]
             mi += 1
 
-    log.info("🎤 Voice assignments:")
-    for spk, voice in voice_map.items():
-        log.info(f"   {spk} → {voice}")
     return voice_map
 
 
@@ -601,15 +606,19 @@ Examples:
         log.error("No segments parsed — make sure this is a diarized+translated SRT")
         return 1
 
+    # Compute SRT duration early — used for trimming audio AND final video
+    srt_end = max(s["end"] for s in segments)
+
     # ── 2. Audio separation or raw extract ───────────────────────────────────
+    # Pass srt_end as trim so demucs/ffmpeg only processes the audio we actually need.
     background: Optional[Path] = None
     if args.no_demucs:
         # Just extract raw audio for clone refs (if needed)
         audio_for_refs = temp_dir / "input_raw.wav"
         if args.qwen_mode == "clone":
-            extract_audio(video_path, audio_for_refs)
+            extract_audio(video_path, audio_for_refs, trim_sec=srt_end)
     else:
-        vocals, background = separate_audio(video_path, temp_dir)
+        vocals, background = separate_audio(video_path, temp_dir, trim_sec=srt_end)
         audio_for_refs = vocals
 
     # ── 3. Clone refs ─────────────────────────────────────────────────────────
@@ -621,7 +630,16 @@ Examples:
             args.qwen_mode = "custom"
 
     # ── 4. Voice map ─────────────────────────────────────────────────────────
+    # Always build as fallback, but only log if we're actually in custom mode
     voice_map = build_voice_map(segments)
+    if args.qwen_mode == "custom":
+        log.info("🎤 Voice assignments (custom mode):")
+        for spk, voice in voice_map.items():
+            log.info(f"   {spk} → {voice}")
+    else:
+        log.info("🎤 Mode: clone — custom voices are fallback only")
+        for spk, voice in voice_map.items():
+            log.info(f"   {spk} → clone ref (fallback: {voice})")
 
     # ── 5. TTS loop ──────────────────────────────────────────────────────────
     qwen_language = _qwen_lang(args.language)
@@ -655,17 +673,19 @@ Examples:
             if args.qwen_mode == "clone" and not clone_broken:
                 ref = clone_refs.get(spk)
                 if ref and ref.exists():
+                    log.info(f"   [{i:04d}] 🎙️  clone ({spk})")
                     ok = generate_tts_clone(
                         text, ref, qwen_language, raw_out, qwen_python, qwen_worker
                     )
                     if not ok:
-                        log.warning(f"   [{i:04d}] Clone failed — switching to custom")
+                        log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
                         clone_broken = True
                 else:
-                    log.warning(f"   [{i:04d}] No clone ref for '{spk}' — using custom")
+                    log.warning(f"   [{i:04d}] No clone ref for '{spk}' — falling back to custom")
 
             if not ok and not custom_broken:
                 voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
+                log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
                 ok = generate_tts_custom(
                     text, voice, qwen_language, raw_out, qwen_python, qwen_worker
                 )
@@ -690,8 +710,7 @@ Examples:
         return 1
 
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
-    # Trim video to SRT duration if SRT is shorter than the full video
-    srt_end = max(s["end"] for s in segments)
+    # srt_end already computed above (reused for audio trim + video trim)
     log.info("🎬 Stitching and mixing…")
     final = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
