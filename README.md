@@ -48,12 +48,12 @@ video.nemo.{src}.diarize_{tgt}.srt         │
           │
           └─ demucs (optional) + Qwen clone/custom voices + ffmpeg stitching
          
-Result → `qwen3-tts/output/dub/output/final_dub.mp4`
+Result → `nemo/end_product/<video>__<src>_to_<tgt>/final_dub.mp4`  (+ source video copy + clean SRTs)
 ```
 
 
 
-Everything can be fired via `run_pipeline.py`, which orchestrates the three stages, boots Ollama when needed, and automatically reuses cached artifacts.
+Everything can be fired via `run_pipeline.py`, which orchestrates the three stages, boots Ollama when needed, automatically reuses cached artifacts, and now finishes by cleaning SRTs plus gathering every run’s artifacts into `nemo/end_product/<video>__<src>_to_<tgt>`.
 
 
 
@@ -69,10 +69,10 @@ Everything can be fired via `run_pipeline.py`, which orchestrates the three stag
 
 | Folder | Purpose | Highlights |
 | --- | --- | --- |
-| `run_pipeline.py` | Single entry point | Auto-detects source language, spins up Ollama, supports `--skip--` flags, enforces logging banners so you can show progress shots. |
+| `run_pipeline.py` | Single entry point | Auto-detects source language, spins up Ollama, supports `--skip-*` flags, enforces logging banners so you can show progress shots. Per-video workdir isolation so checkpoints never bleed between videos; SRT lookup checks both `nemo/` and `nemo/end_product/` for seamless resume after archiving; `--input-dir` / `--output-dir` for custom folder layouts. |
 | `nemo/nemo.py` | Diarization + transcription | Canary/Parakeet auto-selection, VRAM-adaptive chunking, diarization via `ClusteringDiarizer`, custom patches in `canary_patch.py` to bypass canary EOS assertions and force correct manifest langs. |
 | `translate-gemma/translate*.py` | Translation (Gemma via Ollama) | Chunked SRT translation with strict `[idx]` preservation, Docker-friendly Ollama client, low-temperature prompts for subtitle-safe formatting. |
-| `qwen3-tts/dub.py` | Dubbing | Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. |
+| `qwen3-tts/dub.py` | Dubbing | Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. Per-video workdir isolation keeps checkpoints segregated. |
 | `whisper/detect_language.py` | Language detection | 30s Whisper probe when no diarized SRT exists yet; called automatically from `run_pipeline.py`. |
 
 
@@ -357,9 +357,25 @@ python run_pipeline.py --target-lang fr
 Key flags:
 - `--language de/fr/en` — force source language (skips Whisper detection).
 - `--trim 30` — only process the first minute for rapid iteration.
-- `--skip-nemo / --skip-translate / --skip-dub` — resume partially completed runs.
+- `--run-mode transcribe|translate|full` — convenience presets that toggle the skip flags for you (e.g., `transcribe` = NeMo only, `translate` = NeMo + Gemma).
+- `--skip-nemo / --skip-translate / --skip-dub` — resume partially completed runs when you prefer explicit control over stages.
+- `--input-dir` / `--output-dir` — override default `nemo/` input and `nemo/end_product/` output folders.
+- `--whisper-model tiny|base|small|medium|large-v3|turbo` — choose Whisper model for language detection (default: `medium`).
 - `--qwen-mode custom` — bypass voice cloning.
 - `--no-demucs` — speed up dubbing when background music doesn’t matter.
+
+Common CLI snippets:
+
+```bash
+# Full run with defaults (auto language detection, cleans + archives outputs)
+python run_pipeline.py --target-lang fr
+
+# Quick transcription-only dry run (first 60s)
+python run_pipeline.py --target-lang fr --trim 60 --run-mode transcribe
+
+# Translate-only pass when NeMo output already exists and source language is known
+python run_pipeline.py --target-lang es --language de --run-mode translate
+```
 
 
 
