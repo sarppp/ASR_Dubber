@@ -153,12 +153,6 @@ Output is formatted specifically for media players, avoiding unreadable "walls o
 ## translate-gemma
 
 
-
-### Standalone `translate.py`
-
-When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the `translategemma:4b` model is already pulled, otherwise the first run will fail before translating.
-
-
 ### LLM-Powered Diarization Preservation
 
 Unlike standard translation tools that lose speaker context, this script utilizes a custom-prompted LLM (Gemma via Ollama) to translate dialogue while maintaining metadata:
@@ -181,8 +175,6 @@ To handle the limitations of smaller local LLMs (like `translategemma:4b`), the 
 
 * **Newline Pipe-Encoding:** To prevent the LLM from breaking subtitle formatting with unwanted line breaks, the script flattens multi-line subtitles using a `|` (pipe) character during translation and restores them during reassembly.
 
-
-
 ### Automation & Reliability
 
 * **Auto-Language Detection:** The script automatically parses the source language code (e.g., `.de.`) directly from the filename of the NeMo-generated SRT to configure the translation prompt.
@@ -192,7 +184,9 @@ To handle the limitations of smaller local LLMs (like `translategemma:4b`), the 
 * **Garbage Filtering:** Includes automated post-processing to strip common LLM artifacts like `<|endoftext|>` and unexpected whitespace before saving the final file.
 
 
+#### Standalone `translate.py`
 
+When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the `translategemma:4b` model is already pulled, otherwise the first run will fail before translating.
 
 
 
