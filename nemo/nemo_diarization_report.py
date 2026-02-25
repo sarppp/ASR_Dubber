@@ -1,3 +1,11 @@
+"""
+nemo_diarization_report.py — NeMo local ASR/translation runner
+
+Usage:
+cd nemo && uv run python nemo_diarization_report.py \
+    --input "input_name.wav"
+"""
+
 #!/usr/bin/env python3
 
 import argparse
