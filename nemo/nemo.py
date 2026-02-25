@@ -460,33 +460,65 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
     log.info("Running speaker diarization…")
     ddir = work_dir / "_diarize"
     ddir.mkdir(parents=True, exist_ok=True)
+
+    # NeMo uses the WAV stem as the key for all internal files (VAD output, RTTM, etc.)
+    # Spaces/apostrophes in the stem cause silent mismatches — diarization "succeeds"
+    # but RTTM lookup fails, returning 1 speaker. Always use a clean fixed name.
+    safe_wav = ddir / "input_16k_mono.wav"
+    shutil.copy2(audio_path, safe_wav)
+    log.info(f"Copied WAV to safe path: {safe_wav.name}")
+
     mpath = ddir / "manifest.json"
     mpath.write_text(json.dumps({
-        "audio_filepath": str(Path(audio_path).resolve()), "offset": 0,
-        "duration": None, "label": "infer", "text": "",
-        "num_speakers": None, "rttm_filepath": "", "uem_filepath": "",
+        "audio_filepath": str(safe_wav.resolve()),
+        "offset": 0,
+        "duration": None,
+        "label": "infer",
+        "text": "",
+        "num_speakers": None,
+        "rttm_filepath": "",
+        "uem_filepath": "",
     }) + "\n", encoding="utf-8")
     cfg = OmegaConf.create({
-        "name": "ClusterDiarizer", "num_workers": 0, "sample_rate": 16000,
-        "batch_size": 16, "device": device, "verbose": True,
+        "name": "ClusterDiarizer", 
+        "num_workers": 0, 
+        "sample_rate": 16000,
+        "batch_size": 16, 
+        "device": device, 
+        "verbose": True,
         "diarizer": {
-            "manifest_filepath": str(mpath), "out_dir": str(ddir),
-            "oracle_vad": False, "collar": 0.25, "ignore_overlap": True,
+            "manifest_filepath": str(mpath), 
+            "out_dir": str(ddir),
+            "oracle_vad": False, 
+            "collar": 0.1, 
+            "ignore_overlap": False,
             "vad": {"model_path": "vad_multilingual_marblenet", "parameters": {
                 "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
-                "smoothing": False, "overlap": 0.5, "onset": 0.9, "offset": 0.5,
-                "pad_onset": 0.0, "pad_offset": 0.0,
-                "min_duration_on": 0.0, "min_duration_off": 0.6, "filter_speech_first": True,
+                "smoothing": False, 
+                "overlap": 0.5, 
+                "onset": 0.75, 
+                "offset": 0.5,
+                "pad_onset": 0.0, 
+                "pad_offset": 0.0,
+                "min_duration_on": 0.0, 
+                "min_duration_off": 0.6, 
+                "filter_speech_first": True,
             }},
             "speaker_embeddings": {"model_path": "titanet_large", "parameters": {
-                "window_length_in_sec": [1.5, 1.0, 0.5], "shift_length_in_sec": [0.75, 0.5, 0.25],
-                "multiscale_weights": [1, 1, 1], "save_embeddings": False,
+                "window_length_in_sec": [1.5, 1.0, 0.5, 0.25], 
+                "shift_length_in_sec": [0.75, 0.5, 0.25, 0.125],
+                "multiscale_weights": [1, 1, 1, 1], 
+                "save_embeddings": False,
             }},
             "clustering": {"parameters": {
-                "oracle_num_speakers": False, "max_num_speakers": 8,
-                "enhanced_count_thres": 80, "max_rp_threshold": 0.25,
-                "sparse_search_volume": 30, "maj_vote_spk_count": False,
-                "chunk_cluster_count": 50, "embeddings_per_chunk": 10000,
+                "oracle_num_speakers": False, 
+                "max_num_speakers": 8,
+                "enhanced_count_thres": 40,
+                "max_rp_threshold": 0.25,
+                "sparse_search_volume": 30,
+                "maj_vote_spk_count": False,
+                "chunk_cluster_count": 50,
+                "embeddings_per_chunk": 10000,
             }},
         },
     })
@@ -515,7 +547,6 @@ def _assign_speakers(items: list, turns: list) -> list:
             if ov > best_ov: best_ov, best_spk = ov, t["speaker"]
         item["speaker"] = best_spk
     return items
-
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
@@ -590,7 +621,6 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
         f"{'='*55}"
     )
     return srt
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
