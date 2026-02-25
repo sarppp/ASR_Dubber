@@ -479,49 +479,57 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
         "rttm_filepath": "",
         "uem_filepath": "",
     }) + "\n", encoding="utf-8")
-    cfg = OmegaConf.create({
-        "name": "ClusterDiarizer", 
-        "num_workers": 0, 
+    # Build config using setdefault pattern — avoids "Multiscale parameters not properly setup"
+    # caused by OmegaConf treating inline lists differently from post-construction assignments.
+    # Mirrors the approach in nemo_diarization_report.py which reliably finds all speakers.
+    cfg = {
+        "name": "ClusterDiarizer",
+        "num_workers": 0,
         "sample_rate": 16000,
-        "batch_size": 16, 
-        "device": device, 
+        "batch_size": 16,
+        "device": device,
         "verbose": True,
         "diarizer": {
-            "manifest_filepath": str(mpath), 
+            "manifest_filepath": str(mpath),
             "out_dir": str(ddir),
-            "oracle_vad": False, 
-            "collar": 0.1, 
-            "ignore_overlap": False,
-            "vad": {"model_path": "vad_multilingual_marblenet", "parameters": {
-                "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
-                "smoothing": False, 
-                "overlap": 0.5, 
-                "onset": 0.75, 
-                "offset": 0.5,
-                "pad_onset": 0.0, 
-                "pad_offset": 0.0,
-                "min_duration_on": 0.0, 
-                "min_duration_off": 0.6, 
-                "filter_speech_first": True,
-            }},
-            "speaker_embeddings": {"model_path": "titanet_large", "parameters": {
-                "window_length_in_sec": [1.5, 1.0, 0.5, 0.25], 
-                "shift_length_in_sec": [0.75, 0.5, 0.25, 0.125],
-                "multiscale_weights": [1, 1, 1, 1], 
-                "save_embeddings": False,
-            }},
-            "clustering": {"parameters": {
-                "oracle_num_speakers": False, 
-                "max_num_speakers": 8,
-                "enhanced_count_thres": 40,
-                "max_rp_threshold": 0.25,
-                "sparse_search_volume": 30,
-                "maj_vote_spk_count": False,
-                "chunk_cluster_count": 50,
-                "embeddings_per_chunk": 10000,
-            }},
+            "oracle_vad": False,
+            "collar": 0.25,
+            "ignore_overlap": True,
+            "vad": {"model_path": "vad_multilingual_marblenet"},
+            "speaker_embeddings": {
+                "model_path": "titanet_large",
+                "parameters": {"save_embeddings": False},
+            },
+            "clustering": {},
         },
+    }
+
+    cfg["diarizer"]["vad"].setdefault("parameters", {
+        "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
+        "smoothing": False, "overlap": 0.5,
+        "onset": 0.9, "offset": 0.5,
+        "pad_onset": 0.0, "pad_offset": 0.0,
+        "min_duration_on": 0.0, "min_duration_off": 0.6,
+        "filter_speech_first": True,
     })
+
+    spk = cfg["diarizer"]["speaker_embeddings"]["parameters"]
+    spk.setdefault("window_length_in_sec", [1.5, 1.0, 0.5])
+    spk.setdefault("shift_length_in_sec",  [0.75, 0.5, 0.25])
+    spk.setdefault("multiscale_weights",   [1, 1, 1])
+
+    cfg["diarizer"]["clustering"].setdefault("parameters", {
+        "oracle_num_speakers": False,
+        "max_num_speakers": 8,
+        "enhanced_count_thres": 80,
+        "max_rp_threshold": 0.25,
+        "sparse_search_volume": 30,
+        "maj_vote_spk_count": False,
+        "chunk_cluster_count": 50,
+        "embeddings_per_chunk": 10000,
+    })
+
+    cfg = OmegaConf.create(cfg)
     ClusteringDiarizer(cfg=cfg).to(device).diarize()
     rttm_files = list((ddir / "pred_rttms").glob("*.rttm")) or list(ddir.rglob("*.rttm"))
     turns = []
