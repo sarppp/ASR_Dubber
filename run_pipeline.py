@@ -536,6 +536,13 @@ def main():
     # Stable base = stem up to the first '.nemo' or '__' marker
     # "Debate 101..." -> "Debate 101..."   "impost_trimmed_2min" -> "impost_trimmed_2min"
     video_base = re.split(r"[._]nemo|__", video.stem)[0]
+
+    # Append trim suffix so all generated files are unique per trim length
+    # "Debate 101..." + trim 30 → "Debate 101..._t30"
+    # Full video (no trim) stays clean with no suffix
+    if args.trim:
+        video_base = f"{video_base}_t{args.trim}"
+
     print(f"🎬 Selected video : {video.name}  (base: '{video_base}')", flush=True)
 
     # Try to infer source lang from an existing diarized SRT for THIS video only
@@ -582,6 +589,16 @@ def main():
         if args.safety_factor:
             nemo_cmd += ["--safety-factor", str(args.safety_factor)]
         _run(nemo_cmd, cwd=NEMO_DIR, label="Step 1/3 — NeMo transcription + diarization")
+
+        # If trimmed, rename NeMo's output SRT to include _t{N} suffix
+        # NeMo names it after the video stem: "Debate 101.nemo.en.diarize.srt"
+        # We want:                            "Debate 101_t30.nemo.en.diarize.srt"
+        if args.trim:
+            original_srt = NEMO_DIR / f"{video.stem}.nemo.{source_lang}.diarize.srt"
+            trimmed_srt  = NEMO_DIR / f"{video_base}.nemo.{source_lang}.diarize.srt"
+            if original_srt.exists() and original_srt != trimmed_srt:
+                original_srt.rename(trimmed_srt)
+                print(f"📝 Renamed SRT: {original_srt.name} → {trimmed_srt.name}", flush=True)
 
     print(f"\n🌐 Source: {source_lang}  →  Target: {args.target_lang}")
 
