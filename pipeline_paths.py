@@ -60,6 +60,19 @@ def _video_already_processed(
     return False
 
 
+_INTERMEDIATE_WAV = re.compile(r'_nemo_16k_(full|trim\d+)\.wav$|^_chunk_\d+\.wav$')
+
+
+def _nemo_started(f: Path) -> bool:
+    """True if a NeMo intermediate WAV already exists for this video (NeMo was started)."""
+    stem = f.stem
+    return any(
+        _INTERMEDIATE_WAV.search(candidate.name)
+        for candidate in f.parent.iterdir()
+        if candidate.name.startswith(stem)
+    )
+
+
 def _find_video(
     target_lang: str | None = None,
     *,
@@ -71,8 +84,10 @@ def _find_video(
     end_product_dir = end_product_dir or END_PRODUCT_DIR
     VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wav"}
     videos = sorted(
-        (f for f in nemo_dir.iterdir() if f.suffix.lower() in VIDEO_EXT),
-        key=lambda f: (f.suffix.lower() == ".wav", -f.stat().st_mtime),
+        (f for f in nemo_dir.iterdir()
+         if f.suffix.lower() in VIDEO_EXT
+         and not _INTERMEDIATE_WAV.search(f.name)),
+        key=lambda f: (f.suffix.lower() == ".wav", _nemo_started(f), -f.stat().st_mtime),
     )
     for video in videos:
         if not _video_already_processed(video, target_lang=target_lang,
