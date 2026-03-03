@@ -134,6 +134,8 @@ def main():
                    choices=["transcribe", "translate", "full"],
                    help=("Convenience preset: transcribe (Step 1 only), "
                          "translate (Steps 1-2), or full (default)"))
+    p.add_argument("--input-file",     default=None, metavar="FILE",
+                   help="Specific input file (overrides --input-dir)")
     p.add_argument("--input-dir",      default=None, metavar="DIR",
                    help="Folder containing input video(s) (default: nemo/)")
     p.add_argument("--output-dir",     default=None, metavar="DIR",
@@ -161,7 +163,15 @@ def main():
     # ── Apply input/output dir overrides (local vars, no global mutation) ─────
     nemo_dir = _DEFAULT_NEMO_DIR
     end_product_dir = _DEFAULT_END_PRODUCT_DIR
-    if args.input_dir:
+    if args.input_file:
+        # Use specific file - derive directory from file location
+        input_file = Path(args.input_file).resolve()
+        if not input_file.exists():
+            print(f"❌  Input file not found: {input_file}")
+            sys.exit(1)
+        nemo_dir = input_file.parent
+        print(f"📂 Input file : {input_file}")
+    elif args.input_dir:
         nemo_dir = Path(args.input_dir).resolve()
         print(f"📂 Input dir  : {nemo_dir}")
     if args.output_dir:
@@ -188,8 +198,11 @@ def main():
 
     # Pin video FIRST — every skip-check anchors off the same file.
     # _find_video skips videos that already have a run-dir for this target lang.
-    video = _find_video(target_lang=args.target_lang,
-                        nemo_dir=nemo_dir, end_product_dir=end_product_dir)
+    if args.input_file:
+        video = input_file
+    else:
+        video = _find_video(target_lang=args.target_lang,
+                            nemo_dir=nemo_dir, end_product_dir=end_product_dir)
     if not video:
         print(f"❌  No unprocessed video found in {nemo_dir} for target '{args.target_lang}'")
         sys.exit(1)

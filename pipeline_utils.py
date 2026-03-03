@@ -81,54 +81,75 @@ def _ollama_start() -> subprocess.Popen | None:
     """
     Start Ollama — three strategies tried in order:
       1. Already running → do nothing
-      2. Docker available → start ollama/ollama container (local machine)
+      2. Docker available → start ollama/ollama container; fall back to native on failure
       3. Native binary → ollama serve (RunPod / server)
-    Returns Popen handle of what we started, or None if already running.
+    Returns Popen handle of what we started, or None if already running / Docker detached.
     """
     if _ollama_is_running():
         print("✓ Ollama already running", flush=True)
         return None
 
+    proc: subprocess.Popen | None = None
+    started_via = "unknown"
+
     # ── Strategy 1: Docker ────────────────────────────────────────────────────
+    docker_ok = False
     if _docker_available():
         print("🐳 Starting Ollama via Docker...", flush=True)
-        # Check if container already exists but is stopped
-        subprocess.run(["docker", "rm", "-f", "ollama"],
-                       capture_output=True)
+        subprocess.run(["docker", "rm", "-f", "ollama"], capture_output=True)
+        # No --rm: if the container crashes we need it to stay so we can read its logs.
+        # We clean it up ourselves in _ollama_stop or on the next run (docker rm -f above).
         cmd = [
-            "docker", "run", "-d", "--rm",
+            "docker", "run", "-d",
             "--name", "ollama",
             "-e", "OLLAMA_HOST=0.0.0.0",
             "-e", "OLLAMA_FLASH_ATTENTION=1",
             "-p", "11434:11434",
         ]
-        # Add GPU flags if nvidia-smi is available
         try:
             subprocess.run(["nvidia-smi"], capture_output=True, check=True)
-            cmd += ["--runtime=nvidia", "--gpus", "all"]
-            print("   GPU detected — enabling NVIDIA runtime", flush=True)
+            cmd += ["--gpus", "all"]
+            print("   GPU detected — enabling GPU passthrough", flush=True)
         except Exception:
             print("   No GPU detected — running Ollama on CPU", flush=True)
-        cmd.append(OLLAMA_DOCKER_IMAGE)
 
         print(f"   Models dir : {OLLAMA_MODELS_DIR}", flush=True)
         if Path(OLLAMA_MODELS_DIR).exists():
-            # Mount existing local models dir so Ollama finds them immediately
             cmd += ["-v", f"{OLLAMA_MODELS_DIR}:/root/.ollama"]
         else:
-            # Remote/fresh machine — model is baked into the image or will be pulled
-            print(f"   ℹ️  Models dir not found locally — Ollama will use image-baked or pull models", flush=True)
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Docker run -d exits immediately; the container runs in background
-        # proc here is just the `docker run` CLI process, not the container
-        started_via = "docker"
+            print("   ℹ️  Models dir not found locally — Ollama will pull models as needed", flush=True)
 
-    # ── Strategy 2: Native binary (RunPod, servers) ───────────────────────────
-    else:
-        # Find ollama binary
+        cmd.append(OLLAMA_DOCKER_IMAGE)
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip()
+            print(f"⚠️  Docker failed (rc={result.returncode}): {err}", flush=True)
+            print("   Falling back to native ollama binary...", flush=True)
+        else:
+            # Wait briefly then verify container is still alive
+            time.sleep(8)  # Give Ollama more time to fully start
+            check = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", "ollama"],
+                capture_output=True, text=True,
+            )
+            if check.stdout.strip() == "true":
+                docker_ok = True
+                started_via = "docker"
+            else:
+                logs = subprocess.run(
+                    ["docker", "logs", "--tail", "30", "ollama"],
+                    capture_output=True, text=True,
+                )
+                err = (logs.stderr or logs.stdout).strip()[-400:]
+                subprocess.run(["docker", "rm", "-f", "ollama"], capture_output=True)
+                print(f"⚠️  Ollama container exited immediately:\n{err}", flush=True)
+                print("   Falling back to native ollama binary...", flush=True)
+
+    # ── Strategy 2: Native binary (RunPod, servers, Docker fallback) ──────────
+    if not docker_ok:
         ollama_bin = OLLAMA_BIN
         if not Path(ollama_bin).exists():
-            # Common install locations
             for candidate in ["/usr/local/bin/ollama", "/usr/bin/ollama",
                                str(Path.home() / ".local/bin/ollama")]:
                 if Path(candidate).exists():
