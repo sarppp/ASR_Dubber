@@ -1,0 +1,136 @@
+"""
+nemo_audio.py — Audio helpers and subtitle assembly for nemo pipeline.
+
+No top-level nemo.collections imports — see nemo_model.py for the sys.path workaround.
+"""
+
+import logging
+import subprocess
+import wave
+from pathlib import Path
+
+import torch
+
+log = logging.getLogger("nemo_local")
+
+MODEL_EN    = "nvidia/parakeet-tdt-0.6b-v2"
+MODEL_MULTI = "nvidia/canary-1b-v2"
+MULTI_LANGS = {"fr", "de", "es"}
+VIDEO_EXT   = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
+CHUNK_OVERLAP_SEC = 2
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _fmt_ts(s: float) -> str:
+    h, s = divmod(s, 3600); m, s = divmod(s, 60)
+    return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{int((s%1)*1000):03d}"
+
+def _fmt_dur(s: float) -> str:
+    return f"{int(s//60)}m{int(s%60):02d}s" if s >= 60 else f"{s:.1f}s"
+
+def _vram_gb() -> tuple[float, float]:
+    if not torch.cuda.is_available(): return 0.0, 0.0
+    free, total = torch.cuda.mem_get_info()
+    return free / 1024**3, total / 1024**3
+
+def _audio_duration(path: str) -> float:
+    try:
+        with wave.open(path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 0.0
+
+def _extract_audio(video_path: str, out_path: str, trim_sec: int = 0) -> None:
+    cmd = ["ffmpeg", "-y", "-threads", "0", "-i", video_path]
+    if trim_sec > 0:
+        cmd += ["-t", str(trim_sec)]
+    cmd += ["-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", out_path]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+def _chunk_audio(audio_path: str, work_dir: Path, chunk_sec: int) -> list[tuple[str, float]]:
+    dur = _audio_duration(audio_path)
+    if dur <= chunk_sec + 5:
+        return [(audio_path, 0.0)]
+    chunks, step, offset, idx = [], chunk_sec - CHUNK_OVERLAP_SEC, 0.0, 0
+    while offset < dur:
+        cp = str(work_dir / f"_chunk_{idx:04d}.wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-threads", "0", "-ss", str(offset), "-i", audio_path,
+             "-t", str(min(chunk_sec, dur - offset)),
+             "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", cp],
+            check=True, capture_output=True,
+        )
+        chunks.append((cp, offset)); offset += step; idx += 1
+    return chunks
+
+def _cleanup_chunks(manifest: list, keep: str) -> None:
+    for e in manifest or []:
+        p = e.get("path")
+        if p and p != keep:
+            Path(p).unlink(missing_ok=True)
+
+
+# ── Subtitle assembly ─────────────────────────────────────────────────────────
+
+def _words_to_segs(words, max_w=10, max_dur=5.0, max_ch=80, diarized=False):
+    segs, cur_w, cur_t, cur_s, cur_spk = [], [], "", None, None
+    for w in words:
+        word = w.get("word", "").strip()
+        if not word: continue
+        ws, we = w.get("start", 0.0), w.get("end", 0.0)
+        spk = w.get("speaker", "unknown") if diarized else None
+        if cur_s is None: cur_s, cur_spk = ws, spk
+        cand = (cur_t + " " + word).strip() if cur_t else word
+        split = (len(cur_w) >= max_w or (we - cur_s) > max_dur or len(cand) > max_ch
+                 or (cur_t and cur_t[-1] in ".!?" and len(cur_w) >= 3)
+                 or (diarized and spk != cur_spk and cur_w))
+        if split and cur_w:
+            seg = {"start": cur_s, "end": cur_w[-1].get("end", cur_s), "text": cur_t}
+            if diarized: seg["speaker"] = cur_spk
+            segs.append(seg)
+            cur_w, cur_t, cur_s, cur_spk = [], "", ws, spk
+            continue
+        cur_w.append(w); cur_t = cand
+    if cur_w and cur_t.strip():
+        seg = {"start": cur_s, "end": cur_w[-1].get("end", cur_s), "text": cur_t}
+        if diarized: seg["speaker"] = cur_spk
+        segs.append(seg)
+    return segs
+
+def _split_coarse_segs(segs, max_w=10, max_ch=80):
+    """Split Canary's single large segments into subtitle-sized lines."""
+    out = []
+    for seg in segs:
+        words = seg.get("text", "").strip().split()
+        if not words: continue
+        start, dur = seg.get("start", 0.0), max(0.1, seg.get("end", 0.0) - seg.get("start", 0.0))
+        spk = seg.get("speaker")
+        lines, cur = [], []
+        for word in words:
+            cur.append(word)
+            if len(cur) >= max_w or len(" ".join(cur)) >= max_ch:
+                lines.append(cur); cur = []
+        if cur: lines.append(cur)
+        total = sum(len(l) for l in lines)
+        t = start
+        for line in lines:
+            frac = len(line) / total if total else 1 / len(lines)
+            entry = {"text": " ".join(line), "start": t, "end": t + dur * frac}
+            if spk is not None: entry["speaker"] = spk
+            out.append(entry); t += dur * frac
+    return out
+
+def _segs_to_srt(segs, diarized=False):
+    if diarized:
+        spk_list = sorted({s.get("speaker", "unknown") for s in segs})
+        spk_map = {s: f"Speaker {i+1}" for i, s in enumerate(spk_list)}
+    lines, idx, prev = [], 0, None
+    for s in segs:
+        t = s["text"].strip()
+        if not t or (not diarized and t == prev): continue
+        idx += 1
+        label = f"[{spk_map.get(s.get('speaker', 'unknown'), 'Speaker ?')}] " if diarized else ""
+        lines += [str(idx), f"{_fmt_ts(s['start'])} --> {_fmt_ts(s['end'])}", label + t, ""]
+        prev = t
+    return "\n".join(lines)

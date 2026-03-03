@@ -5,6 +5,8 @@
 !/.gitignore
 !/README.md
 !/run_pipeline.py
+!/pipeline_paths.py
+!/pipeline_utils.py
 !/nemo/
 !/qwen3-tts/
 !/translate-gemma/
@@ -16,6 +18,9 @@ nemo/*
 !nemo/nemo_modal_app.py
 !nemo/nemo_diarization_report.py
 !nemo/canary_patch.py
+!nemo/nemo_diarize.py
+!nemo/nemo_model.py
+!nemo/nemo_audio.py
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock
@@ -25,6 +30,8 @@ qwen3-tts/*
 !qwen3-tts/dub.py
 !qwen3-tts/qwen_tts_worker.py
 !qwen3-tts/dubber_modal.py
+!qwen3-tts/dub_srt.py
+!qwen3-tts/dub_audio.py
 !qwen3-tts/.python-version
 !qwen3-tts/pyproject.toml
 !qwen3-tts/uv.lock
