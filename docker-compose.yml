@@ -1,0 +1,98 @@
+# docker-compose.yml — ASR Pipeline production stack
+#
+# Services:
+#   ollama   — LLM inference server (translation model)
+#   pipeline — ASR/transcribe/translate/dub pipeline
+#
+# Quick start:
+#   mkdir -p data/input data/output
+#   cp your_video.mp4 data/input/
+#   TARGET_LANG=fr docker compose up pipeline
+#
+# Override model at runtime:
+#   TRANSLATE_MODEL=gemma3:4b TARGET_LANG=fr docker compose up pipeline
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+
+  # ── Ollama (translation LLM) ────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: asr_ollama
+    restart: unless-stopped
+    <<: *gpu
+    ports:
+      - "11434:11434"           # expose for local testing; remove in prod
+    volumes:
+      - ollama_models:/root/.ollama    # persist downloaded models
+    environment:
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  # ── Model pull (runs once, then exits) ─────────────────────────────────────
+  # Ensures the translation model is available before the pipeline starts.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: asr_ollama_init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"
+    entrypoint: >
+      sh -c "ollama pull $$TRANSLATE_MODEL && echo 'Model ready.'"
+    restart: "no"
+
+  # ── ASR Pipeline ────────────────────────────────────────────────────────────
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asr_pipeline
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    <<: *gpu
+    volumes:
+      - ./data:/data                   # mount local data folder
+      - hf_cache:/root/.cache/huggingface   # persist HuggingFace model downloads
+    environment:
+      # Ollama endpoint — points to the companion service
+      OLLAMA_HOST: "http://ollama:11434"
+      # Pipeline configuration
+      TARGET_LANG:    "${TARGET_LANG:-fr}"
+      LANGUAGE:       "${LANGUAGE:-}"
+      INPUT_DIR:      "${INPUT_DIR:-/data/input}"
+      OUTPUT_DIR:     "${OUTPUT_DIR:-/data/output}"
+      RUN_MODE:       "${RUN_MODE:-full}"
+      # Model selection (override with env var)
+      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"
+      # TTS parallelism (translate-gemma worker count)
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+    # By default uses entrypoint.sh env-var mode.
+    # Pass extra flags: docker compose run pipeline --help
+    command: []
+
+volumes:
+  ollama_models:
+    driver: local
+  hf_cache:
+    driver: local

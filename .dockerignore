@@ -2,14 +2,9 @@
 /*
 
 # Bring back the top-level items we care about
-!/.gitignore
-!/README.md
 !/run_pipeline.py
-!/pipeline_paths.py
 !/pipeline_utils.py
-!/Dockerfile
-!/docker-compose.yml
-!/.dockerignore
+!/pipeline_paths.py
 !/entrypoint.sh
 !/nemo/
 !/qwen3-tts/
@@ -19,12 +14,11 @@
 # Inside nemo/: ignore everything, then unignore the exact files
 nemo/*
 !nemo/nemo.py
-!nemo/nemo_modal_app.py
+!nemo/nemo_audio.py
+!nemo/nemo_model.py
+!nemo/nemo_diarize.py
 !nemo/nemo_diarization_report.py
 !nemo/canary_patch.py
-!nemo/nemo_diarize.py
-!nemo/nemo_model.py
-!nemo/nemo_audio.py
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock
@@ -32,10 +26,9 @@ nemo/*
 # Inside qwen3-tts/
 qwen3-tts/*
 !qwen3-tts/dub.py
-!qwen3-tts/qwen_tts_worker.py
-!qwen3-tts/dubber_modal.py
 !qwen3-tts/dub_srt.py
 !qwen3-tts/dub_audio.py
+!qwen3-tts/qwen_tts_worker.py
 !qwen3-tts/.python-version
 !qwen3-tts/pyproject.toml
 !qwen3-tts/uv.lock
