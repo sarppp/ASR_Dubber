@@ -139,7 +139,7 @@ def _detect_source_language(video_path: Path, whisper_model: str = "medium") -> 
         result = subprocess.run(
             [whisper_py, str(detect_script), str(video_path),
              "--model", whisper_model],
-            cwd=str(WHISPER_DIR),
+            cwd=str(video_path.parent),
             capture_output=True,
             text=True,
             timeout=120,
@@ -212,19 +212,20 @@ def _derive_run_label(
     return candidate
 
 
-def _finalize_outputs(run_label: str, dub_workdir: Path | None = None) -> None:
+def _finalize_outputs(run_label: str, dub_workdir: Path | None = None, *, nemo_dir: Path | None = None) -> None:
     """Clean subtitles and gather all outputs into nemo/end_product/<run>."""
+    nemo_dir = nemo_dir or NEMO_DIR
     if not CLEAN_SUBS_SCRIPT.exists():
         print(f"⚠️  {CLEAN_SUBS_SCRIPT.name} not found — skipping cleanup")
         return
 
     clean_cmd = _python(TRANSLATE_PY, TRANSLATE_DIR) + [
-        CLEAN_SUBS_SCRIPT.name,
+        str(CLEAN_SUBS_SCRIPT),
         "--run-label", run_label,
     ]
     if dub_workdir:
         clean_cmd += ["--dub-workdir", str(dub_workdir)]
-    _run(clean_cmd, cwd=TRANSLATE_DIR, label="Step 4 — Clean + gather outputs")
+    _run(clean_cmd, cwd=nemo_dir, label="Step 4 — Clean + gather outputs")
 
 
 # ── SRT validation ────────────────────────────────────────────────────────────
@@ -259,7 +260,7 @@ def _validate_translated_srt(srt_path: Path, target_lang: str) -> None:
     speaker_only = [l for l in content_lines if _re.fullmatch(r"\[Speaker\s+\d+\]", l)]
     if len(speaker_only) == len(content_lines):
         print(f"❌  Translated SRT contains only speaker tags — translation failed silently.")
-        print(f"   Check Ollama is running and 'translategemma:4b' is pulled.")
+        print(f"   Check Ollama is running and the translate model is pulled.")
         sys.exit(1)
 
     print(f"✅  SRT validation passed ({len(content_lines)} content lines)")

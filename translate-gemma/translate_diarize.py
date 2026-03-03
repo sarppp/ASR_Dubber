@@ -61,6 +61,8 @@ def _resolve_ollama_bin(bin_path: str) -> str:
     raise FileNotFoundError(f"Cannot find Ollama executable '{bin_path}' on PATH")
 
 def _start_ollama() -> tuple[str, subprocess.Popen | None]:
+    # Docker first — if Docker Desktop is open, use it (consistent env, GPU passthrough).
+    # Native binary fallback — for when Docker isn't running but ollama is installed locally.
     if _docker_available():
         print("🐳 Starting Ollama via Docker...", flush=True)
         subprocess.run(["docker", "rm", "-f", OLLAMA_CONTAINER], capture_output=True)
@@ -82,17 +84,25 @@ def _start_ollama() -> tuple[str, subprocess.Popen | None]:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return "docker", proc
 
-    resolved = _resolve_ollama_bin(OLLAMA_BIN)
-    print(f"🚀 Starting Ollama natively ({resolved}, OLLAMA_NUM_PARALLEL={OLLAMA_NUM_PARALLEL})...",
-          flush=True)
-    env = {**os.environ, "OLLAMA_NUM_PARALLEL": str(OLLAMA_NUM_PARALLEL)}
-    proc = subprocess.Popen(
-        [resolved, "serve"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=env,
-        preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+    try:
+        resolved = _resolve_ollama_bin(OLLAMA_BIN)
+        print(f"🚀 Starting Ollama natively ({resolved}, OLLAMA_NUM_PARALLEL={OLLAMA_NUM_PARALLEL})...",
+              flush=True)
+        env = {**os.environ, "OLLAMA_NUM_PARALLEL": str(OLLAMA_NUM_PARALLEL)}
+        proc = subprocess.Popen(
+            [resolved, "serve"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=env,
+            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+        )
+        return "native", proc
+    except FileNotFoundError:
+        pass
+
+    raise RuntimeError(
+        "Cannot start Ollama: Docker is not running and 'ollama' binary not found on PATH.\n"
+        "Either open Docker Desktop or install Ollama from https://ollama.ai"
     )
-    return "native", proc
 
 def _wait_for_ollama(timeout: int = 40) -> None:
     for i in range(timeout):
@@ -294,7 +304,7 @@ def _translate_with_retry(chunk_subs, src_code, tgt_code, client: Client,
 TARGET_LANG_CODE         = os.getenv("TARGET_LANG_CODE", "fr")
 SOURCE_LANG_CODE_OVERRIDE = os.getenv("SOURCE_LANG_CODE", "")
 
-folder_path = os.getenv("NEMO_DIR", os.path.join(os.path.dirname(__file__), '..', 'nemo'))
+folder_path = os.getenv("INPUT_DIR", os.path.join(os.path.dirname(__file__), '..', 'nemo'))
 folder_path = os.path.realpath(folder_path)
 
 srt_files = [f for f in glob.glob(os.path.join(folder_path, '*.srt'))
@@ -374,7 +384,7 @@ try:
     if not warmup_translations:
         print("\n❌ FATAL: chunk 1 returned nothing after 3 attempts — "
               "Ollama error or model not found.")
-        print("   Make sure the model is pulled: ollama pull translategemma:4b")
+        print(f"   Make sure the model is pulled: ollama pull {MODEL_NAME}")
         sys.exit(1)
 
     for sub in chunks[0]:
@@ -411,7 +421,7 @@ try:
         if not translations:
             print(f"\n❌ FATAL: chunk {chunk_num} returned nothing after 3 attempts — "
                   "Ollama error or model not found.")
-            print("   Make sure the model is pulled: ollama pull translategemma:4b")
+            print(f"   Make sure the model is pulled: ollama pull {MODEL_NAME}")
             sys.exit(1)
         for sub in chunk:
             if sub.index in translations:

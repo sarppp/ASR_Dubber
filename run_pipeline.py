@@ -76,6 +76,7 @@ import sys
 from pathlib import Path
 
 from pipeline_utils import (
+    NEMO_CODE_DIR,
     NEMO_DIR as _DEFAULT_NEMO_DIR,
     END_PRODUCT_DIR as _DEFAULT_END_PRODUCT_DIR,
     TRANSLATE_DIR,
@@ -222,7 +223,7 @@ def main():
             print("⏭️  Skipping NeMo (--skip-nemo)")
     else:
         nemo_cmd = _python(NEMO_PY, nemo_dir) + [
-            "nemo.py", str(video),
+            str(NEMO_CODE_DIR / "nemo.py"), str(video),
             "--language", source_lang, "--diarize",
             "--precision", args.precision,
         ]
@@ -272,14 +273,16 @@ def main():
             env = os.environ.copy()
             env["TARGET_LANG_CODE"] = args.target_lang
             env["SOURCE_LANG_CODE"] = source_lang
+            env["INPUT_DIR"]        = str(nemo_dir)
+            env["OUTPUT_DIR"]       = str(end_product_dir)
 
             _banner(f"Step 2/3 — Translation ({source_lang} → {args.target_lang}) via Gemma")
-            print(f"   cwd : {TRANSLATE_DIR}")
-            print(f"   cmd : {translate_py} {translate_script.name}\n", flush=True)
+            print(f"   cwd : {nemo_dir}")
+            print(f"   cmd : {translate_py} {translate_script}\n", flush=True)
             import subprocess
             result = subprocess.run(
                 [translate_py, str(translate_script)],
-                cwd=str(TRANSLATE_DIR),
+                cwd=str(nemo_dir),
                 env=env,
             )
             if result.returncode != 0:
@@ -309,7 +312,7 @@ def main():
         dub_workdir.mkdir(parents=True, exist_ok=True)
 
         dub_cmd = _python(QWEN_PY, QWEN_DIR) + [
-            "dub.py",
+            str(QWEN_DIR / "dub.py"),
             str(video),          # explicit video — no auto-discovery
             str(dub_srt),        # explicit SRT   — no auto-discovery
             "--language",  args.target_lang,
@@ -325,7 +328,7 @@ def main():
 
     run_label = _derive_run_label(source_lang, args.target_lang, video=video,
                                   nemo_dir=nemo_dir, end_product_dir=end_product_dir)
-    _finalize_outputs(run_label, dub_workdir=dub_workdir if not args.skip_dub else None)
+    _finalize_outputs(run_label, dub_workdir=dub_workdir if not args.skip_dub else None, nemo_dir=nemo_dir)
 
     summary_lines = [
         "╔══════════════════════════════════════════════════════════╗",

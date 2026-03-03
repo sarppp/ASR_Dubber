@@ -14,17 +14,18 @@ from pathlib import Path
 
 # ── Folder layout ─────────────────────────────────────────────────────────────
 ROOT          = Path(__file__).resolve().parent
-NEMO_DIR      = ROOT / "nemo"
+NEMO_CODE_DIR = ROOT / "nemo"                                         # code — always /app/nemo
+NEMO_DIR      = Path(os.getenv("INPUT_DIR",  str(NEMO_CODE_DIR)))    # data  — /data/input in Docker
 TRANSLATE_DIR = ROOT / "translate-gemma"
 QWEN_DIR      = ROOT / "qwen3-tts"
 WHISPER_DIR   = ROOT / "whisper"
 
-NEMO_PY       = NEMO_DIR      / ".venv" / "bin" / "python"
-QWEN_PY       = QWEN_DIR      / ".venv" / "bin" / "python"
-WHISPER_PY    = WHISPER_DIR   / ".venv" / "bin" / "python"
-TRANSLATE_PY  = TRANSLATE_DIR / ".venv" / "bin" / "python"
+NEMO_PY       = NEMO_CODE_DIR / ".venv" / "bin" / "python"
+QWEN_PY       = QWEN_DIR           / ".venv" / "bin" / "python"
+WHISPER_PY    = WHISPER_DIR        / ".venv" / "bin" / "python"
+TRANSLATE_PY  = TRANSLATE_DIR      / ".venv" / "bin" / "python"
 CLEAN_SUBS_SCRIPT = TRANSLATE_DIR / "clean_subs.py"
-END_PRODUCT_DIR   = NEMO_DIR / "end_product"
+END_PRODUCT_DIR   = Path(os.getenv("OUTPUT_DIR", str(NEMO_DIR / "end_product")))
 
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_BIN         = os.getenv("OLLAMA_BIN", "ollama")

@@ -21,10 +21,11 @@
 1. [What This Project Solves](#what-this-project-solves)
 2. [Pipeline at a Glance](#pipeline-at-a-glance)
 3. [Subsystems & Key Scripts](#subsystems--key-scripts)
-4. [NeMo](#nemo)
-5. [translate-gemma](#translate-gemma)
-6. [qwen3-tts](#qwen3-tts)
-7. [Usage](#usage)
+4. [Refactoring & Modular Architecture](#refactoring--modular-architecture)
+5. [NeMo](#nemo)
+6. [translate-gemma](#translate-gemma)
+7. [qwen3-tts](#qwen3-tts)
+8. [Usage](#usage)
 
 ## Pipeline at a Glance
 
@@ -33,13 +34,13 @@ video.mp4
    │
    ├─(whisper/detect_language.py)─── detects spoken language when unknown
    │
-   ├─(nemo/nemo.py --diarize)──────────────┐
+   ├─(nemo/nemo_diarize.py)──────────────┐
    │                                       │
    │ generates diarized SRT                │
    ▼                                       │
 video.nemo.{src}.diarize.srt               │
    │                                       │
-   ├─(translate-gemma/translate*.py)───────┤
+   ├─(translate-gemma/translate_diarize.py)───────┤
    │                                       │
    │ produces translated SRT               │
    ▼                                       │
@@ -71,10 +72,42 @@ Everything can be fired via `run_pipeline.py`, which orchestrates the three stag
 | Folder | Purpose | Highlights |
 | --- | --- | --- |
 | `run_pipeline.py` | Single entry point | Auto-detects source language, spins up Ollama, supports `--skip-*` flags, enforces logging banners so you can show progress shots. Per-video workdir isolation so checkpoints never bleed between videos; SRT lookup checks both `nemo/` and `nemo/end_product/` for seamless resume after archiving; `--input-dir` / `--output-dir` for custom folder layouts. |
-| `nemo/nemo.py` | Diarization + transcription | Canary/Parakeet auto-selection, VRAM-adaptive chunking, diarization via `ClusteringDiarizer`, custom patches in `canary_patch.py` to bypass canary EOS assertions and force correct manifest langs. |
-| `translate-gemma/translate*.py` | Translation (Gemma via Ollama) | Chunked SRT translation with strict `[idx]` preservation, Docker-friendly Ollama client, low-temperature prompts for subtitle-safe formatting. |
-| `qwen3-tts/dub.py` | Dubbing | Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. Per-video workdir isolation keeps checkpoints segregated. |
-| `whisper/detect_language.py` | Language detection | 30s Whisper probe when no diarized SRT exists yet; called automatically from `run_pipeline.py`. |
+| `nemo/` | Diarization + transcription | **Refactored into modular components**: `nemo_diarize.py` (main orchestration), `nemo_audio.py` (audio processing), `nemo_model.py` (model loading & transcription), plus helper modules. Canary/Parakeet auto-selection, VRAM-adaptive chunking, diarization via `ClusteringDiarizer`, custom patches in `canary_patch.py` to bypass canary EOS assertions and force correct manifest langs. |
+| `translate-gemma/` | Translation (Gemma via Ollama) | **Refactored into modular components**: `translate_diarize.py` (main translation logic), `translate.py` (standalone SRT translation), `clean_subs.py` (subtitle cleaning). Chunked SRT translation with strict `[idx]` preservation, Docker-friendly Ollama client, low-temperature prompts for subtitle-safe formatting. |
+| `qwen3-tts/` | Dubbing | **Refactored into modular components**: `dub.py` (main orchestration), `dub_audio.py` (audio processing), `dub_srt.py` (SRT parsing & voice assignment), `qwen_tts_worker.py` (TTS worker). Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. Per-video workdir isolation keeps checkpoints segregated. |
+| `whisper/` | Language detection | `detect_language.py` (30s Whisper probe when no diarized SRT exists yet; called automatically from `run_pipeline.py`). |
+
+
+## Refactoring & Modular Architecture
+
+The codebase has been refactored from large monolithic files into smaller, focused modules (200-300 lines each) to improve maintainability and readability:
+
+### nemo/ Module Structure
+- **`nemo_diarize.py`** (336 lines) - Main orchestration and diarization pipeline
+- **`nemo_audio.py`** - Audio processing utilities (extraction, chunking, SRT generation)
+- **`nemo_model.py`** - Model loading and transcription logic
+- **`helpers/`** - Specialized utilities for speaker analysis, ASR processing, and Modal deployments
+
+### translate-gemma/ Module Structure  
+- **`translate_diarize.py`** (468 lines) - Main translation engine with Ollama integration
+- **`translate.py`** - Standalone SRT translation for non-diarized files
+- **`clean_subs.py`** - Subtitle cleaning and formatting utilities
+
+### qwen3-tts/ Module Structure
+- **`dub.py`** - Main dubbing orchestration and pipeline coordination
+- **`dub_audio.py`** - Audio processing, Demucs separation, and mixing
+- **`dub_srt.py`** (135 lines) - SRT parsing, voice assignment, and language mapping
+- **`qwen_tts_worker.py`** - Dedicated TTS synthesis worker
+
+### run_pipeline.py Refactoring
+The main orchestrator has been streamlined while maintaining full compatibility with all existing CLI flags and functionality.
+
+**Benefits of the refactoring:**
+- **Improved maintainability** - Smaller files are easier to understand and modify
+- **Better testability** - Individual components can be tested in isolation
+- **Enhanced reusability** - Utilities can be imported and used across different contexts
+- **Clearer separation of concerns** - Each module has a focused responsibility
+- **Preserved compatibility** - All existing CLI interfaces and workflows remain unchanged
 
 
 
@@ -169,7 +202,7 @@ Unlike standard translation tools that lose speaker context, this script utilize
 
 To handle the limitations of smaller local LLMs (like `translategemma:4b`), the pipeline employs several "guardrail" techniques:
 
-* **Micro-Chunking Logic:** Subtitles are processed in small batches (5 lines per chunk) to reduce model confusion and prevent the "forgetting" of indices or merging of lines common in larger batches.
+* **Chunked Processing:** Subtitles are processed in configurable batches (default 15 lines, set via `CHUNK_SIZE` env var) to reduce model confusion and prevent the "forgetting" of indices or merging of lines common in larger batches.
 
 * **Index-Based Verification:** Every line is tagged with a unique `[index]`. Post-translation, the script uses robust regex to parse these indices, mapping translated text back to the specific `pysrt` object to ensure no subtitles are skipped or misaligned.
 
@@ -179,14 +212,14 @@ To handle the limitations of smaller local LLMs (like `translategemma:4b`), the 
 
 * **Auto-Language Detection:** The script automatically parses the source language code (e.g., `.de.`) directly from the filename of the NeMo-generated SRT to configure the translation prompt.
 
-* **Deterministic Configuration:** Sets `temperature: 0.1` and increases `num_ctx` to 4096 to balance translation creativity with strict adherence to the input format.
+* **Deterministic Configuration:** Sets `temperature: 0.1` and `num_ctx: 2048` to balance translation creativity with strict adherence to the input format.
 
 * **Garbage Filtering:** Includes automated post-processing to strip common LLM artifacts like `<|endoftext|>` and unexpected whitespace before saving the final file.
 
 
 #### Standalone `translate.py`
 
-When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the `translategemma:4b` model is already pulled, otherwise the first run will fail before translating.
+When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the translation model is already pulled (default `translategemma:4b`, override with `TRANSLATE_MODEL` env var), otherwise the first run will fail before translating.
 
 
 
@@ -437,7 +470,7 @@ Running `uv run --project nemo python nemo.py --help` lists every low-level flag
 | `--reserve-gb` | `1.5` | VRAM (in GB) to keep unused before computing chunk length. |
 | `--chunk-override SEC` | auto | Hard-code the chunk size (seconds). Useful when auto-estimates are still too large/small. |
 
-Because `run_pipeline.py` invokes `nemo.py` under the hood, you can tweak NeMo without leaving the one-command workflow. For example, `--precision fp32 --chunk-override 90` on the pipeline CLI becomes `... nemo.py ... --precision fp32 --chunk-override 90` during Step 1.
+Because `run_pipeline.py` invokes `nemo_diarize.py` under the hood, you can tweak NeMo without leaving the one-command workflow. For example, `--precision fp32 --chunk-override 90` on the pipeline CLI becomes `... nemo_diarize.py ... --precision fp32 --chunk-override 90` during Step 1.
 
 
 
