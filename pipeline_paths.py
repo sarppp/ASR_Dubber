@@ -69,11 +69,10 @@ def _find_video(
     """Find the newest unprocessed video file in nemo/ dir."""
     nemo_dir = nemo_dir or NEMO_DIR
     end_product_dir = end_product_dir or END_PRODUCT_DIR
-    VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
+    VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wav"}
     videos = sorted(
         (f for f in nemo_dir.iterdir() if f.suffix.lower() in VIDEO_EXT),
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
+        key=lambda f: (f.suffix.lower() == ".wav", -f.stat().st_mtime),
     )
     for video in videos:
         if not _video_already_processed(video, target_lang=target_lang,

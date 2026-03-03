@@ -8,8 +8,8 @@ import pysrt
 
 # --- Folder Paths ---
 ROOT = Path(__file__).resolve().parent.parent
-NEMO_DIR = ROOT / 'nemo'
-END_PRODUCT_DIR = NEMO_DIR / 'end_product'
+NEMO_DIR = Path(os.getenv("INPUT_DIR",  str(ROOT / "nemo")))
+END_PRODUCT_DIR = Path(os.getenv("OUTPUT_DIR", str(NEMO_DIR / "end_product")))
 
 def clean_srt_files():
     print(f" 1. Cleaning subtitles in '{NEMO_DIR}' ...")
@@ -81,16 +81,13 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
 
 
 def copy_source_video(run_label: str | None = None) -> None:
-    """Copy (not move) the source video into the end_product run folder."""
+    """Move the source video/WAV into the end_product run folder (only called on success)."""
     destination_dir = END_PRODUCT_DIR if not run_label else END_PRODUCT_DIR / run_label
 
-    # Infer which video this run is for from the run_label base name
-    # run_label looks like: Debate_101_with_Harvard_s_...nemo.en.diarize__en_to_fr
-    # We want to match the video file in nemo/ whose normalized stem matches
     if not run_label:
         return
 
-    VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
+    VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wav"}
 
     def _norm(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
@@ -103,16 +100,27 @@ def copy_source_video(run_label: str | None = None) -> None:
         if _norm(f.stem) == label_base:
             dest = destination_dir / f.name
             if dest.exists():
-                print(f"   Source video already in destination: {f.name}")
+                print(f"   Source file already in destination: {f.name}")
                 return
             try:
-                shutil.copy2(str(f), str(dest))
-                print(f"   Copied source video: {f.name}")
+                shutil.move(str(f), str(dest))
+                print(f"   Moved source file: {f.name}")
             except Exception as e:
-                print(f"   Failed to copy source video {f.name}: {e}")
+                print(f"   Failed to move source file {f.name}: {e}")
             return
 
-    print(f"   ⚠️  Source video not found in {NEMO_DIR} for run '{run_label}'")
+    print(f"   ⚠️  Source video/WAV not found in {NEMO_DIR} for run '{run_label}'")
+
+
+def cleanup_wav_chunks() -> None:
+    """Delete leftover _chunk_XXXX.wav files left behind by cancelled/interrupted runs."""
+    chunks = list(NEMO_DIR.glob("_chunk_*.wav"))
+    if not chunks:
+        return
+    print(f"\n3. Cleaning up {len(chunks)} leftover chunk WAV(s) in '{NEMO_DIR}' ...")
+    for f in chunks:
+        f.unlink()
+        print(f"   Deleted: {f.name}")
 
 
 def main() -> None:
@@ -126,6 +134,7 @@ def main() -> None:
     clean_srt_files()
     destination = move_final_products(args.run_label, args.dub_workdir)
     copy_source_video(args.run_label)
+    cleanup_wav_chunks()
     print(f"\nWorkspace is clean! All files are neatly packed in: {destination}")
 
 

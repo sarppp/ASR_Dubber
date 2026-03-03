@@ -70,6 +70,7 @@ ASR/
 """
 
 import argparse
+import atexit
 import os
 import re
 import sys
@@ -168,6 +169,15 @@ def main():
         print(f"📂 Output dir : {end_product_dir}")
     end_product_dir.mkdir(parents=True, exist_ok=True)
 
+    # Always clean up chunk WAVs — even on cancel or failure
+    def _cleanup_chunks_on_exit():
+        for c in nemo_dir.glob("_chunk_*.wav"):
+            try:
+                c.unlink()
+            except OSError:
+                pass
+    atexit.register(_cleanup_chunks_on_exit)
+
     # ── Validate dirs ─────────────────────────────────────────────────────────
     for name, d in [("nemo", nemo_dir), ("qwen3-tts", QWEN_DIR)]:
         if not d.exists():
@@ -190,6 +200,10 @@ def main():
     # Append trim suffix so all generated files are unique per trim length
     if args.trim:
         video_base = f"{video_base}_t{args.trim}"
+
+    if video.suffix.lower() == ".wav":
+        print(f"🎵 WAV input detected — dubbing step will be skipped automatically", flush=True)
+        args.skip_dub = True
 
     print(f"🎬 Selected video : {video.name}  (base: '{video_base}')", flush=True)
 

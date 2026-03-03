@@ -199,7 +199,12 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
     free_before, _ = _vram_gb()
 
     trim_tag = f"trim{trim_sec}" if trim_sec else "full"
-    audio_path = str(work_dir / f"{stem}_nemo_16k_{trim_tag}.wav")
+    is_wav_input = Path(video_path).suffix.lower() == ".wav"
+    if is_wav_input:
+        audio_path = video_path
+        log.info(f"WAV input — skipping FFmpeg extraction: {Path(video_path).name}")
+    else:
+        audio_path = str(work_dir / f"{stem}_nemo_16k_{trim_tag}.wav")
 
     # Checkpoint file paths (defined once, used throughout)
     transcript_file  = work_dir / f"{stem}_nemo_{src_lang}_transcript.json"
@@ -219,7 +224,9 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
         return srt
 
     # ── Extract audio ─────────────────────────────────────────────────────────
-    if Path(audio_path).exists():
+    if is_wav_input:
+        pass  # already set above
+    elif Path(audio_path).exists():
         log.info(f"Reusing cached audio: {Path(audio_path).name}")
     else:
         log.info("Extracting 16 kHz mono WAV…")
@@ -244,9 +251,12 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
         log.info(f"Transcribing with {_fmt_dur(chunk_sec)} chunk target…")
 
         t_asr = time.perf_counter()
-        words, segs, manifest = _transcribe_chunked(model, audio_path, model_name,
-                                                      src_lang, tgt_lang, chunk_sec)
-        _cleanup_chunks(manifest, audio_path)
+        manifest = []
+        try:
+            words, segs, manifest = _transcribe_chunked(model, audio_path, model_name,
+                                                          src_lang, tgt_lang, chunk_sec)
+        finally:
+            _cleanup_chunks(manifest, audio_path)
         asr_elapsed = time.perf_counter() - t_asr
         rtf = asr_elapsed / audio_dur if audio_dur > 0 else 0
         log.info(f"Transcription done {asr_elapsed:.1f}s (RTF {rtf:.2f}x)")

@@ -11,6 +11,7 @@
 #   INPUT_DIR     folder containing input video   (default: /data/input)
 #   OUTPUT_DIR    folder for final outputs        (default: /data/output)
 #   RUN_MODE      full|transcribe|translate       (default: full)
+#   PRECISION     fp32|fp16|bf16                  (default: bf16)
 
 set -euo pipefail
 
@@ -25,6 +26,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-/data/output}"
 TARGET_LANG="${TARGET_LANG:-}"
 LANGUAGE="${LANGUAGE:-}"
 RUN_MODE="${RUN_MODE:-full}"
+PRECISION="${PRECISION:-bf16}"
 
 if [[ -z "$TARGET_LANG" ]]; then
     echo "[entrypoint] ERROR: TARGET_LANG is required (e.g. TARGET_LANG=fr)" >&2
@@ -55,4 +57,5 @@ exec /app/nemo/.venv/bin/python /app/run_pipeline.py \
     --input-dir   "$INPUT_DIR"  \
     --output-dir  "$OUTPUT_DIR" \
     --run-mode    "$RUN_MODE"   \
+    --precision   "$PRECISION"  \
     "${LANG_FLAG[@]}"
