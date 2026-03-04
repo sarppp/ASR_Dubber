@@ -56,7 +56,7 @@ def main():
     p.add_argument("--language", default="en", help="Source language code, e.g. en/de/fr/es [default: en]")
     p.add_argument("--asr-model", default=None, choices=list(ASR_MODELS),
                    help=(f"ASR model shortname (default: auto by language). "
-                         f"Options: {', '.join(f'{k} ({v.split(\"/\")[1]})' for k, v in ASR_MODELS.items())}"))
+                         f"Options: {', '.join(f'{k} ({v.split('/')[1]})' for k, v in ASR_MODELS.items())}"))
     p.add_argument("--nemo-model", default=None, metavar="MODEL",
                    help="Full NeMo model ID override (e.g. nvidia/parakeet-tdt-0.6b-v3). "
                         "Takes precedence over --asr-model.")

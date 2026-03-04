@@ -104,7 +104,7 @@ RESERVE_FLAG=();    [[ -n "$RESERVE_GB"     ]] && RESERVE_FLAG=(--reserve-gb "$R
 SAFETY_FLAG=();     [[ -n "$SAFETY_FACTOR"  ]] && SAFETY_FLAG=(--safety-factor "$SAFETY_FACTOR")
 TRIM_FLAG=();       [[ -n "$TRIM" && "$TRIM" != "0" ]] && TRIM_FLAG=(--trim "$TRIM")
 WHISPER_FLAG=();    [[ -n "$WHISPER_MODEL"  ]] && WHISPER_FLAG=(--whisper-model "$WHISPER_MODEL")
-QWEN_FLAG=();       [[ -n "$QWEN_MODE"      ]] && QWEN_FLAG=(--qwen-mode "$QWEN_MODE")
+QWEN_FLAG=();       [[ -n "$QWEN_MODE" ]] && QWEN_FLAG=(--qwen-mode "$QWEN_MODE")
 DEMUCS_FLAG=();     [[ "$NO_DEMUCS"  =~ ^(1|true|yes)$ ]] && DEMUCS_FLAG=(--no-demucs)
 SKIP_NEMO_FLAG=();  [[ "$SKIP_NEMO"  =~ ^(1|true|yes)$ ]] && SKIP_NEMO_FLAG=(--skip-nemo)
 SKIP_TRANS_FLAG=(); [[ "$SKIP_TRANSLATE" =~ ^(1|true|yes)$ ]] && SKIP_TRANS_FLAG=(--skip-translate)

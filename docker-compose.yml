@@ -107,6 +107,7 @@ services:
       # ── Translation model (Ollama) ────────────────────────────────────────
       TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"   # translategemma:4b or :12b
       OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+      CHUNK_SIZE: "${CHUNK_SIZE:-15}"                           # subtitle lines per Ollama call (default: 15)
 
       # ── Dubbing (Qwen TTS) ────────────────────────────────────────────────
       QWEN_MODE:      "${QWEN_MODE:-clone}"        # clone | custom
