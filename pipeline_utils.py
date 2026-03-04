@@ -32,6 +32,10 @@ OLLAMA_BIN         = os.getenv("OLLAMA_BIN", "ollama")
 OLLAMA_DOCKER_IMAGE = os.getenv("OLLAMA_DOCKER_IMAGE", "ollama/ollama")
 OLLAMA_MODELS_DIR  = os.getenv("OLLAMA_MODELS_DIR", str(Path.home() / "python-tools" / ".ollama_models"))
 
+# Sentinel returned by _ollama_start() when WE started Ollama via Docker.
+# Distinct from None (= Ollama was already running before we started).
+_DOCKER_PROC = "docker"
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -121,30 +125,47 @@ def _ollama_start() -> subprocess.Popen | None:
 
         cmd.append(OLLAMA_DOCKER_IMAGE)
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
+        try:
+            # 120 s: covers slow WSL2 Docker daemon init + first-time image pull.
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            print("⚠️  docker run timed out — falling back to native ollama binary...", flush=True)
+            subprocess.run(["docker", "rm", "-f", "ollama"], capture_output=True)
+            result = None
+
+        if result is not None and result.returncode != 0:
             err = (result.stderr or result.stdout).strip()
             print(f"⚠️  Docker failed (rc={result.returncode}): {err}", flush=True)
             print("   Falling back to native ollama binary...", flush=True)
-        else:
+        elif result is not None:
             # Wait briefly then verify container is still alive
-            time.sleep(8)  # Give Ollama more time to fully start
+            time.sleep(3)  # Reduced wait time
             check = subprocess.run(
                 ["docker", "inspect", "--format", "{{.State.Running}}", "ollama"],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=10,
             )
             if check.stdout.strip() == "true":
                 docker_ok = True
                 started_via = "docker"
             else:
-                logs = subprocess.run(
-                    ["docker", "logs", "--tail", "30", "ollama"],
-                    capture_output=True, text=True,
+                # Try one more time - sometimes container needs longer to start
+                time.sleep(5)
+                check = subprocess.run(
+                    ["docker", "inspect", "--format", "{{.State.Running}}", "ollama"],
+                    capture_output=True, text=True, timeout=10,
                 )
-                err = (logs.stderr or logs.stdout).strip()[-400:]
-                subprocess.run(["docker", "rm", "-f", "ollama"], capture_output=True)
-                print(f"⚠️  Ollama container exited immediately:\n{err}", flush=True)
-                print("   Falling back to native ollama binary...", flush=True)
+                if check.stdout.strip() == "true":
+                    docker_ok = True
+                    started_via = "docker"
+                else:
+                    logs = subprocess.run(
+                        ["docker", "logs", "--tail", "30", "ollama"],
+                        capture_output=True, text=True,
+                    )
+                    err = (logs.stderr or logs.stdout).strip()[-400:]
+                    subprocess.run(["docker", "rm", "-f", "ollama"], capture_output=True)
+                    print(f"⚠️  Ollama container exited immediately:\n{err}", flush=True)
+                    print("   Falling back to native ollama binary...", flush=True)
 
     # ── Strategy 2: Native binary (RunPod, servers, Docker fallback) ──────────
     if not docker_ok:
@@ -174,7 +195,7 @@ def _ollama_start() -> subprocess.Popen | None:
         time.sleep(1)
         if _ollama_is_running():
             print(f"✓ Ollama ready via {started_via} (took {i+1}s)", flush=True)
-            return proc
+            return _DOCKER_PROC if docker_ok else proc
         if i % 5 == 0:
             print(f"   waiting for Ollama... ({i+1}/40)", flush=True)
 
@@ -182,16 +203,20 @@ def _ollama_start() -> subprocess.Popen | None:
     sys.exit(1)
 
 
-def _ollama_stop(proc: subprocess.Popen | None) -> None:
-    """Stop what we started — Docker container or native process."""
+def _ollama_stop(proc: "subprocess.Popen | str | None") -> None:
+    """Stop what _ollama_start() started.
+
+    proc == None       → Ollama was already running before us; leave it alone.
+    proc == _DOCKER_PROC → we started it via Docker; stop the container.
+    proc is a Popen    → we started a native 'ollama serve'; kill the process.
+    """
     if proc is None:
-        return
+        return  # was already running — don't touch it
     print("🛑 Stopping Ollama...", flush=True)
-    # If docker is available, stop the container by name (cleaner than killing proc)
-    if _docker_available():
+    if proc == _DOCKER_PROC:
         subprocess.run(["docker", "stop", "ollama"],
                        capture_output=True, timeout=15)
-        print("✓ Ollama container stopped")
+        print("✓ Ollama container stopped (will be removed on next run)")
     else:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
