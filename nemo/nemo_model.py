@@ -9,6 +9,7 @@ instead of the local nemo.py file.
 import gc
 import importlib
 import logging
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -97,6 +98,39 @@ def _extract_first_hypothesis(batch_output):
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
+def _clear_nemo_cache(model_name: str) -> bool:
+    """Delete the NeMo HF-hub cache for model_name so it re-downloads cleanly."""
+    base = Path("/root/.cache/torch/NeMo")
+    if not base.exists():
+        return False
+    # model_name is e.g. "nvidia/canary-qwen-2.5b" → org="nvidia", slug="canary-qwen-2.5b"
+    parts = model_name.split("/")
+    if len(parts) == 2:
+        org, slug = parts
+    else:
+        org, slug = "", parts[-1]
+    cleared = False
+    for hf_dir in base.glob("*/hf_hub_cache"):
+        target = hf_dir / org / slug if org else hf_dir / slug
+        if target.exists():
+            log.warning(f"Clearing corrupt NeMo cache: {target}")
+            shutil.rmtree(target)
+            cleared = True
+    return cleared
+
+
+def _from_pretrained_with_cache_retry(nemo_asr, model_name: str, device: str):
+    """Call ASRModel.from_pretrained, clearing corrupt cache and retrying once on FileNotFoundError."""
+    map_loc = None if device == "cuda" else "cpu"
+    try:
+        return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name, map_location=map_loc)
+    except FileNotFoundError:
+        if _clear_nemo_cache(model_name):
+            log.info("Retrying model download after cache clear…")
+            return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name, map_location=map_loc)
+        raise
+
+
 def _load_model(model_name: str, precision: str, device: str):
     from qwen3_asr import _is_qwen3_asr, _load_qwen3_asr
     if _is_qwen3_asr(model_name):
@@ -116,12 +150,11 @@ def _load_model(model_name: str, precision: str, device: str):
     t0 = time.perf_counter()
     log.info("Loading model…")
     try:
-        model = nemo_asr.models.ASRModel.from_pretrained(
-            model_name=model_name, map_location=None if device == "cuda" else "cpu")
+        model = _from_pretrained_with_cache_retry(nemo_asr, model_name, device)
     except Exception as e:
         if device != "cuda": raise
         log.warning(f"Direct GPU load failed ({e}); loading on CPU first")
-        model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_name, map_location="cpu")
+        model = _from_pretrained_with_cache_retry(nemo_asr, model_name, "cpu")
 
     if device == "cuda":
         torch.cuda.empty_cache(); gc.collect()
