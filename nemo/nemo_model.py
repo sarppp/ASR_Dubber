@@ -319,15 +319,20 @@ def _estimate_chunk_sec(model_name: str, safety: float, reserve_gb: float) -> in
     if free <= 0: return 300
     usable = max(0.0, free - reserve_gb) * safety
     if usable <= 0: return 60
-    gb_per_min = 0.28 if "parakeet" in model_name.lower() else 0.50
-    secs = max(30, min(int(usable / gb_per_min * 60), 600))
 
-    # Canary is an encoder-decoder model trained on short segments (≤40s).
-    # Chunks longer than ~60s cause it to produce compressed/summarised output
-    # instead of a full transcription — 10-minute chunks yield only ~320 words
-    # where 6,600+ are expected.  Cap strictly regardless of available VRAM.
-    if "canary" in model_name.lower():
-        secs = min(secs, 60)
+    is_canary   = "canary"    in model_name.lower()
+    is_parakeet = "parakeet"  in model_name.lower()
+    gb_per_min  = 0.28 if is_parakeet else 0.50
+
+    if is_canary:
+        # Encoder-decoder trained on ≤40s segments: quality collapses above 60s.
+        # Cap hard regardless of available VRAM.
+        secs = 60
+    else:
+        # CTC/TDT models (Parakeet v2/v3): quality is unaffected by chunk length.
+        # More VRAM → larger chunks → fewer passes → faster wall time.
+        # Cap at 3600s (1 hour) as a practical ceiling; OOM retry halves if needed.
+        secs = max(30, min(int(usable / gb_per_min * 60), 3600))
 
     log.info(f"VRAM {free:.2f} GB free → usable {usable:.2f} GB → chunk target {_fmt_dur(secs)}")
     return secs
