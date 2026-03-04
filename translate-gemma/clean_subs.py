@@ -53,9 +53,11 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
     # Find NeMo intermediate files for this run
     intermediate_files = []
     if run_label:
-        # Extract base name from run_label to find related files
+        # Extract base name from run_label to find related files.
+        # Strip the trim suffix (_t40, _t200 …) — it's only in the SRT/run-label,
+        # not in the intermediate JSON/WAV filenames which use the raw video/WAV stem.
         base_pattern = re.split(r"[._]nemo|__", run_label)[0]
-        # Find JSON files and WAV files matching this base (more flexible matching)
+        base_pattern = re.sub(r"_t\d+$", "", base_pattern)
         base_norm = re.sub(r"[^a-z0-9]", "", base_pattern.lower())
         for f in NEMO_DIR.glob("*.json"):
             f_norm = re.sub(r"[^a-z0-9]", "", f.stem.lower())
@@ -109,11 +111,14 @@ def copy_source_video(run_label: str | None = None) -> None:
         return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
  
     label_base = _norm(re.split(r"[._]nemo|__", run_label)[0])
- 
+    label_base = re.sub(r"_t\d+$", "", label_base)  # strip trim suffix (_t40, _t200…)
+
     for f in NEMO_DIR.iterdir():
         if f.suffix.lower() not in VIDEO_EXT:
             continue
-        if _norm(f.stem) == label_base:
+        # WAV inputs have "_nemo_16k_full" baked into the stem — strip it before comparing
+        f_base = _norm(f.stem.split("_nemo")[0])
+        if f_base == label_base:
             dest = destination_dir / f.name
             if dest.exists():
                 print(f"   Source file already in destination: {f.name}")
