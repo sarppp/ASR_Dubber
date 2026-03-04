@@ -64,6 +64,17 @@ def _chunk_audio(audio_path: str, work_dir: Path, chunk_sec: int) -> list[tuple[
         chunks.append((cp, offset)); offset += step; idx += 1
     return chunks
 
+def _srt_last_timestamp(srt: str) -> float:
+    """Return the end timestamp (seconds) of the last SRT block, or 0.0."""
+    import re
+    pattern = re.compile(r"\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})")
+    matches = list(pattern.finditer(srt))
+    if not matches:
+        return 0.0
+    h, m, s, ms = [int(x) for x in matches[-1].groups()]
+    return h * 3600 + m * 60 + s + ms / 1000.0
+
+
 def _cleanup_chunks(manifest: list, keep: str) -> None:
     for e in manifest or []:
         p = e.get("path")

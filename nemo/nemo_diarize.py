@@ -23,6 +23,7 @@ from nemo_audio import (
     _fmt_dur,
     _segs_to_srt,
     _split_coarse_segs,
+    _srt_last_timestamp,
     _vram_gb,
     _words_to_segs,
 )
@@ -379,6 +380,24 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
 
     # ── Build SRT ─────────────────────────────────────────────────────────────
     srt = _build_srt(words, segs, turns, diarize)
+
+    # ── Coverage sanity check ─────────────────────────────────────────────────
+    # Catches silent failures: stale checkpoint, ASR returning only first chunk,
+    # _strip_asr_repetition false-positive, audio extraction cut short, etc.
+    if audio_dur > 60:
+        last_ts = _srt_last_timestamp(srt)
+        coverage = last_ts / audio_dur if audio_dur > 0 else 0.0
+        if coverage < 0.50:
+            log.error(
+                f"⚠️  SRT COVERAGE CRITICAL: last timestamp {_fmt_dur(last_ts)} "
+                f"vs audio {_fmt_dur(audio_dur)} ({coverage * 100:.0f}%) — "
+                f"transcription appears incomplete. Delete the checkpoint JSON and re-run."
+            )
+        elif coverage < 0.85:
+            log.warning(
+                f"⚠️  SRT coverage low: {_fmt_dur(last_ts)} / {_fmt_dur(audio_dur)} "
+                f"({coverage * 100:.0f}%) — last segment may be missing."
+            )
 
     wall = time.perf_counter() - t0
     seg_count = srt.count("\n\n") + 1 if srt.strip() else 0
