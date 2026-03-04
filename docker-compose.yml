@@ -74,6 +74,7 @@ services:
     volumes:
       - ./data:/data                   # mount local data folder
       - hf_cache:/root/.cache/huggingface   # persist HuggingFace model downloads
+      - nemo_cache:/root/.cache/torch/NeMo  # persist NeMo model downloads
     environment:
       # Ollama endpoint — points to the companion service
       OLLAMA_HOST: "http://ollama:11434"
@@ -121,4 +122,6 @@ volumes:
   ollama_models:
     driver: local
   hf_cache:
+    driver: local
+  nemo_cache:
     driver: local
