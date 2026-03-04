@@ -77,12 +77,7 @@ if [[ -z "$TARGET_LANG" ]]; then
     echo "[entrypoint] ERROR: TARGET_LANG is required (e.g. TARGET_LANG=fr)" >&2
     exit 1
 fi
-if [[ ! -d "$INPUT_DIR" ]]; then
-    echo "[entrypoint] ERROR: INPUT_DIR not found: $INPUT_DIR" >&2
-    exit 1
-fi
-
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
 
 echo "============================================================"
 echo " ASR Pipeline (env-var mode)"
