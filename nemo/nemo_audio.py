@@ -71,6 +71,40 @@ def _cleanup_chunks(manifest: list, keep: str) -> None:
             Path(p).unlink(missing_ok=True)
 
 
+def _strip_asr_repetition(text: str, min_unit_words: int = 5, min_reps: int = 3) -> str:
+    """
+    Remove hallucinated repetition loops from Canary/Whisper ASR output.
+
+    Encoder-decoder ASR models sometimes get stuck repeating the same phrase.
+    Finds any phrase of ≥min_unit_words words that repeats ≥min_reps consecutive
+    times anywhere in the text, then truncates to keep only the first copy.
+
+    Example (Canary de hallucination):
+        'Das ist gut für die Gesundheit. Das ist gut für die Gesundheit. Das ist gut...'
+        → 'Das ist gut für die Gesundheit.'
+    """
+    words = text.split()
+    n = len(words)
+    if n < min_unit_words * min_reps:
+        return text
+
+    for start in range(n - min_unit_words * min_reps + 1):
+        for unit_len in range(min_unit_words, (n - start) // min_reps + 1):
+            unit = words[start:start + unit_len]
+            reps, pos = 1, start + unit_len
+            while pos + unit_len <= n and words[pos:pos + unit_len] == unit:
+                reps += 1
+                pos += unit_len
+            if reps >= min_reps:
+                stripped = " ".join(words[:start + unit_len])
+                log.info(
+                    f"ASR repetition stripped: {reps}× repeat of {unit_len}-word phrase "
+                    f"starting at word {start} — removed {len(text) - len(stripped)} chars"
+                )
+                return stripped
+    return text
+
+
 # ── Subtitle assembly ─────────────────────────────────────────────────────────
 
 def _words_to_segs(words, max_w=10, max_dur=5.0, max_ch=80, diarized=False):
@@ -125,12 +159,20 @@ def _segs_to_srt(segs, diarized=False):
     if diarized:
         spk_list = sorted({s.get("speaker", "unknown") for s in segs})
         spk_map = {s: f"Speaker {i+1}" for i, s in enumerate(spk_list)}
-    lines, idx, prev = [], 0, None
+    lines, idx, prev_text, prev_spk = [], 0, None, None
     for s in segs:
         t = s["text"].strip()
-        if not t or (not diarized and t == prev): continue
+        if not t:
+            continue
+        spk = s.get("speaker") if diarized else None
+        # Deduplicate consecutive identical segments (both modes).
+        # In diarized mode only skip if the same speaker repeats — different speakers
+        # saying the same word is rare but valid; same speaker is always hallucination.
+        if t == prev_text and (not diarized or spk == prev_spk):
+            continue
         idx += 1
         label = f"[{spk_map.get(s.get('speaker', 'unknown'), 'Speaker ?')}] " if diarized else ""
         lines += [str(idx), f"{_fmt_ts(s['start'])} --> {_fmt_ts(s['end'])}", label + t, ""]
-        prev = t
+        prev_text = t
+        prev_spk = spk
     return "\n".join(lines)
