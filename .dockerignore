@@ -14,11 +14,12 @@
 # Inside nemo/: ignore everything, then unignore the exact files
 nemo/*
 !nemo/nemo.py
-!nemo/nemo_audio.py
-!nemo/nemo_model.py
-!nemo/nemo_diarize.py
+!nemo/nemo_modal_app.py
 !nemo/nemo_diarization_report.py
 !nemo/canary_patch.py
+!nemo/nemo_diarize.py
+!nemo/nemo_model.py
+!nemo/nemo_audio.py
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock
@@ -26,9 +27,10 @@ nemo/*
 # Inside qwen3-tts/
 qwen3-tts/*
 !qwen3-tts/dub.py
+!qwen3-tts/qwen_tts_worker.py
+!qwen3-tts/dubber_modal.py
 !qwen3-tts/dub_srt.py
 !qwen3-tts/dub_audio.py
-!qwen3-tts/qwen_tts_worker.py
 !qwen3-tts/.python-version
 !qwen3-tts/pyproject.toml
 !qwen3-tts/uv.lock
@@ -38,6 +40,7 @@ translate-gemma/*
 !translate-gemma/clean_subs.py
 !translate-gemma/translate.py
 !translate-gemma/translate_diarize.py
+!translate-gemma/translate_utils.py
 !translate-gemma/.python-version
 !translate-gemma/pyproject.toml
 !translate-gemma/uv.lock
