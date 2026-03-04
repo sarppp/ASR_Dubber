@@ -44,7 +44,7 @@ def _select_model(language: str, asr_model_key: str | None, nemo_model: str | No
     Priority: explicit --nemo-model > --asr-model shortname > auto by language.
     """
     if nemo_model:
-        return nemo_model
+        return ASR_MODELS.get(nemo_model, nemo_model)  # resolve shortname or use as full ID
     if asr_model_key:
         return ASR_MODELS[asr_model_key]
     return MODEL_MULTI if language in MULTI_LANGS else MODEL_EN
