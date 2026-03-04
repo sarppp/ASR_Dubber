@@ -310,8 +310,10 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
 
     if not transcript_file.exists():
         if chunk_override_sec and is_canary:
-            chunk_sec = max(30, min(int(chunk_override_sec), 900))
-            log.info(f"Manual chunk override: {_fmt_dur(chunk_sec)}")
+            # Even with manual override, cap Canary at 60s — beyond that it
+            # produces compressed output instead of full transcription.
+            chunk_sec = max(30, min(int(chunk_override_sec), 60))
+            log.info(f"Manual chunk override (Canary cap 60s): {_fmt_dur(chunk_sec)}")
         else:
             chunk_sec = _estimate_chunk_sec(model_name, safety_factor, reserve_gb)
         log.info(f"Transcribing with {_fmt_dur(chunk_sec)} chunk target…")
