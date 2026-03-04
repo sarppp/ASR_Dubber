@@ -77,16 +77,40 @@ services:
     environment:
       # Ollama endpoint — points to the companion service
       OLLAMA_HOST: "http://ollama:11434"
-      # Pipeline configuration
-      TARGET_LANG:    "${TARGET_LANG:-fr}"
-      LANGUAGE:       "${LANGUAGE:-}"
+
+      # ── Target / source language ──────────────────────────────────────────
+      TARGET_LANG:    "${TARGET_LANG:-fr}"       # required: fr, en, de, es, …
+      LANGUAGE:       "${LANGUAGE:-}"             # source lang (auto-detected if blank)
+
+      # ── Input / output directories ────────────────────────────────────────
       INPUT_DIR:      "${INPUT_DIR:-/data/input}"
       OUTPUT_DIR:     "${OUTPUT_DIR:-/data/output}"
-      RUN_MODE:       "${RUN_MODE:-full}"
-      # Model selection (override with env var)
-      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"
-      # TTS parallelism (translate-gemma worker count)
+
+      # ── Run control ───────────────────────────────────────────────────────
+      RUN_MODE:       "${RUN_MODE:-full}"          # full | transcribe | translate
+      SKIP_NEMO:      "${SKIP_NEMO:-}"             # 1/true = skip NeMo step
+      SKIP_TRANSLATE: "${SKIP_TRANSLATE:-}"        # 1/true = skip translation
+      SKIP_DUB:       "${SKIP_DUB:-}"              # 1/true = skip dubbing
+
+      # ── NeMo / ASR settings ───────────────────────────────────────────────
+      PRECISION:      "${PRECISION:-bf16}"         # fp32 | fp16 | bf16
+      NEMO_MODEL:     "${NEMO_MODEL:-}"            # shortname: parakeet-v2/v3, canary, canary-qwen
+                                                   # or full HF ID: nvidia/parakeet-tdt-0.6b-v3
+      CHUNK_OVERRIDE: "${CHUNK_OVERRIDE:-}"        # force chunk size in seconds (e.g. 120)
+      RESERVE_GB:     "${RESERVE_GB:-}"            # VRAM reserve GB (default: 1.5)
+      SAFETY_FACTOR:  "${SAFETY_FACTOR:-}"         # VRAM safety multiplier (default: 0.85)
+      TRIM:           "${TRIM:-0}"                 # process only first N seconds (0 = full)
+
+      # ── Whisper language detection ────────────────────────────────────────
+      WHISPER_MODEL:  "${WHISPER_MODEL:-medium}"   # tiny | base | small | medium | large-v3 | turbo
+
+      # ── Translation model (Ollama) ────────────────────────────────────────
+      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"   # translategemma:4b or :12b
       OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+
+      # ── Dubbing (Qwen TTS) ────────────────────────────────────────────────
+      QWEN_MODE:      "${QWEN_MODE:-clone}"        # clone | custom
+      NO_DEMUCS:      "${NO_DEMUCS:-}"             # 1/true = skip demucs (faster, no bgm)
     # By default uses entrypoint.sh env-var mode.
     # Pass extra flags: docker compose run pipeline --help
     command: []
