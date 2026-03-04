@@ -22,6 +22,7 @@ from nemo_audio import (
     _cleanup_chunks,
     _fmt_dur,
     _strip_asr_repetition,
+    _strip_special_tokens,
     _vram_gb,
 )
 
@@ -248,7 +249,7 @@ def _transcribe_canary(model, audio_path: str, offset: float, src_lang: str, tgt
             for attr in ("text", "pred_text", "transcription"):
                 v = first.get(attr) if isinstance(first, dict) else getattr(first, attr, None)
                 if v and isinstance(v, str): text = v; break
-    text = text.strip()
+    text = _strip_special_tokens(text)
     text = _strip_asr_repetition(text)
     log.info(f"Canary output: {len(text)} chars | {text[:80]!r}")
 

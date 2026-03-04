@@ -102,6 +102,31 @@ def _cleanup_chunks(manifest: list, keep: str) -> None:
             Path(p).unlink(missing_ok=True)
 
 
+def _strip_special_tokens(text: str) -> str:
+    """Remove model special tokens and leftover artifacts from ASR output.
+
+    Encoder-decoder models (Canary, Whisper) sometimes emit <|endoftext|> or
+    other <|...|> tokens when they run past the actual speech content.  The
+    trailing content looks like:
+        '...real text.<|endoftext|><|endoftext|>...<|endoftext|>.<|endoftext|>....'
+    """
+    import re
+    # Strip trailing <|endoftext|> storm first (before dot collapse) so the
+    # sentence-ending period is not merged into the artifact dot run.
+    # Pattern: one or more (<|endoftext|> followed by any whitespace/dots) at end.
+    text = re.sub(r"(<\|endoftext\|>[\s.]*)+$", "", text)
+    # Remove remaining isolated special tokens (mid-text, e.g. <|startoftranscript|>)
+    text = re.sub(r"<\|[^|>]+\|>", "", text)
+    # Collapse runs of 4+ dots to ellipsis
+    text = re.sub(r"\.{4,}", "...", text)
+    # Lone "..." left after token removal → empty
+    if text.strip() == "...":
+        text = ""
+    # Collapse multiple spaces
+    text = re.sub(r" {2,}", " ", text)
+    return text.strip()
+
+
 def _strip_asr_repetition(text: str, min_unit_words: int = 5, min_reps: int = 3) -> str:
     """
     Remove hallucinated repetition loops from Canary/Whisper ASR output.
