@@ -321,14 +321,19 @@ def _estimate_chunk_sec(model_name: str, safety: float, reserve_gb: float) -> in
     usable = max(0.0, free - reserve_gb) * safety
     if usable <= 0: return 60
 
-    is_canary   = "canary"    in model_name.lower()
-    is_parakeet = "parakeet"  in model_name.lower()
-    gb_per_min  = 0.28 if is_parakeet else 0.50
+    is_canary    = "canary"    in model_name.lower()
+    is_parakeet  = "parakeet"  in model_name.lower()
+    is_qwen3_asr = "qwen3-asr" in model_name.lower() or "Qwen3-ASR" in model_name
+    gb_per_min   = 0.28 if is_parakeet else 0.50
 
     if is_canary:
         # Encoder-decoder trained on ≤40s segments: quality collapses above 60s.
         # Cap hard regardless of available VRAM.
         secs = 60
+    elif is_qwen3_asr:
+        # Qwen3-ASR uses a seq2seq architecture; quality degrades on long chunks.
+        # Cap at 120s (2 min) regardless of VRAM.
+        secs = 120
     else:
         # CTC/TDT models (Parakeet v2/v3): quality is unaffected by chunk length.
         # More VRAM → larger chunks → fewer passes → faster wall time.
