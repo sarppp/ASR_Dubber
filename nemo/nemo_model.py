@@ -98,6 +98,10 @@ def _extract_first_hypothesis(batch_output):
 # ── Model loading ─────────────────────────────────────────────────────────────
 
 def _load_model(model_name: str, precision: str, device: str):
+    from qwen3_asr import _is_qwen3_asr, _load_qwen3_asr
+    if _is_qwen3_asr(model_name):
+        return _load_qwen3_asr(model_name, device, precision)
+
     nemo_asr = _import_nemo_asr()
 
     if device == "cuda":
@@ -263,7 +267,9 @@ def _transcribe_canary(model, audio_path: str, offset: float, src_lang: str, tgt
 
 def _transcribe_chunked(model, audio_path: str, model_name: str,
                          src_lang: str, tgt_lang: str, chunk_sec: int):
-    is_canary = "canary" in model_name.lower()
+    from qwen3_asr import _is_qwen3_asr, _transcribe_qwen3_asr
+    is_canary  = "canary" in model_name.lower()
+    is_qwen3   = _is_qwen3_asr(model_name)
     work_dir = Path(audio_path).parent
     dur = _audio_duration(audio_path)
 
@@ -282,7 +288,9 @@ def _transcribe_chunked(model, audio_path: str, model_name: str,
             for ci, entry in enumerate(manifest):
                 path, offset = entry["path"], entry["offset"]
                 t1 = time.perf_counter()
-                if is_canary:
+                if is_qwen3:
+                    words, segs = _transcribe_qwen3_asr(model, path, offset, src_lang)
+                elif is_canary:
                     words, segs = _transcribe_canary(model, path, offset, src_lang, tgt_lang)
                 else:
                     words, segs = _transcribe_parakeet(model, path, offset)
@@ -321,18 +329,21 @@ def _estimate_chunk_sec(model_name: str, safety: float, reserve_gb: float) -> in
     usable = max(0.0, free - reserve_gb) * safety
     if usable <= 0: return 60
 
-    is_canary   = "canary"    in model_name.lower()
-    is_parakeet = "parakeet"  in model_name.lower()
+    from qwen3_asr import _is_qwen3_asr
+    is_canary   = "canary"   in model_name.lower()
+    is_parakeet = "parakeet" in model_name.lower()
+    is_qwen3    = _is_qwen3_asr(model_name)
     gb_per_min  = 0.28 if is_parakeet else 0.50
 
     if is_canary:
         # Encoder-decoder trained on ≤40s segments: quality collapses above 60s.
-        # Cap hard regardless of available VRAM.
         secs = 60
+    elif is_qwen3:
+        # LLM-based encoder-decoder: handles longer context than canary.
+        # Cap at 120s; OOM retry halves if needed.
+        secs = 120
     else:
-        # CTC/TDT models (Parakeet v2/v3): quality is unaffected by chunk length.
-        # More VRAM → larger chunks → fewer passes → faster wall time.
-        # Cap at 3600s (1 hour) as a practical ceiling; OOM retry halves if needed.
+        # CTC/TDT models (Parakeet v2/v3): quality unaffected by chunk length.
         secs = max(30, min(int(usable / gb_per_min * 60), 3600))
 
     log.info(f"VRAM {free:.2f} GB free → usable {usable:.2f} GB → chunk target {_fmt_dur(secs)}")

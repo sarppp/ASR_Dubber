@@ -41,12 +41,17 @@ from nemo_model import _load_model
 def _select_model(language: str, asr_model_key: str | None, nemo_model: str | None) -> str:
     """Resolve the final model ID.
 
-    Priority: explicit --nemo-model > --asr-model shortname > auto by language.
+    Priority: --nemo-model > --asr-model > NEMO_MODEL_EN/NEMO_MODEL_MULTI env > auto.
     """
     if nemo_model:
-        return ASR_MODELS.get(nemo_model, nemo_model)  # resolve shortname or use as full ID
+        return ASR_MODELS.get(nemo_model, nemo_model)
     if asr_model_key:
         return ASR_MODELS[asr_model_key]
+    # Per-language env var defaults (set in docker-compose for remote GPU)
+    env_key = "NEMO_MODEL_EN" if language == "en" else "NEMO_MODEL_MULTI"
+    env_model = os.environ.get(env_key)
+    if env_model:
+        return ASR_MODELS.get(env_model, env_model)
     return MODEL_MULTI if language in MULTI_LANGS else MODEL_EN
 
 def main():

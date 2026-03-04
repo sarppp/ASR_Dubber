@@ -25,6 +25,7 @@ nemo/*
 !nemo/nemo_diarize.py
 !nemo/nemo_model.py
 !nemo/nemo_audio.py
+!nemo/qwen3_asr.py
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock

@@ -20,9 +20,12 @@ ASR_MODELS = {
     # CTC/TDT models — word-level timestamps, no chunk quality limit
     "parakeet-v2":  "nvidia/parakeet-tdt-0.6b-v2",   # English only, fastest
     "parakeet-v3":  "nvidia/parakeet-tdt-0.6b-v3",   # 25 EU langs, same speed
-    # Encoder-decoder models — segment timestamps only, 60s chunk cap applied
+    # NeMo encoder-decoder models — segment timestamps, 60s chunk cap
     "canary":       "nvidia/canary-1b-v2",            # EN/DE/FR/ES + translation
     "canary-qwen":  "nvidia/canary-qwen-2.5b",        # English only + LLM postproc
+    # Qwen3-ASR (qwen-asr package) — word timestamps via ForcedAligner, 30 langs
+    "qwen3-asr":    "Qwen/Qwen3-ASR-1.7B",           # 30 langs, ~5GB VRAM, best quality
+    "qwen3-asr-s":  "Qwen/Qwen3-ASR-0.6B",           # 30 langs, ~2GB VRAM, faster
 }
 
 MODEL_EN    = ASR_MODELS["parakeet-v3"]   # v3 supports EN + 25 EU langs, same speed as v2

@@ -94,8 +94,9 @@ services:
 
       # ── NeMo / ASR settings ───────────────────────────────────────────────
       PRECISION:      "${PRECISION:-fp16}"         # fp32 | fp16 | bf16
-      NEMO_MODEL:     "${NEMO_MODEL:-}"            # shortname: parakeet-v2/v3, canary, canary-qwen
-                                                   # or full HF ID: nvidia/parakeet-tdt-0.6b-v3
+      NEMO_MODEL:       "${NEMO_MODEL:-}"              # override for ALL languages
+      NEMO_MODEL_EN:    "${NEMO_MODEL_EN:-canary-qwen}"   # English  → canary-qwen-2.5b
+      NEMO_MODEL_MULTI: "${NEMO_MODEL_MULTI:-qwen3-asr}"  # others   → Qwen3-ASR-1.7B
       CHUNK_OVERRIDE: "${CHUNK_OVERRIDE:-}"        # force chunk size in seconds (e.g. 120)
       RESERVE_GB:     "${RESERVE_GB:-}"            # VRAM reserve GB (default: 1.5)
       SAFETY_FACTOR:  "${SAFETY_FACTOR:-}"         # VRAM safety multiplier (default: 0.85)
