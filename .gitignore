@@ -45,6 +45,7 @@ translate-gemma/*
 !translate-gemma/clean_subs.py
 !translate-gemma/translate.py
 !translate-gemma/translate_diarize.py
+!translate-gemma/translate_utils.py
 !translate-gemma/.python-version
 !translate-gemma/pyproject.toml
 !translate-gemma/uv.lock
