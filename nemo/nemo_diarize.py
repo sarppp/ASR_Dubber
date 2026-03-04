@@ -31,6 +31,61 @@ from nemo_model import _estimate_chunk_sec, _transcribe_chunked
 log = logging.getLogger("nemo_local")
 
 
+# ── Checkpoint validation ──────────────────────────────────────────────────────
+
+def _validate_checkpoint(checkpoint_file: Path, audio_path: str,
+                          trim_sec: int = 0, tolerance: float = 0.10) -> bool:
+    """
+    Return True if the checkpoint is valid for the current run.
+
+    A checkpoint is STALE (returns False) if any of:
+      - JSON is corrupt or unreadable
+      - words/segs keys are missing or both are empty
+      - stored trim_sec != current trim_sec  (catches --trim 40 vs full run)
+      - audio_path exists and stored audio_duration differs by > tolerance
+
+    If trim_sec was never stored (old checkpoint) and audio_path doesn't exist,
+    we cannot detect staleness via duration — the function returns True and the
+    caller will discover the problem at SRT coverage checks instead.
+    """
+    try:
+        td = json.loads(checkpoint_file.read_text())
+    except Exception as e:
+        log.warning(f"Checkpoint corrupt ({e}): {checkpoint_file.name} — will re-transcribe")
+        return False
+
+    if td.get("words") is None or td.get("segs") is None:
+        log.warning(f"Checkpoint missing words/segs keys: {checkpoint_file.name} — will re-transcribe")
+        return False
+
+    if not td.get("words") and not td.get("segs"):
+        log.warning(f"Checkpoint has empty transcription output: {checkpoint_file.name} — will re-transcribe")
+        return False
+
+    # Trim mismatch: --trim 40 checkpoint loaded for full run (or vice versa)
+    cp_trim = td.get("trim_sec")
+    if cp_trim is not None and cp_trim != trim_sec:
+        log.warning(
+            f"Stale checkpoint: stored trim_sec={cp_trim} ≠ current trim_sec={trim_sec} "
+            f"— discarding {checkpoint_file.name}"
+        )
+        return False
+
+    # Duration mismatch: compare against actual WAV when it already exists
+    cp_dur = float(td.get("audio_duration", 0.0))
+    actual_dur = _audio_duration(audio_path) if Path(audio_path).exists() else 0.0
+    if cp_dur > 0 and actual_dur > 0:
+        ratio = abs(cp_dur - actual_dur) / actual_dur
+        if ratio > tolerance:
+            log.warning(
+                f"Stale checkpoint: stored duration {cp_dur:.1f}s ≠ actual {actual_dur:.1f}s "
+                f"({ratio * 100:.0f}% diff) — discarding {checkpoint_file.name}"
+            )
+            return False
+
+    return True
+
+
 # ── Diarization ───────────────────────────────────────────────────────────────
 
 def _run_diarization(audio_path: str, work_dir: Path) -> list:
@@ -212,16 +267,21 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
 
     # ── Fast resume: both checkpoints exist ──────────────────────────────────
     if transcript_file.exists() and (not diarize or diarization_file.exists()):
-        log.info("Resuming from cached intermediate results — skipping ASR and diarization")
-        td = json.loads(transcript_file.read_text())
-        words, segs = td["words"], td["segs"]
-        audio_dur, asr_elapsed, rtf = td["audio_duration"], td["asr_elapsed"], td["rtf"]
-        turns = json.loads(diarization_file.read_text())["turns"] if diarize else []
-        log.info(f"Loaded {len(words)} words / {len(segs)} segs | ASR={asr_elapsed:.1f}s RTF={rtf:.2f}x")
-        srt = _build_srt(words, segs, turns, diarize)
-        wall = time.perf_counter() - t0
-        log.info(f"Resume complete in {_fmt_dur(wall)} (no GPU used)")
-        return srt
+        if not _validate_checkpoint(transcript_file, audio_path, trim_sec):
+            log.info("Discarding stale checkpoint(s) — will re-transcribe from scratch")
+            transcript_file.unlink(missing_ok=True)
+            diarization_file.unlink(missing_ok=True)
+        else:
+            log.info("Resuming from cached intermediate results — skipping ASR and diarization")
+            td = json.loads(transcript_file.read_text())
+            words, segs = td["words"], td["segs"]
+            audio_dur, asr_elapsed, rtf = td["audio_duration"], td["asr_elapsed"], td["rtf"]
+            turns = json.loads(diarization_file.read_text())["turns"] if diarize else []
+            log.info(f"Loaded {len(words)} words / {len(segs)} segs | ASR={asr_elapsed:.1f}s RTF={rtf:.2f}x")
+            srt = _build_srt(words, segs, turns, diarize)
+            wall = time.perf_counter() - t0
+            log.info(f"Resume complete in {_fmt_dur(wall)} (no GPU used)")
+            return srt
 
     # ── Extract audio ─────────────────────────────────────────────────────────
     if is_wav_input:
@@ -237,12 +297,17 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
 
     # ── Transcribe (or load checkpoint) ──────────────────────────────────────
     if transcript_file.exists():
-        log.info(f"Resuming: loading cached transcription ({transcript_file.name})")
-        td = json.loads(transcript_file.read_text())
-        words, segs = td["words"], td["segs"]
-        asr_elapsed, rtf = td["asr_elapsed"], td["rtf"]
-        log.info(f"ASR was {asr_elapsed:.1f}s RTF={rtf:.2f}x — skipping to diarization")
-    else:
+        if not _validate_checkpoint(transcript_file, audio_path, trim_sec):
+            log.info("Discarding stale transcript checkpoint — will re-transcribe")
+            transcript_file.unlink(missing_ok=True)
+        else:
+            log.info(f"Resuming: loading cached transcription ({transcript_file.name})")
+            td = json.loads(transcript_file.read_text())
+            words, segs = td["words"], td["segs"]
+            asr_elapsed, rtf = td["asr_elapsed"], td["rtf"]
+            log.info(f"ASR was {asr_elapsed:.1f}s RTF={rtf:.2f}x — skipping to diarization")
+
+    if not transcript_file.exists():
         if chunk_override_sec and is_canary:
             chunk_sec = max(30, min(int(chunk_override_sec), 900))
             log.info(f"Manual chunk override: {_fmt_dur(chunk_sec)}")
@@ -268,9 +333,11 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
         log.info(f"Got {'words' if words else 'segs'}: {len(words) if words else len(segs)} items")
 
         # Save checkpoint so a diarization OOM doesn't lose the ASR work
+        # trim_sec is stored so a subsequent run with a different --trim detects staleness
         transcript_file.write_text(
             json.dumps({"words": words, "segs": segs,
-                        "audio_duration": audio_dur, "asr_elapsed": asr_elapsed, "rtf": rtf},
+                        "audio_duration": audio_dur, "asr_elapsed": asr_elapsed, "rtf": rtf,
+                        "trim_sec": trim_sec},
                        indent=2),
             encoding="utf-8",
         )
