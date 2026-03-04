@@ -13,9 +13,29 @@ import torch
 
 log = logging.getLogger("nemo_local")
 
-MODEL_EN    = "nvidia/parakeet-tdt-0.6b-v2"
-MODEL_MULTI = "nvidia/canary-1b-v2"
-MULTI_LANGS = {"fr", "de", "es"}
+# ── Model registry ────────────────────────────────────────────────────────────
+# Friendly shortname → full NeMo model ID.
+# Used by --asr-model in nemo.py and run_pipeline.py.
+ASR_MODELS = {
+    # CTC/TDT models — word-level timestamps, no chunk quality limit
+    "parakeet-v2":  "nvidia/parakeet-tdt-0.6b-v2",   # English only, fastest
+    "parakeet-v3":  "nvidia/parakeet-tdt-0.6b-v3",   # 25 EU langs, same speed
+    # Encoder-decoder models — segment timestamps only, 60s chunk cap applied
+    "canary":       "nvidia/canary-1b-v2",            # EN/DE/FR/ES + translation
+    "canary-qwen":  "nvidia/canary-qwen-2.5b",        # English only + LLM postproc
+}
+
+MODEL_EN    = ASR_MODELS["parakeet-v2"]
+MODEL_MULTI = ASR_MODELS["parakeet-v3"]   # was canary-1b-v2 — parakeet-v3 supports
+                                           # 25 langs incl. FR/DE with word timestamps
+
+# Languages auto-routed to MODEL_MULTI (parakeet-v3 supported languages)
+MULTI_LANGS = {
+    "fr", "de", "es", "it", "nl", "pl", "pt", "ru", "sv", "da",
+    "fi", "cs", "sk", "sl", "hr", "ro", "hu", "bg", "el", "et",
+    "lv", "lt", "uk", "mt",
+}  # English ("en") is excluded — it stays on the faster parakeet-v2
+
 VIDEO_EXT   = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
 CHUNK_OVERLAP_SEC = 2
 
