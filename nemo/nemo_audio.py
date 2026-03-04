@@ -25,8 +25,8 @@ ASR_MODELS = {
     "canary-qwen":  "nvidia/canary-qwen-2.5b",        # English only + LLM postproc
 }
 
-MODEL_EN    = ASR_MODELS["parakeet-v2"]
-MODEL_MULTI = ASR_MODELS["parakeet-v3"]   # was canary-1b-v2 — parakeet-v3 supports
+MODEL_EN    = ASR_MODELS["parakeet-v3"]   # v3 supports EN + 25 EU langs, same speed as v2
+MODEL_MULTI = ASR_MODELS["parakeet-v3"]
                                            # 25 langs incl. FR/DE with word timestamps
 
 # Languages auto-routed to MODEL_MULTI (parakeet-v3 supported languages)

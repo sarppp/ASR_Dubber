@@ -36,6 +36,7 @@
 #
 #   Translation:
 #     TRANSLATE_MODEL   Ollama model tag                    (default: translategemma:4b)
+#     CHUNK_SIZE        subtitle lines per Ollama call      (default: 15)
 #
 #   Dubbing:
 #     QWEN_MODE         clone|custom                        (default: clone)

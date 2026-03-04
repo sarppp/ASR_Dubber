@@ -93,7 +93,7 @@ services:
       SKIP_DUB:       "${SKIP_DUB:-}"              # 1/true = skip dubbing
 
       # ── NeMo / ASR settings ───────────────────────────────────────────────
-      PRECISION:      "${PRECISION:-bf16}"         # fp32 | fp16 | bf16
+      PRECISION:      "${PRECISION:-fp16}"         # fp32 | fp16 | bf16
       NEMO_MODEL:     "${NEMO_MODEL:-}"            # shortname: parakeet-v2/v3, canary, canary-qwen
                                                    # or full HF ID: nvidia/parakeet-tdt-0.6b-v3
       CHUNK_OVERRIDE: "${CHUNK_OVERRIDE:-}"        # force chunk size in seconds (e.g. 120)
@@ -105,9 +105,9 @@ services:
       WHISPER_MODEL:  "${WHISPER_MODEL:-medium}"   # tiny | base | small | medium | large-v3 | turbo
 
       # ── Translation model (Ollama) ────────────────────────────────────────
-      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"   # translategemma:4b or :12b
+      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:12b}"   # translategemma:4b or :12b
       OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
-      CHUNK_SIZE: "${CHUNK_SIZE:-15}"                           # subtitle lines per Ollama call (default: 15)
+      CHUNK_SIZE: "${CHUNK_SIZE:-40}"                           # subtitle lines per Ollama call (default: 40)
 
       # ── Dubbing (Qwen TTS) ────────────────────────────────────────────────
       QWEN_MODE:      "${QWEN_MODE:-clone}"        # clone | custom
