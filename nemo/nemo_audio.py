@@ -15,7 +15,6 @@ log = logging.getLogger("nemo_local")
 
 # ── Model registry ────────────────────────────────────────────────────────────
 # Friendly shortname → full NeMo model ID.
-# Used by --asr-model in nemo.py and run_pipeline.py.
 ASR_MODELS = {
     # CTC/TDT models — word-level timestamps, no chunk quality limit
     "parakeet-v2":  "nvidia/parakeet-tdt-0.6b-v2",   # English only, fastest

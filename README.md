@@ -8,6 +8,7 @@
 
 > **Still on the roadmap:**
 > - Add automatic lip-synchronization (phoneme alignment + face-reenactment) once the audio stack is fully synchronized as I plan to do.
+> - Expand dubbing support to output standalone audio (`.wav`) files, not just video.
 
 | Pipeline Stage | Video Preview |
 | :--- | :--- |
@@ -30,7 +31,7 @@
 ## Pipeline at a Glance
 
 ```text
-video.mp4
+video.mp4 / audio.wav
    │
    ├─(whisper/detect_language.py)─── detects spoken language when unknown
    │
@@ -56,6 +57,8 @@ Result → `nemo/end_product/<video>__<src>_to_<tgt>/final_dub.mp4`  (+ source v
 
 
 Everything can be fired via `run_pipeline.py`, which orchestrates the three stages, boots Ollama when needed, automatically reuses cached artifacts, and now finishes by cleaning SRTs plus gathering every run’s artifacts into `nemo/end_product/<video>__<src>_to_<tgt>`.
+
+> **Audio-Only pipelines:** The pipeline also natively supports `.wav` audio files. If you provide a `.wav` file instead of a video (e.g., to easily transfer smaller files to a remote PC), the script will automatically tag it to `skip-dub`—because the dubbing stage currently rebuilds videos, not standalone `.wav` files—and successfully finish after the transcription or translation stages.
 
 
 
@@ -120,7 +123,7 @@ The main orchestrator has been streamlined while maintaining full compatibility 
 ### Supported ASR Models & Auto-Selection
 
 The pipeline automatically selects the best ASR model based on the source language:
-* **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for English and 25 EU languages. Extremely fast with word-level timestamps. Also Default for local setup execution for both EN and non-EN languages.
+* **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for English and 25 EU languages. Extremely fast with word-level timestamps. Also Default for local setup execution for both EN and non-EN languages. (Parakeet v2 `nvidia/parakeet-tdt-0.6b-v2` is still available as a fallback, but v3 is recommended).
 * **Qwen3-ASR 1.7B** (`Qwen/Qwen3-ASR-1.7B`): The default model for non-EN/other languages (30+ supported). It offers the best quality and is the default for remote setup execution.
 * **Canary 1B** (`nvidia/canary-1b-v2`): Optional fallback that supports direct AST translation (EN/DE/FR/ES). One of the best quality models for non EN languages. According to https://huggingface.co/spaces/hf-audio/open_asr_leaderboard
 
@@ -452,11 +455,14 @@ Common CLI snippets:
 # Full run with defaults (auto language detection, cleans + archives outputs)
 python run_pipeline.py --target-lang fr
 
+# Audio-only run (skips dubbing automatically)
+python run_pipeline.py --target-lang fr --input-file your_audio.wav
+
 # Quick transcription-only dry run (first 60s)
 python run_pipeline.py --target-lang fr --trim 60 --run-mode transcribe
 
 # Translate-only pass when NeMo output already exists and source language is known
-python run_pipeline.py --target-lang es --language de --run-mode translate
+python run_pipeline.py --target-lang fr --language de --run-mode translate
 ```
 
 

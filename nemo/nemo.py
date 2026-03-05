@@ -1,7 +1,7 @@
 """
 nemo.py — NeMo local ASR/translation runner
 
-Models (--asr-model shortname):
+Models (--nemo-model shortname):
   parakeet-v2   nvidia/parakeet-tdt-0.6b-v2   English only,  ~2 GB, word timestamps
   parakeet-v3   nvidia/parakeet-tdt-0.6b-v3   25 EU langs,   ~2 GB, word timestamps  ← default multi
   canary        nvidia/canary-1b-v2            EN/DE/FR/ES,   ~5 GB, + AST translate
@@ -12,8 +12,8 @@ Auto-selection:
 
 Usage:
   python nemo.py video.mp4 --language de
-  python nemo.py video.mp4 --language fr --asr-model parakeet-v3
-  python nemo.py video.mp4 --language de --asr-model canary --translate   # de → en
+  python nemo.py video.mp4 --language fr --nemo-model parakeet-v3
+  python nemo.py video.mp4 --language de --nemo-model canary --translate   # de → en
   python nemo.py video.mp4 --language de --diarize
   python nemo.py --language en --precision fp16 --all
 """
@@ -37,15 +37,13 @@ from nemo_model import _load_model
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def _select_model(language: str, asr_model_key: str | None, nemo_model: str | None) -> str:
+def _select_model(language: str, nemo_model: str | None) -> str:
     """Resolve the final model ID.
 
-    Priority: --nemo-model > --asr-model > NEMO_MODEL_EN/NEMO_MODEL_MULTI env > auto.
+    Priority: --nemo-model > NEMO_MODEL_EN/NEMO_MODEL_MULTI env > auto.
     """
     if nemo_model:
         return ASR_MODELS.get(nemo_model, nemo_model)
-    if asr_model_key:
-        return ASR_MODELS[asr_model_key]
     # Per-language env var defaults (set in docker-compose for remote GPU)
     env_key = "NEMO_MODEL_EN" if language == "en" else "NEMO_MODEL_MULTI"
     env_model = os.environ.get(env_key)
@@ -58,12 +56,9 @@ def main():
     p.add_argument("video", nargs="?", help="Video file (auto-detect if omitted)")
     p.add_argument("--all", action="store_true", help="Process all pending videos")
     p.add_argument("--language", default="en", help="Source language code, e.g. en/de/fr/es [default: en]")
-    p.add_argument("--asr-model", default=None, choices=list(ASR_MODELS),
-                   help=(f"ASR model shortname (default: auto by language). "
-                         f"Options: {', '.join(f'{k} ({v.split('/')[1]})' for k, v in ASR_MODELS.items())}"))
     p.add_argument("--nemo-model", default=None, metavar="MODEL",
-                   help="Full NeMo model ID override (e.g. nvidia/parakeet-tdt-0.6b-v3). "
-                        "Takes precedence over --asr-model.")
+                   help=(f"NeMo model ID or shortname override (e.g. nvidia/parakeet-tdt-0.6b-v3). "
+                         f"Shortname options: {', '.join(f'{k}' for k in ASR_MODELS.keys())}"))
     p.add_argument("--precision", default="bf16", choices=["fp32", "fp16", "bf16"])
     p.add_argument("--translate", action="store_true", help="Translate to English (canary models only)")
     p.add_argument("--diarize", action="store_true", help="Add [Speaker N] labels")
@@ -91,7 +86,7 @@ def main():
     if args.translate and args.language == "en":
         log.warning("--translate with --language en is a no-op. Ignoring."); args.translate = False
 
-    model_name = MODEL_MULTI if args.translate else _select_model(args.language, args.asr_model, args.nemo_model)
+    model_name = MODEL_MULTI if args.translate else _select_model(args.language, args.nemo_model)
     task = "Translate" if args.translate else "Transcribe"
 
     log.info("=" * 60)
