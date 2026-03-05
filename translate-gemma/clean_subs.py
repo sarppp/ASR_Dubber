@@ -113,24 +113,31 @@ def copy_source_video(run_label: str | None = None) -> None:
     label_base = _norm(re.split(r"[._]nemo|__", run_label)[0])
     label_base = re.sub(r"_t\d+$", "", label_base)  # strip trim suffix (_t40, _t200…)
 
-    for f in NEMO_DIR.iterdir():
+    # WAV inputs have "_nemo_16k_full" baked into the stem — strip it before comparing
+    def match_file(f):
         if f.suffix.lower() not in VIDEO_EXT:
-            continue
-        # WAV inputs have "_nemo_16k_full" baked into the stem — strip it before comparing
+            return False
         f_base = _norm(f.stem.split("_nemo")[0])
-        if f_base == label_base:
-            dest = destination_dir / f.name
-            if dest.exists():
+        return f_base == label_base
+
+    # Check if already in destination
+    if destination_dir.exists():
+        for f in destination_dir.iterdir():
+            if match_file(f):
                 print(f"   Source file already in destination: {f.name}")
                 return
+
+    for f in NEMO_DIR.iterdir():
+        if match_file(f):
+            dest = destination_dir / f.name
             try:
                 shutil.move(str(f), str(dest))
                 print(f"   Moved source file: {f.name}")
             except Exception as e:
                 print(f"   Failed to move source file {f.name}: {e}")
             return
- 
-    print(f"   ⚠️  Source video/WAV not found in {NEMO_DIR} for run '{run_label}'")
+
+    print(f"   ⚠️  Source video/WAV not found in {NEMO_DIR} (or destination) for run '{run_label}'")
  
  
 def cleanup_wav_chunks() -> None:

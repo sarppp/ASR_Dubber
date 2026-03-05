@@ -278,15 +278,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chardet"
-version = "6.0.0.post1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7f/42/fb9436c103a881a377e34b9f58d77b5f503461c702ff654ebe86151bcfe9/chardet-6.0.0.post1.tar.gz", hash = "sha256:6b78048c3c97c7b2ed1fbad7a18f76f5a6547f7d34dbab536cc13887c9a92fa4", size = 12521798, upload-time = "2026-02-22T15:09:17.925Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/42/5de54f632c2de53cd3415b3703383d5fff43a94cbc0567ef362515261a21/chardet-6.0.0.post1-py3-none-any.whl", hash = "sha256:c894a36800549adf7bb5f2af47033281b75fdfcd2aa0f0243be0ad22a52e2dcb", size = 627245, upload-time = "2026-02-22T15:09:15.876Z" },
-]
-
-[[package]]
 name = "charset-normalizer"
 version = "3.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1612,7 +1603,6 @@ dependencies = [
     { name = "nemo-toolkit", extra = ["asr"] },
     { name = "numpy" },
     { name = "pyarrow" },
-    { name = "pysrt" },
     { name = "qwen-asr" },
     { name = "soundfile" },
     { name = "torch" },
@@ -1628,7 +1618,6 @@ requires-dist = [
     { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.0.0,<2.2.0" },
     { name = "numpy", specifier = "<2.0" },
     { name = "pyarrow", specifier = "<17.0.0" },
-    { name = "pysrt", specifier = ">=1.1.2" },
     { name = "qwen-asr", specifier = ">=0.0.6" },
     { name = "soundfile" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu124" },
@@ -2316,15 +2305,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
 ]
-
-[[package]]
-name = "pysrt"
-version = "1.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "chardet" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/31/1a/0d858da1c6622dcf16011235a2639b0a01a49cecf812f8ab03308ab4de37/pysrt-1.1.2.tar.gz", hash = "sha256:b4f844ba33e4e7743e9db746492f3a193dc0bc112b153914698e7c1cdeb9b0b9", size = 104371, upload-time = "2020-01-20T15:22:28.291Z" }
 
 [[package]]
 name = "pytest"
