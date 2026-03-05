@@ -121,6 +121,10 @@ def main():
                    help="Voice mode: clone (default) or custom")
     p.add_argument("--no-demucs",      action="store_true",
                    help="Skip demucs — faster, no background music preserved")
+    p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
+                   help="Max TTS speed-up before capping (default: 1.35)")
+    p.add_argument("--merge-gap",      type=float, default=1.0, metavar="SEC",
+                   help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
     p.add_argument("--whisper-model",  default="medium",
                    choices=["tiny", "base", "small", "medium", "large-v3", "turbo"],
                    help="Whisper model for language detection (default: medium)")
@@ -350,6 +354,10 @@ def main():
         ]
         if args.no_demucs:
             dub_cmd.append("--no-demucs")
+        if args.max_speed is not None:
+            dub_cmd.extend(["--max-speed", str(args.max_speed)])
+        if args.merge_gap is not None:
+            dub_cmd.extend(["--merge-gap", str(args.merge_gap)])
 
         _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS")
     else:
