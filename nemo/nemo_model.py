@@ -120,11 +120,25 @@ def _clear_nemo_cache(model_name: str) -> bool:
 
 
 def _from_pretrained_with_cache_retry(nemo_asr, model_name: str, device: str):
-    """Call ASRModel.from_pretrained, clearing corrupt cache and retrying once on FileNotFoundError."""
+    """Call ASRModel.from_pretrained, clearing corrupt cache and retrying once on FileNotFoundError.
+
+    NOTE: Models stored on HuggingFace in safetensors format (no .nemo archive)
+    cannot be loaded by NeMo ≤2.1 — they lack the model_config.yaml that NeMo's
+    restore path requires.  Retrying won't help; use parakeet-v3 or qwen3-asr instead.
+    """
     map_loc = None if device == "cuda" else "cpu"
     try:
         return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name, map_location=map_loc)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        missing = str(exc)
+        if "model_config.yaml" in missing:
+            raise RuntimeError(
+                f"Cannot load '{model_name}': model_config.yaml not found in the downloaded "
+                f"HuggingFace repo. This model is stored in safetensors format which NeMo ≤2.1 "
+                f"cannot restore. Use parakeet-v3 (EN) or qwen3-asr (multilingual) instead, "
+                f"or set NEMO_MODEL_EN=parakeet-v3 in docker-compose.yml."
+            ) from exc
+        # Generic FileNotFoundError → try clearing corrupt cache and re-downloading once
         if _clear_nemo_cache(model_name):
             log.info("Retrying model download after cache clear…")
             return nemo_asr.models.ASRModel.from_pretrained(model_name=model_name, map_location=map_loc)

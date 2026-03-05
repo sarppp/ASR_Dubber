@@ -269,10 +269,12 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
 
     trim_tag = f"trim{trim_sec}" if trim_sec else "full"
     is_wav_input = Path(video_path).suffix.lower() == ".wav"
-    if is_wav_input:
+    if is_wav_input and trim_sec == 0:
+        # WAV with no trim: use directly, no FFmpeg needed
         audio_path = video_path
         log.info(f"WAV input — skipping FFmpeg extraction: {Path(video_path).name}")
     else:
+        # Non-WAV OR WAV with trim: always produce a processed output file
         audio_path = str(work_dir / f"{stem}_nemo_16k_{trim_tag}.wav")
 
     # Checkpoint file paths (defined once, used throughout)
@@ -298,14 +300,13 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
             return srt
 
     # ── Extract audio ─────────────────────────────────────────────────────────
-    if is_wav_input:
-        pass  # already set above
-    elif Path(audio_path).exists():
+    if Path(audio_path).exists():
         log.info(f"Reusing cached audio: {Path(audio_path).name}")
-    else:
-        log.info("Extracting 16 kHz mono WAV…")
+    elif audio_path != video_path:
+        action = f"Trimming WAV to first {_fmt_dur(trim_sec)}…" if (is_wav_input and trim_sec) else "Extracting 16 kHz mono WAV…"
+        log.info(action)
         _extract_audio(video_path, audio_path, trim_sec)
-        log.info(f"Audio extracted {time.perf_counter() - t0:.1f}s")
+        log.info(f"Audio ready {time.perf_counter() - t0:.1f}s")
     audio_dur = _audio_duration(audio_path)
     log.info(f"Audio ready | duration {_fmt_dur(audio_dur)}")
 

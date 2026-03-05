@@ -11,6 +11,27 @@
 !/docker-compose.yml
 !/.dockerignore
 !/entrypoint.sh
+!/data/
+!/data/input/
+!/data/output/
+# Ignore large media files — don't commit videos/audio
+data/**/*.mp4
+data/**/*.mkv
+data/**/*.avi
+data/**/*.mov
+data/**/*.webm
+data/**/*.m4v
+data/**/*.ts
+data/**/*.mts
+data/**/*.wmv
+data/**/*.flv
+data/**/*.wav
+data/**/*.mp3
+data/**/*.flac
+data/**/*.m4a
+data/**/*.aac
+data/**/*.ogg
+data/**/*.opus
 !/nemo/
 !/qwen3-tts/
 !/translate-gemma/

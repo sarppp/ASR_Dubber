@@ -10,7 +10,6 @@ dependencies = [
     "torchvision",
     "qwen-tts",
     "soundfile",
-    "deep-translator",
     "demucs==4.0.1",
     "tqdm",
 ]

@@ -145,7 +145,7 @@ def main():
                    help="ASR precision (default: bf16 — use fp16 on older GPUs, fp32 for max accuracy)")
     p.add_argument("--nemo-model",     default=None, metavar="MODEL",
                    help=("NeMo model shortname or full ID. Shortnames: parakeet-v2/v3, "
-                         "canary, canary-qwen, qwen3-asr, qwen3-asr-s. "
+                         "canary, qwen3-asr, qwen3-asr-s. "
                          "Or a full HF ID like nvidia/parakeet-tdt-0.6b-v3."))
     p.add_argument("--chunk-override", default=None, type=int, metavar="SEC",
                    help="Force NeMo audio chunk size in seconds (default: auto from VRAM)")

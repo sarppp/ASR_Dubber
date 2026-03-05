@@ -5,7 +5,6 @@
 #   pipeline — ASR/transcribe/translate/dub pipeline
 #
 # Quick start:
-#   mkdir -p data/input data/output
 #   cp your_video.mp4 data/input/
 #   TARGET_LANG=fr docker compose up pipeline
 #
@@ -96,7 +95,7 @@ services:
       # ── NeMo / ASR settings ───────────────────────────────────────────────
       PRECISION:      "${PRECISION:-fp16}"         # fp32 | fp16 | bf16
       NEMO_MODEL:       "${NEMO_MODEL:-}"              # override for ALL languages
-      NEMO_MODEL_EN:    "${NEMO_MODEL_EN:-canary-qwen}"   # English  → canary-qwen-2.5b
+      NEMO_MODEL_EN:    "${NEMO_MODEL_EN:-parakeet-v3}"   # English  → parakeet-tdt-0.6b-v3 (default)
       NEMO_MODEL_MULTI: "${NEMO_MODEL_MULTI:-qwen3-asr}"  # others   → Qwen3-ASR-1.7B
       CHUNK_OVERRIDE: "${CHUNK_OVERRIDE:-}"        # force chunk size in seconds (e.g. 120)
       RESERVE_GB:     "${RESERVE_GB:-}"            # VRAM reserve GB (default: 1.5)

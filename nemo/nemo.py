@@ -5,7 +5,6 @@ Models (--asr-model shortname):
   parakeet-v2   nvidia/parakeet-tdt-0.6b-v2   English only,  ~2 GB, word timestamps
   parakeet-v3   nvidia/parakeet-tdt-0.6b-v3   25 EU langs,   ~2 GB, word timestamps  ← default multi
   canary        nvidia/canary-1b-v2            EN/DE/FR/ES,   ~5 GB, + AST translate
-  canary-qwen   nvidia/canary-qwen-2.5b        English + LLM, ~10 GB
 
 Auto-selection:
   --language en  → parakeet-v2
