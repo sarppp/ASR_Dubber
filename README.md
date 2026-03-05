@@ -117,6 +117,23 @@ The main orchestrator has been streamlined while maintaining full compatibility 
 
 
 
+### Supported ASR Models & Auto-Selection
+
+The pipeline automatically selects the best ASR model based on the source language:
+* **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for English and 25 EU languages. Extremely fast with word-level timestamps. Also Default for local setup execution for both EN and non-EN languages.
+* **Qwen3-ASR 1.7B** (`Qwen/Qwen3-ASR-1.7B`): The default model for non-EN/other languages (30+ supported). It offers the best quality and is the default for remote setup execution.
+* **Canary 1B** (`nvidia/canary-1b-v2`): Optional fallback that supports direct AST translation (EN/DE/FR/ES). One of the best quality models for non EN languages. According to https://huggingface.co/spaces/hf-audio/open_asr_leaderboard
+
+You can override these defaults at runtime using the `--nemo-model` flag in the pipeline.
+
+```bash
+# Force Qwen3-ASR 1.7B regardless of language
+uv run python run_pipeline.py --target-lang fr --nemo-model qwen3-asr
+
+# Force Canary 1B
+uv run python run_pipeline.py --target-lang fr --nemo-model canary
+```
+
 ### Advanced VRAM & Memory Management
 
 Designed for local execution on consumer-grade hardware, the engine implements several strategies to prevent crashes and optimize GPU utilization:
@@ -306,7 +323,9 @@ To maintain the cinematic quality of the original video, the script handles comp
 
 Ensuring the dubbed audio matches the on-screen action is handled through automated rhythmic adjustment:
 
-* **Dynamic Speed-Fitting:** The `speed_fit()` function compares TTS duration to the original SRT timestamps. If the synthesized speech is too long, it applies an `atempo` filter (capped at 1.35x) to prevent "chipmunk" effects while staying in sync.
+* **Dynamic Speed-Fitting:** The `speed_fit()` function compares TTS duration to the original SRT timestamps. If the synthesized speech is too long, it applies an `atempo` filter (capped at 1.35x by default, customizable via `--max-speed`) to prevent "chipmunk" effects while staying in sync.
+
+* **Sentence Merging (Merge Gap):** Consecutive segments from the same speaker with short pauses (default ≤ 1.0s) can be seamlessly merged together before TTS synthesis using the `--merge-gap` flag. This significantly improves the natural flow and rhythm of the synthetic voice over multiple lines of dialogue.
 
 * **Precision Padding:** For shorter segments, the engine pads the tail with silence to maintain the natural cadence of the dialogue without stretching the audio.
 
@@ -379,6 +398,34 @@ uv sync --project whisper
 
 
 
+### Docker & Remote PC Usage
+
+For running the full pipeline on a remote workstation or headless Linux machine, a `docker-compose.yml` is provided. This spins up the LLM inference server (Ollama) and the worker pipeline with full GPU passthrough.
+
+```bash
+# 1. Place the video file in the data folder
+cp your_video.mp4 data/input/
+
+# 2. Run the pipeline container using Docker Compose
+docker compose run pipeline --target-lang fr
+
+# 3. Running with Runtime Overrides (Environment Variables)
+NEMO_MODEL_MULTI=qwen3-asr TRANSLATE_MODEL=translategemma:12b docker compose run pipeline --target-lang fr
+```
+
+The Docker container accepts all the same CLI arguments as the local script. You can also configure the environment directly via modifying `docker-compose.yml` properties or passing them dynamically at runtime (useful when you don't want to modify the YAML file):
+
+| Environment Variable | Description |
+| --- | --- |
+| `TARGET_LANG` | Required target language code (e.g., `fr`, `es`). Alternatively, pass via CLI `--target-lang`. |
+| `NEMO_MODEL_EN` | NeMo ASR model to use for English (default: `parakeet-v3`). |
+| `NEMO_MODEL_MULTI` | NeMo ASR model to use for all other languages (default: `qwen3-asr` for Docker). |
+| `TRANSLATE_MODEL` | Translation model to run via Ollama (default: `translategemma:12b` for Docker). |
+| `PRECISION` | GPU precision for NeMo (default: `fp16`). |
+| `CHUNK_SIZE` | Subtitle lines to pass per Ollama translation call (default: `40`). |
+
+> **Note:** For configuring the target language, always use the `--target-lang` CLI flag as it is the most reliable method. Environment variable overrides via YAML or inline runtime are best used for hardware or model tuning.
+
 ### Quickstart (full pipeline)
 
 
@@ -430,6 +477,8 @@ python run_pipeline.py --target-lang es --language de --run-mode translate
 | `--input-dir / --output-dir` |  | `nemo/` / `nemo/end_product/` | Override where videos are pulled from and where finished runs land. |
 | `--whisper-model` |  | `medium` | Whisper size for auto language ID (`tiny`, `base`, `small`, `medium`, `large-v3`, `turbo`). |
 | `--qwen-mode {clone,custom}` |  | `clone` | Switch between zero-shot cloning or fixed speaker presets. |
+| `--max-speed SPEED` |  | `1.35` | Maximum TTS speed-up multiplier before capping. |
+| `--merge-gap SEC` |  | `1.0` | Merge consecutive same-speaker segments with gap ≤ N seconds for more natural TTS flow (set `0` to disable). |
 | `--no-demucs` |  | `False` | Skip background music separation for faster dubbing. |
 | `--precision {fp32,fp16,bf16}` |  | `bf16` | ASR precision passed straight through to `nemo.py`. Use `fp16` on older GPUs or `fp32` for max accuracy. |
 | `--nemo-model MODEL` |  | auto | Force a specific NeMo checkpoint (e.g., `nvidia/parakeet-tdt-1.1b`). |
