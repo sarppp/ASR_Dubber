@@ -54,7 +54,7 @@ services:
       - ollama_models:/root/.ollama
     environment:
       OLLAMA_HOST: "http://ollama:11434"
-      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:4b}"
+      TRANSLATE_MODEL: "${TRANSLATE_MODEL:-translategemma:12b}"
     entrypoint: >
       sh -c "ollama pull $$TRANSLATE_MODEL && echo 'Model ready.'"
     restart: "no"

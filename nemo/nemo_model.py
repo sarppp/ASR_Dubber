@@ -170,7 +170,10 @@ def _load_model(model_name: str, precision: str, device: str):
     torch.cuda.empty_cache(); gc.collect()
     load_sec = time.perf_counter() - t0
     free_after, _ = _vram_gb()
-    log.info(f"Model loaded {load_sec:.1f} s | VRAM used {free - free_after:.2f} GB | free {free_after:.2f} GB")
+    if device == "cuda":
+        log.info(f"Model loaded {load_sec:.1f} s | VRAM used {free - free_after:.2f} GB | free {free_after:.2f} GB")
+    else:
+        log.info(f"Model loaded {load_sec:.1f} s (CPU)")
 
     if device == "cuda" and free_after > 1.0:
         try:

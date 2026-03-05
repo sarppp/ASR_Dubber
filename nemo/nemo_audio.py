@@ -183,7 +183,7 @@ def _words_to_segs(words, max_w=10, max_dur=5.0, max_ch=80, diarized=False):
             if diarized: seg["speaker"] = cur_spk
             segs.append(seg)
             cur_w, cur_t, cur_s, cur_spk = [], "", ws, spk
-            continue
+            cand = word  # reset cand — cur_t is now "" so the old cand is stale
         cur_w.append(w); cur_t = cand
     if cur_w and cur_t.strip():
         seg = {"start": cur_s, "end": cur_w[-1].get("end", cur_s), "text": cur_t}

@@ -1,9 +1,9 @@
 """
 nemo_diarize.py — Speaker diarization and main pipeline orchestration.
 
-_run_diarization uses a deferred `from nemo.collections.asr.models import ClusteringDiarizer`
-inside the function body. This works because by the time it's called, _load_model() →
-_import_nemo_asr() has already loaded and cached `nemo` in sys.modules.
+_run_diarization imports ClusteringDiarizer with the same sys.path trick
+as nemo_model._import_nemo_asr() — strips the script directory so the local
+nemo.py file doesn't shadow the real nemo package.
 """
 
 import gc
@@ -90,7 +90,20 @@ def _validate_checkpoint(checkpoint_file: Path, audio_path: str,
 # ── Diarization ───────────────────────────────────────────────────────────────
 
 def _run_diarization(audio_path: str, work_dir: Path) -> list:
-    from nemo.collections.asr.models import ClusteringDiarizer
+    # Import via sys.path trick — when using Qwen3-ASR, _import_nemo_asr() was
+    # never called so 'nemo' isn't cached in sys.modules yet. The local nemo.py
+    # file would shadow the real nemo package without this workaround.
+    import importlib, sys
+    script_dir = Path(__file__).resolve().parent
+    original_path = list(sys.path)
+    try:
+        sys.path = [e for e in original_path
+                    if not (e and Path(e).resolve() == script_dir)]
+        ClusteringDiarizer = importlib.import_module(
+            "nemo.collections.asr.models"
+        ).ClusteringDiarizer
+    finally:
+        sys.path = original_path
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("Running speaker diarization…")
     ddir = work_dir / "_diarize"

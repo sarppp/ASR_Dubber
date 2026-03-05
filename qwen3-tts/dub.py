@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from tqdm import tqdm
+
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -212,7 +214,9 @@ Examples:
     custom_broken = False
 
     log.info(f"🗣️  Synthesising {len(segments)} segments…")
-    for seg in segments:
+    pbar = tqdm(segments, desc="TTS", unit="seg",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+    for seg in pbar:
         i          = seg["index"]
         spk        = seg["speaker"]
         text       = seg["text"]
@@ -221,13 +225,13 @@ Examples:
 
         raw_out = temp_dir / f"seg_{i:04d}.wav"
 
+        pbar.set_postfix_str(f"{spk} #{i}")
+
         if i in done_indices:
-            log.info(f"   [{i:04d}] ✓ in checkpoint")
             continue
         if raw_out.exists() and raw_out.stat().st_size > 500:
-            log.info(f"   [{i:04d}] ✓ cached")
+            pass  # cached — tqdm shows progress
         else:
-            log.info(f"   [{i:04d}] {spk} | {text[:60]!r}")
 
             ok = False
 
@@ -264,7 +268,6 @@ Examples:
         fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed)
         final_files.append((fitted, start, end))
         _save_checkpoint(checkpoint_path, final_files)
-        log.info(f"   [{i:04d}] ✓ saved to checkpoint ({len(final_files)} total)")
 
     if not final_files:
         log.error("No audio was generated. Check Qwen TTS errors above.")
