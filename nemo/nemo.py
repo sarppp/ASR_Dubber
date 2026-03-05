@@ -54,7 +54,7 @@ def _select_model(language: str, asr_model_key: str | None, nemo_model: str | No
     return MODEL_MULTI if language in MULTI_LANGS else MODEL_EN
 
 def main():
-    p = argparse.ArgumentParser(description="NeMo ASR local GPU transcription.")
+    p = argparse.ArgumentParser(description="NeMo ASR pipeline (transcribe / translate).")
     p.add_argument("video", nargs="?", help="Video file (auto-detect if omitted)")
     p.add_argument("--all", action="store_true", help="Process all pending videos")
     p.add_argument("--language", default="en", help="Source language code, e.g. en/de/fr/es [default: en]")
@@ -92,10 +92,10 @@ def main():
         log.warning("--translate with --language en is a no-op. Ignoring."); args.translate = False
 
     model_name = MODEL_MULTI if args.translate else _select_model(args.language, args.asr_model, args.nemo_model)
-    task = "Translation" if args.translate else "Transcription"
+    task = "Translate" if args.translate else "Transcribe"
 
     log.info("=" * 60)
-    log.info(f"NeMo ASR {task} Pipeline (Local GPU)")
+    log.info(f"NeMo ASR {task} Pipeline")
     log.info("=" * 60)
     log.info(f"Model    : {model_name}")
     log.info(f"Language : {args.language}" + (" → en" if args.translate else ""))
