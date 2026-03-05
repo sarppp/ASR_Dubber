@@ -189,7 +189,8 @@ class PersistentTTSWorker:
         import select
         import time
         deadline = time.monotonic() + self.MODEL_LOAD_TIMEOUT
-        ready_line = ""
+        ready = False
+        last_line = ""
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
                 raise RuntimeError(
@@ -198,13 +199,23 @@ class PersistentTTSWorker:
                 )
             rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
             if rlist:
-                ready_line = self._proc.stdout.readline().strip()
-                break
-        if ready_line != "READY":
+                line = self._proc.stdout.readline()
+                if not line:
+                    # EOF
+                    break
+                line = line.strip()
+                if line == "READY":
+                    ready = True
+                    break
+                elif line:
+                    last_line = line
+                    log.debug(f"Worker stdout: {line}")
+                    
+        if not ready:
             self._proc.kill()
             raise RuntimeError(
                 f"TTS worker did not send READY within {self.MODEL_LOAD_TIMEOUT}s "
-                f"(got {ready_line!r})"
+                f"(last line got {last_line!r})"
             )
         log.info(f"TTS worker ready (mode={self.mode})")
 
@@ -262,10 +273,23 @@ class PersistentTTSWorker:
                     return False
                 rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
                 if rlist:
-                    line = self._proc.stdout.readline().strip()
+                    raw_line = self._proc.stdout.readline()
+                    if not raw_line:
+                        # EOF means worker closed stdout (probably crashed)
+                        log.error("TTS worker stdout closed unexpectedly")
+                        self._proc = None
+                        return False
+                        
+                    line = raw_line.strip()
                     if not line:
                         continue
-                    resp = json.loads(line)
+                        
+                    try:
+                        resp = json.loads(line)
+                    except json.JSONDecodeError:
+                        log.debug(f"Worker output (non-JSON): {line}")
+                        continue
+                        
                     if not resp.get("ok"):
                         log.error(f"TTS error: {resp.get('error', '?')}")
                     return resp.get("ok", False)

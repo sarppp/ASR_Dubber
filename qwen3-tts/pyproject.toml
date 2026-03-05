@@ -32,3 +32,9 @@ explicit = true
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+]
