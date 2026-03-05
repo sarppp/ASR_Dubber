@@ -34,7 +34,7 @@ from tqdm import tqdm
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-from dub_srt import QWEN_FEMALE_VOICES, _qwen_lang, parse_srt, build_voice_map
+from dub_srt import QWEN_FEMALE_VOICES, _qwen_lang, parse_srt, merge_segments, build_voice_map
 from dub_audio import (
     extract_audio,
     separate_audio,
@@ -87,6 +87,9 @@ Examples:
                         help="Path to the qwen3-tts uv project (default: current folder)")
     parser.add_argument("--max-speed",  type=float, default=1.35,
                         help="Max TTS speed-up before capping (default: 1.35)")
+    parser.add_argument("--merge-gap",  type=float, default=1.0,
+                        help="Merge consecutive same-speaker segments with gap ≤ N s "
+                             "for more natural TTS (default: 1.0, set 0 to disable)")
     args = parser.parse_args()
 
     search_dir = Path(args.search_dir).resolve()
@@ -167,6 +170,8 @@ Examples:
     if not segments:
         log.error("No segments parsed — make sure this is a diarized+translated SRT")
         return 1
+    if args.merge_gap > 0:
+        segments = merge_segments(segments, gap_sec=args.merge_gap)
 
     # Compute SRT duration early — used for trimming audio AND final video
     srt_end = max(s["end"] for s in segments)

@@ -111,6 +111,48 @@ def parse_srt(path: Path) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
+# Segment merging (naturalness improvement)
+# ---------------------------------------------------------------------------
+
+def merge_segments(segments: List[Dict], gap_sec: float = 1.0) -> List[Dict]:
+    """Merge consecutive same-speaker segments separated by a gap ≤ gap_sec.
+
+    Synthesising short subtitle lines individually causes choppy speech — the
+    TTS model has no context across lines and produces micro-pauses at every
+    segment boundary.  Merging gives it longer, coherent text so it generates
+    natural prosody and intonation.
+
+    The merged segment keeps the first segment's index, spans start→end of the
+    whole group, and concatenates text with a single space.  Pass gap_sec=0
+    to disable merging entirely.
+    """
+    if not segments:
+        return segments
+
+    merged: List[Dict] = []
+    current = dict(segments[0])
+
+    for seg in segments[1:]:
+        gap = seg["start"] - current["end"]
+        if seg["speaker"] == current["speaker"] and 0 <= gap <= gap_sec:
+            current["end"]  = seg["end"]
+            current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
+        else:
+            merged.append(current)
+            current = dict(seg)
+
+    merged.append(current)
+
+    n_before, n_after = len(segments), len(merged)
+    if n_before != n_after:
+        log.info(
+            f"Merged {n_before} segments → {n_after} "
+            f"(gap_sec={gap_sec:.1f}s, saved {n_before - n_after} TTS calls)"
+        )
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Voice assignment (custom mode)
 # ---------------------------------------------------------------------------
 
