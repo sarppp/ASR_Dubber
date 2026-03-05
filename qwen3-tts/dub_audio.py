@@ -130,7 +130,7 @@ def extract_clone_refs(
 
 
 # ---------------------------------------------------------------------------
-# Qwen TTS (subprocess into qwen3-tts uv env)
+# Qwen TTS — persistent worker (model loaded once, all segments served via IPC)
 # ---------------------------------------------------------------------------
 
 def _qwen_python(qwen_project_dir: Path) -> str:
@@ -151,36 +151,132 @@ def _qwen_worker(script_dir: Path) -> str:
     )
 
 
-def generate_tts_custom(
-    text: str, voice: str, language: str,
-    output: Path, qwen_python: str, qwen_worker: str,
-) -> bool:
-    result = subprocess.run(
-        [qwen_python, qwen_worker,
-         "--text", text, "--output", str(output),
-         "--mode", "custom", "--voice", voice, "--language", language],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        log.error(f"Qwen custom TTS failed:\n{result.stderr[-600:]}")
-        return False
-    return output.exists() and output.stat().st_size > 500
+class PersistentTTSWorker:
+    """Keeps a qwen_tts_worker.py subprocess alive for the lifetime of the TTS loop.
 
+    The model is loaded once on first use.  All segments are served through the
+    same process via JSON-line IPC on stdin/stdout.
 
-def generate_tts_clone(
-    text: str, ref_audio: Path, language: str,
-    output: Path, qwen_python: str, qwen_worker: str,
-) -> bool:
-    result = subprocess.run(
-        [qwen_python, qwen_worker,
-         "--text", text, "--output", str(output),
-         "--mode", "clone", "--ref-audio", str(ref_audio), "--language", language],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        log.error(f"Qwen clone TTS failed:\n{result.stderr[-600:]}")
-        return False
-    return output.exists() and output.stat().st_size > 500
+    VRAM note: each worker holds one 1.7B bfloat16 model (~3.4 GB).
+      - 6 GB GPU  → one worker at a time is safe (clone OR custom, not both)
+      - 16 GB+    → clone + custom workers can run concurrently
+    dub.py shuts the clone worker before starting the custom worker when
+    clone_broken is set, so at most one model is ever resident on tight GPUs.
+    """
+
+    MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
+    REQUEST_TIMEOUT    = 120  # seconds per synthesis request
+
+    def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str) -> None:
+        self.mode = mode
+        self._qwen_python = qwen_python
+        self._qwen_worker_path = qwen_worker_path
+        self._proc: Optional[subprocess.Popen] = None
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def _start(self) -> None:
+        log.info(f"Starting persistent TTS worker (mode={self.mode})…")
+        self._proc = subprocess.Popen(
+            [self._qwen_python, self._qwen_worker_path, "--mode", self.mode],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,   # inherit → visible in container logs
+            text=True,
+            bufsize=1,     # line-buffered
+        )
+        # Block until model is loaded
+        import select
+        import time
+        deadline = time.monotonic() + self.MODEL_LOAD_TIMEOUT
+        ready_line = ""
+        while time.monotonic() < deadline:
+            if self._proc.poll() is not None:
+                raise RuntimeError(
+                    f"TTS worker (mode={self.mode}) exited before sending READY "
+                    f"(rc={self._proc.returncode})"
+                )
+            rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
+            if rlist:
+                ready_line = self._proc.stdout.readline().strip()
+                break
+        if ready_line != "READY":
+            self._proc.kill()
+            raise RuntimeError(
+                f"TTS worker did not send READY within {self.MODEL_LOAD_TIMEOUT}s "
+                f"(got {ready_line!r})"
+            )
+        log.info(f"TTS worker ready (mode={self.mode})")
+
+    def _ensure_alive(self) -> None:
+        if self._proc is None or self._proc.poll() is not None:
+            self._start()
+
+    def close(self) -> None:
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.stdin.write('{"quit": true}\n')
+                self._proc.stdin.flush()
+                self._proc.wait(timeout=10)
+            except Exception:
+                self._proc.kill()
+        self._proc = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    # ── synthesis ────────────────────────────────────────────────────────────
+
+    def generate_custom(
+        self, text: str, voice: str, language: str, output: Path,
+    ) -> bool:
+        return self._send({
+            "text": text, "voice": voice,
+            "language": language, "output": str(output),
+        })
+
+    def generate_clone(
+        self, text: str, ref_audio: Path, language: str, output: Path,
+        ref_text: str = "",
+    ) -> bool:
+        return self._send({
+            "text": text, "ref_audio": str(ref_audio), "ref_text": ref_text,
+            "language": language, "output": str(output),
+        })
+
+    def _send(self, request: dict) -> bool:
+        self._ensure_alive()
+        import select
+        import time
+        try:
+            self._proc.stdin.write(json.dumps(request) + "\n")
+            self._proc.stdin.flush()
+            deadline = time.monotonic() + self.REQUEST_TIMEOUT
+            while time.monotonic() < deadline:
+                if self._proc.poll() is not None:
+                    log.error("TTS worker died during synthesis")
+                    self._proc = None
+                    return False
+                rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
+                if rlist:
+                    line = self._proc.stdout.readline().strip()
+                    if not line:
+                        continue
+                    resp = json.loads(line)
+                    if not resp.get("ok"):
+                        log.error(f"TTS error: {resp.get('error', '?')}")
+                    return resp.get("ok", False)
+            log.error(f"TTS worker timed out after {self.REQUEST_TIMEOUT}s")
+            self._proc.kill()
+            self._proc = None
+            return False
+        except Exception as exc:
+            log.error(f"TTS worker IPC error: {exc}")
+            self._proc = None
+            return False
 
 
 # ---------------------------------------------------------------------------
