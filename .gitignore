@@ -32,6 +32,7 @@ data/**/*.m4a
 data/**/*.aac
 data/**/*.ogg
 data/**/*.opus
+data/**/*.srt
 !/nemo/
 !/qwen3-tts/
 !/translate-gemma/

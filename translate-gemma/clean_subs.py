@@ -11,6 +11,19 @@ ROOT = Path(__file__).resolve().parent.parent
 NEMO_DIR = Path(os.getenv("INPUT_DIR",  str(ROOT / "nemo")))
 END_PRODUCT_DIR = Path(os.getenv("OUTPUT_DIR", str(NEMO_DIR / "end_product")))
  
+def get_shortened_filename(file_name: str, max_len: int = 60) -> str:
+    """Shortens excessively long filenames to avoid Windows MAX_PATH limit."""
+    if len(file_name) <= max_len:
+        return file_name
+        
+    if ".nemo." in file_name:
+        return "output" + file_name[file_name.index(".nemo."):]
+    elif "_nemo" in file_name:
+        return "output" + file_name[file_name.index("_nemo"):]
+    else:
+        _, ext = os.path.splitext(file_name)
+        return "output" + ext
+
 def clean_srt_files():
     print(f" 1. Cleaning subtitles in '{NEMO_DIR}' ...")
     all_srt_files = glob.glob(str(NEMO_DIR / '*.srt'))
@@ -88,10 +101,11 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
  
     for file_path in files_to_move:
         file_name = os.path.basename(file_path)
-        dest_path = destination_dir / file_name
+        short_name = get_shortened_filename(file_name)
+        dest_path = destination_dir / short_name
         try:
             shutil.move(file_path, dest_path)
-            print(f"   Moved: {file_name}")
+            print(f"   Moved: {file_name} -> {short_name}")
         except Exception as e:
             print(f"   Failed to move {file_name}: {e}")
  
@@ -129,10 +143,11 @@ def copy_source_video(run_label: str | None = None) -> None:
 
     for f in NEMO_DIR.iterdir():
         if match_file(f):
-            dest = destination_dir / f.name
+            short_name = get_shortened_filename(f.name)
+            dest = destination_dir / short_name
             try:
                 shutil.move(str(f), str(dest))
-                print(f"   Moved source file: {f.name}")
+                print(f"   Moved source file: {f.name} -> {short_name}")
             except Exception as e:
                 print(f"   Failed to move source file {f.name}: {e}")
             return

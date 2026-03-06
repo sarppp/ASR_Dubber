@@ -94,7 +94,7 @@ The codebase has been refactored from large monolithic files into smaller, focus
 ### translate-gemma/ Module Structure  
 - **`translate_diarize.py`** (468 lines) - Main translation engine with Ollama integration
 - **`translate.py`** - Standalone SRT translation for non-diarized files
-- **`clean_subs.py`** - Subtitle cleaning and formatting utilities
+- **`clean_subs.py`** - Subtitle cleaning, formatting, and auto-shortening (prevents Windows MAX_PATH errors)
 
 ### qwen3-tts/ Module Structure
 - **`dub.py`** - Main dubbing orchestration and pipeline coordination
@@ -236,6 +236,7 @@ To handle the limitations of smaller local LLMs (like `translategemma:4b`), the 
 
 * **Garbage Filtering:** Includes automated post-processing to strip common LLM artifacts like `<|endoftext|>` and unexpected whitespace before saving the final file.
 
+* **Filename Auto-Shortening:** When cleaning and moving files to the final `end_product` directory, `clean_subs.py` automatically detects filenames exceeding 60 characters and shortens them to `output.*` (preserving original extensions and suffixes). This strictly prevents Windows `MAX_PATH` limitations that would otherwise cause files to appear "corrupted" or empty when accessed from a host OS.
 
 #### Standalone `translate.py`
 
