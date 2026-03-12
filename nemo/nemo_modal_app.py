@@ -600,21 +600,25 @@ def _compute_max_chunk_sec(model_name: str, safety_factor: float = 0.85, reserve
     usable_gb = max(0.0, free_gb - reserve_gb) * safety_factor
     if usable_gb <= 0:
         return 60
-    if _is_qwen3_asr(model_name):
-        # Qwen3-ASR encoder uses fixed 30s windows internally; VRAM scales with
-        # LLM decoder KV cache (output tokens), not raw audio length.
-        # Give it more headroom than NeMo models — cap at 1800s instead of 600s.
+    if "canary" in model_name.lower():
+        # QUALITY cap — Canary was trained on ≤40s segments; decoder attention
+        # tracking collapses above ~60s regardless of VRAM. Not a memory limit.
+        return 60
+    elif _is_qwen3_asr(model_name):
+        # LLM-based ASR: VRAM scales with output token KV cache, not raw audio
+        # length. Offline inference handles long context; no quality cap needed.
         gb_per_minute = 0.35
-        max_cap = 1800
     elif "parakeet" in model_name.lower():
+        # CTC/TDT: quality unaffected by chunk length; VRAM scales linearly.
         gb_per_minute = 0.28
-        max_cap = 600
     else:
         gb_per_minute = 0.50
-        max_cap = 600
-    max_minutes = usable_gb / gb_per_minute if gb_per_minute > 0 else 1.0
+    max_minutes = usable_gb / gb_per_minute
     secs = int(max_minutes * 60)
-    return max(30, min(secs, max_cap))
+    # No model-specific cap — free VRAM is the only constraint.
+    # 7200s (2h) absolute ceiling: a single chunk longer than 2h would never
+    # be triggered in practice (calibration runs first for long audio).
+    return max(30, min(secs, 7200))
 
 
 def _calibrate_chunk_size(
@@ -652,8 +656,10 @@ def _calibrate_chunk_size(
         free_now, _ = _vram_gb()
         usable_gb = max(0.0, free_now - reserve_gb) * safety_factor
         projected_sec = int(usable_gb / gb_per_sec)
-        # Never exceed the VRAM-estimated safe limit — calibration can only go down
-        return max(60, min(projected_sec, initial_guess_sec))
+        # Cap at audio duration: no benefit in a chunk larger than the full audio.
+        # Do NOT cap at initial_guess_sec — on a powerful GPU, calibration should
+        # be free to project upward (e.g. 13 GB free → single-pass 30-min audio).
+        return max(60, min(projected_sec, int(audio_dur) + 60))
     finally:
         test_chunk.unlink(missing_ok=True)
         torch.cuda.empty_cache()

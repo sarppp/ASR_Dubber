@@ -386,15 +386,20 @@ def _estimate_chunk_sec(model_name: str, safety: float, reserve_gb: float) -> in
     gb_per_min  = 0.28 if is_parakeet else 0.50
 
     if is_canary:
-        # Encoder-decoder trained on ≤40s segments: quality collapses above 60s.
+        # QUALITY cap — trained on ≤40s segments; decoder collapses above 60s.
         secs = 60
     elif is_qwen3:
-        # LLM-based encoder-decoder: handles longer context than canary.
-        # Cap at 120s; OOM retry halves if needed.
-        secs = 120
+        # LLM-based ASR: offline inference handles long context.  No quality
+        # cap needed; let available VRAM drive the chunk size.
+        gb_per_min = 0.35
+        secs = int(usable / gb_per_min * 60)
     else:
         # CTC/TDT models (Parakeet v2/v3): quality unaffected by chunk length.
-        secs = max(30, min(int(usable / gb_per_min * 60), 3600))
+        secs = int(usable / gb_per_min * 60)
+    if not is_canary:
+        # No model-specific cap — free VRAM is the only constraint.
+        # 7200s absolute ceiling; OOM retry halves if we ever overshoot.
+        secs = max(30, min(secs, 7200))
 
     log.info(f"VRAM {free:.2f} GB free → usable {usable:.2f} GB → chunk target {_fmt_dur(secs)}")
     return secs
