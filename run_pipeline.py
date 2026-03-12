@@ -111,8 +111,8 @@ def main():
         description="ASR dubbing pipeline: NeMo → Gemma translate → Qwen TTS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--target-lang",    required=True,
-                   help="Target dubbing language code, e.g. fr, en, es")
+    p.add_argument("--target-lang",    default=None,
+                   help="Target dubbing language code, e.g. fr, en, es (not required for --run-mode transcribe)")
     p.add_argument("--language",       default=None,
                    help="Source language code (auto-detected from SRT if omitted)")
     p.add_argument("--trim",           type=int, default=0, metavar="SEC",
@@ -165,6 +165,12 @@ def main():
         args.skip_dub = True
     elif args.run_mode == "translate":
         args.skip_dub = True
+
+    if args.target_lang is None:
+        if args.run_mode != "transcribe":
+            p.error("--target-lang is required unless --run-mode transcribe")
+        # For transcribe-only runs, target == source (resolved later once source is known)
+        args.target_lang = args.language or "same"
 
     # ── Apply input/output dir overrides (local vars, no global mutation) ─────
     nemo_dir = _DEFAULT_NEMO_DIR
@@ -279,6 +285,9 @@ def main():
             if original_srt.exists() and original_srt != trimmed_srt:
                 original_srt.rename(trimmed_srt)
                 print(f"📝 Renamed SRT: {original_srt.name} → {trimmed_srt.name}", flush=True)
+
+    if args.target_lang == "same":
+        args.target_lang = source_lang
 
     print(f"\n🌐 Source: {source_lang}  →  Target: {args.target_lang}")
 
