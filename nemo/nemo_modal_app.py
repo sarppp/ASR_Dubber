@@ -440,6 +440,57 @@ def _dedup_words(words: list) -> list:
 # Special token stripping
 # ---------------------------------------------------------------------------
 
+def _split_long_segments(segs: list, max_chars: int = 80, max_dur: float = 5.0) -> list:
+    """Split canary/segment-level output into subtitle-sized pieces.
+
+    Canary returns one segment per decoder utterance which can span 3-4
+    sentences.  This function splits on sentence boundaries (.!?) and then
+    further splits any remaining long pieces by character count, distributing
+    timestamps proportionally by character position.
+    """
+    import re
+    out = []
+    for seg in segs:
+        text = seg["text"].strip()
+        start, end = seg["start"], seg["end"]
+        dur = max(end - start, 0.001)
+
+        # Split on sentence-ending punctuation, keeping the delimiter
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        if not sentences:
+            continue
+
+        # Further split any sentence that exceeds max_chars
+        pieces = []
+        for sent in sentences:
+            while len(sent) > max_chars:
+                # Try to break at a word boundary near max_chars
+                cut = sent.rfind(" ", 0, max_chars)
+                if cut <= 0:
+                    cut = max_chars
+                pieces.append(sent[:cut].strip())
+                sent = sent[cut:].strip()
+            if sent:
+                pieces.append(sent)
+
+        if not pieces:
+            continue
+
+        total_chars = sum(len(p) for p in pieces)
+        t = start
+        for i, piece in enumerate(pieces):
+            frac = len(piece) / total_chars if total_chars > 0 else 1.0 / len(pieces)
+            piece_dur = dur * frac
+            seg_end = min(t + piece_dur, end) if i < len(pieces) - 1 else end
+            new_seg = {"text": piece, "start": t, "end": seg_end}
+            if "speaker" in seg:
+                new_seg["speaker"] = seg["speaker"]
+            out.append(new_seg)
+            t = seg_end
+    return out
+
+
 def _strip_special_tokens(text: str) -> str:
     import re
     text = re.sub(r"(<\|endoftext\|>[\s.]*)+$", "", text)
@@ -1152,6 +1203,11 @@ def _run_pipeline(
         raise RuntimeError("NeMo returned no timestamps.")
 
     print(f"Got {len(words) if words else len(segs)} {'word' if words else 'segment'} timestamps")
+
+    # Canary segment-level output can contain multiple sentences per segment;
+    # split them into subtitle-sized pieces before further processing.
+    if "canary" in nemo_model.lower() and segs:
+        segs = _split_long_segments(segs)
 
     if diarize:
         turns = _run_diarization(audio_path, work_dir)
