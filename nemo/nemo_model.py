@@ -29,6 +29,21 @@ from nemo_audio import (
 
 log = logging.getLogger("nemo_local")
 
+# All known CUDA-graph config keys across NeMo model variants.
+# Parakeet TDT actual keys (confirmed from config dump):
+#   greedy.use_cuda_graph_decoder — main TDT decoder loop graph (~17 GB on A10G)
+#   greedy.loop_labels            — label-loop CUDA graph variant
+#   beam.allow_cuda_graphs        — beam decoder graphs
+# Generic fallbacks for older/other NeMo model variants:
+#   use_cuda_graphs / greedy.use_cuda_graphs
+_CUDA_GRAPH_KEYS = (
+    "use_cuda_graphs",
+    "greedy.use_cuda_graphs",
+    "greedy.use_cuda_graph_decoder",
+    "greedy.loop_labels",
+    "beam.allow_cuda_graphs",
+)
+
 
 # ── Import helpers ────────────────────────────────────────────────────────────
 
@@ -94,6 +109,95 @@ def _extract_first_hypothesis(batch_output):
             if hyp is not None:
                 return hyp
     return None
+
+
+# ── CUDA graph helpers ────────────────────────────────────────────────────────
+
+def _patch_greedy_tdt_no_cuda_graphs() -> bool:
+    """Patch GreedyBatchedTDTInfer at the CLASS level to disable CUDA graphs.
+
+    Must be called BEFORE from_pretrained so even the first decoder construction
+    (inside NeMo's model restore) already has CUDA graphs disabled.
+
+    Why class-level and not instance-level:
+      - NeMo rebuilds GreedyBatchedTDTInfer from frozen config at the start of
+        every transcribe() call (rnnt_models.py:315).  Instance patches are wiped.
+      - use_cuda_graph_decoder is consumed during __init__ to branch between
+        creating a CUDA-graph sub-object vs a plain decoder; it is NOT stored as
+        a plain attribute afterward, so post-construction patching has no effect.
+    """
+    _CANDIDATE_MODULES = (
+        "nemo.collections.asr.parts.submodules.rnnt_greedy_decoding",
+        "nemo.collections.asr.modules.rnnt_greedy_decoding",
+        "nemo.collections.asr.parts.submodules.cuda_graph_rnnt_greedy_decoding",
+    )
+    _CLASS_NAMES = ("GreedyBatchedTDTInfer", "GreedyBatchedRNNTInfer")
+    patched_any = False
+    for mod_path in _CANDIDATE_MODULES:
+        try:
+            mod = importlib.import_module(mod_path)
+        except Exception:
+            continue
+        for cls_name in _CLASS_NAMES:
+            cls = getattr(mod, cls_name, None)
+            if cls is None:
+                continue
+            _orig_init = cls.__init__
+
+            def _make_patched_init(orig):
+                def _patched_init(self, *args, **kwargs):
+                    kwargs["use_cuda_graph_decoder"] = False
+                    if "loop_labels" in kwargs:
+                        kwargs["loop_labels"] = False
+                    orig(self, *args, **kwargs)
+                    log.debug(f"[GRAPH-PATCH] {type(self).__name__} created: "
+                              f"use_cuda_graph_decoder={getattr(self, 'use_cuda_graph_decoder', '?')} "
+                              f"loop_labels={getattr(self, 'loop_labels', '?')}")
+                return _patched_init
+
+            cls.__init__ = _make_patched_init(_orig_init)
+            log.info(f"[GRAPH-PATCH] Patched {mod_path}.{cls_name}.__init__")
+            patched_any = True
+    if not patched_any:
+        log.warning("[GRAPH-PATCH] Warning: could not find GreedyBatchedTDTInfer to patch")
+    return patched_any
+
+
+def _disable_cuda_graphs_in_decoder(model) -> None:
+    """Belt-and-suspenders: disable CUDA graph flags on the live decoder object.
+
+    Called after every change_decoding_strategy() (including NeMo's internal
+    call at the start of each transcribe()).  The class-level __init__ patch is
+    the primary fix; this is the fallback in case a decoder variant slips through.
+    """
+    _GRAPH_BOOL_ATTRS = (
+        "use_cuda_graphs",
+        "use_cuda_graph_decoder",
+        "loop_labels",
+        "allow_cuda_graphs",
+    )
+
+    dec = getattr(model, "decoding", None)
+    if dec is None:
+        return
+
+    def _fix_obj(obj, label: str):
+        changed = []
+        for attr in _GRAPH_BOOL_ATTRS:
+            if hasattr(obj, attr) and getattr(obj, attr) is True:
+                setattr(obj, attr, False)
+                changed.append(attr)
+        if hasattr(obj, "cuda_graphs_impl") and getattr(obj, "cuda_graphs_impl") is not None:
+            obj.cuda_graphs_impl = None
+            changed.append("cuda_graphs_impl→None")
+        if changed:
+            log.info(f"[CDS-FIX] disabled in {label}: {changed}")
+
+    _fix_obj(dec, "model.decoding")
+    for dc_name in ("decoding", "decoding_computer", "_decoding_computer", "greedy_decoding"):
+        inner = getattr(dec, dc_name, None)
+        if inner is not None and inner is not dec:
+            _fix_obj(inner, f"model.decoding.{dc_name}")
 
 
 # ── Model loading ─────────────────────────────────────────────────────────────
@@ -163,6 +267,15 @@ def _load_model(model_name: str, precision: str, device: str):
 
     t0 = time.perf_counter()
     log.info("Loading model…")
+
+    # Patch GreedyBatchedTDTInfer BEFORE from_pretrained so the very first
+    # decoder construction (inside NeMo's model restore) already has CUDA graphs
+    # disabled.  Applies to parakeet v2 and v3 (both use TDT/RNNT decoders).
+    # Canary uses an encoder-decoder — no GreedyBatchedTDTInfer involved.
+    is_parakeet = "parakeet" in model_name.lower()
+    if device == "cuda" and is_parakeet:
+        _patch_greedy_tdt_no_cuda_graphs()
+
     try:
         model = _from_pretrained_with_cache_retry(nemo_asr, model_name, device)
     except Exception as e:
@@ -189,11 +302,47 @@ def _load_model(model_name: str, precision: str, device: str):
     else:
         log.info(f"Model loaded {load_sec:.1f} s (CPU)")
 
-    if device == "cuda" and free_after > 1.0:
+    # Disable NeMo's CUDA graph capture for parakeet models.
+    # GreedyBatchedTDTInfer captures a CUDA graph on the first transcribe() call.
+    # After empty_cache() between chunks, the graph's backing pages are freed;
+    # the next chunk replays the stale graph onto freed addresses →
+    # XID 31 MMU fault → SIGABRT (exit code 134).
+    # Primary fix: class-level __init__ patch above (_patch_greedy_tdt_no_cuda_graphs).
+    # Belt-and-suspenders: also try OmegaConf config keys and monkey-patch
+    # change_decoding_strategy so NeMo's internal re-invocations are intercepted.
+    if device == "cuda" and is_parakeet and hasattr(model, "cfg"):
         try:
-            model = torch.compile(model, mode="reduce-overhead")
-            log.info("torch.compile(reduce-overhead) active — first chunk warms up")
-        except Exception: pass
+            from omegaconf import OmegaConf
+            failed_keys = []
+            for key_path in _CUDA_GRAPH_KEYS:
+                try:
+                    OmegaConf.update(model.cfg.decoding, key_path, False)
+                except Exception as _ke:
+                    failed_keys.append(key_path)
+            if failed_keys:
+                log.warning(f"[WARN] CUDA graph keys not writable (frozen config): {failed_keys}")
+            if hasattr(model, "change_decoding_strategy"):
+                model.change_decoding_strategy(model.cfg.decoding)
+            log.info("NeMo decoder CUDA graphs disabled")
+        except Exception as exc:
+            log.warning(f"Could not disable NeMo CUDA graphs: {exc}")
+
+    if device == "cuda" and is_parakeet and hasattr(model, "change_decoding_strategy"):
+        _orig_cds = model.change_decoding_strategy
+
+        def _patched_cds(cfg=None, **kw):
+            result = _orig_cds(cfg, **kw) if cfg is not None else _orig_cds(**kw)
+            _disable_cuda_graphs_in_decoder(model)
+            return result
+
+        model.change_decoding_strategy = _patched_cds
+        _disable_cuda_graphs_in_decoder(model)
+
+    # torch.compile(reduce-overhead) uses CUDA graph capture internally:
+    #   1. Captures ~17 GB VRAM during warmup for large encoder models
+    #   2. Crashes (XID 31 MMU fault) when replaying after empty_cache() between chunks
+    # Variable-length chunked ASR inference is incompatible with reduce-overhead.
+    log.info("Skipping torch.compile — incompatible with variable-length chunked ASR")
 
     return model
 
@@ -343,6 +492,9 @@ def _transcribe_chunked(model, audio_path: str, model_name: str,
                 elif is_canary:
                     words, segs = _transcribe_canary(model, path, offset, src_lang, tgt_lang)
                 else:
+                    # Belt-and-suspenders: ensure CUDA graphs are off before every
+                    # parakeet chunk (primary fix is the class-level __init__ patch).
+                    _disable_cuda_graphs_in_decoder(model)
                     words, segs = _transcribe_parakeet(model, path, offset)
                 elapsed = time.perf_counter() - t1
                 if len(manifest) > 1:
@@ -393,10 +545,17 @@ def _estimate_chunk_sec(model_name: str, safety: float, reserve_gb: float) -> in
         # cap needed; let available VRAM drive the chunk size.
         gb_per_min = 0.35
         secs = int(usable / gb_per_min * 60)
+    elif "parakeet" in model_name.lower() and "v3" in model_name.lower():
+        # parakeet-v3 uses global self-attention (att_context_size=[-1,-1]):
+        # memory is O(T²), not O(T).  On a 16 GB GPU the linear formula gives
+        # ~37 min which OOMs even with CUDA graphs disabled.  Hard cap at 600 s
+        # (10 min); OOM retry will halve further if needed.
+        # parakeet-v2 uses local windowed attention — no cap needed there.
+        secs = max(30, min(int(usable / gb_per_min * 60), 600))
     else:
-        # CTC/TDT models (Parakeet v2/v3): quality unaffected by chunk length.
+        # CTC/TDT models (Parakeet v2): quality unaffected by chunk length.
         secs = int(usable / gb_per_min * 60)
-    if not is_canary:
+    if not is_canary and "v3" not in model_name.lower():
         # No model-specific cap — free VRAM is the only constraint.
         # 7200s absolute ceiling; OOM retry halves if we ever overshoot.
         secs = max(30, min(secs, 7200))
