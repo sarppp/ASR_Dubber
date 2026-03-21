@@ -165,7 +165,7 @@ class PersistentTTSWorker:
     """
 
     MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
-    REQUEST_TIMEOUT    = 120  # seconds per synthesis request
+    REQUEST_TIMEOUT    = 600  # seconds per synthesis request (12 Hz autoregressive — long segments take time)
 
     def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str) -> None:
         self.mode = mode
