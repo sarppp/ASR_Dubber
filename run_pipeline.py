@@ -104,6 +104,48 @@ from pipeline_paths import (
 )
 
 
+# ── GPU auto-detection ────────────────────────────────────────────────────────
+
+def _auto_tts_workers() -> tuple:
+    """Detect available GPUs and decide how many TTS workers to run.
+
+    Returns (n_workers, devices_str).
+    Rules:
+      - No GPU / detection fails → (1, "0")  — CPU fallback, single worker
+      - 1 GPU with ≤ 8 GB free   → (1, "0")  — one model fits, no room for more
+      - 1 GPU with 9–19 GB free  → (2, "0")  — 2 workers share one GPU
+      - 1 GPU with 20–47 GB free → (4, "0")  — 4 workers share one GPU
+      - 1 GPU with ≥ 48 GB free  → (8, "0")  — 8 workers share one GPU
+      - N GPUs                   → (N, "0,1,...,N-1") — 1 worker per GPU
+    """
+    import subprocess as _sp
+    try:
+        out = _sp.check_output(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            stderr=_sp.DEVNULL, text=True,
+        ).strip()
+        free_mbs = [int(x.strip()) for x in out.splitlines() if x.strip()]
+    except Exception:
+        return 1, "0"
+
+    n_gpus = len(free_mbs)
+    if n_gpus == 0:
+        return 1, "0"
+
+    if n_gpus > 1:
+        # One worker per GPU
+        return n_gpus, ",".join(str(i) for i in range(n_gpus))
+
+    # Single GPU — scale workers by free VRAM (each model needs ~3.4 GB)
+    free_gb = free_mbs[0] / 1024
+    if   free_gb >= 48: workers = 8
+    elif free_gb >= 20: workers = 4
+    elif free_gb >=  9: workers = 2
+    else:               workers = 1
+    print(f"🖥️  GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s)")
+    return workers, "0"
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -127,6 +169,10 @@ def main():
                    help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
     p.add_argument("--merge-max-dur",  type=float, default=10.0, metavar="SEC",
                    help="Max duration for a merged segment in seconds (default: 10)")
+    p.add_argument("--tts-workers",    type=int,   default=1,
+                   help="Parallel TTS workers (default: 1, auto-detected if not set)")
+    p.add_argument("--tts-devices",    default="0",
+                   help="GPU IDs for TTS workers, e.g. '0,1,2' (default: auto)")
     p.add_argument("--whisper-model",  default="medium",
                    choices=["tiny", "base", "small", "medium", "large-v3", "turbo"],
                    help="Whisper model for language detection (default: medium)")
@@ -371,6 +417,13 @@ def main():
             dub_cmd.extend(["--merge-gap", str(args.merge_gap)])
         if args.merge_max_dur is not None:
             dub_cmd.extend(["--merge-max-dur", str(args.merge_max_dur)])
+        # Auto-detect GPU count and set workers/devices if user didn't override
+        tts_workers = args.tts_workers
+        tts_devices = args.tts_devices
+        if tts_workers == 1 and tts_devices == "0":
+            tts_workers, tts_devices = _auto_tts_workers()
+        dub_cmd.extend(["--tts-workers", str(tts_workers),
+                        "--tts-devices", tts_devices])
 
         _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS")
     else:

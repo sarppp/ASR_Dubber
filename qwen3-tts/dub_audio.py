@@ -5,6 +5,7 @@ and checkpoint management for the dub pipeline.
 
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -167,16 +168,22 @@ class PersistentTTSWorker:
     MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
     REQUEST_TIMEOUT    = 600  # seconds per synthesis request (12 Hz autoregressive — long segments take time)
 
-    def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str) -> None:
+    def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
+                 device_id: Optional[int] = None) -> None:
         self.mode = mode
         self._qwen_python = qwen_python
         self._qwen_worker_path = qwen_worker_path
+        self._device_id = device_id
         self._proc: Optional[subprocess.Popen] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def _start(self) -> None:
-        log.info(f"Starting persistent TTS worker (mode={self.mode})…")
+        dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
+        log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
+        env = None
+        if self._device_id is not None:
+            env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(self._device_id)}
         self._proc = subprocess.Popen(
             [self._qwen_python, self._qwen_worker_path, "--mode", self.mode],
             stdin=subprocess.PIPE,
@@ -184,6 +191,7 @@ class PersistentTTSWorker:
             stderr=None,   # inherit → visible in container logs
             text=True,
             bufsize=1,     # line-buffered
+            env=env,
         )
         # Block until model is loaded
         import select

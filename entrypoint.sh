@@ -41,6 +41,8 @@
 #   Dubbing:
 #     QWEN_MODE         clone|custom                        (default: clone)
 #     NO_DEMUCS         1|true to skip demucs (faster, no bgm)
+#     TTS_WORKERS       parallel TTS workers                (default: auto-detected)
+#     TTS_DEVICES       GPU IDs for workers, e.g. 0,1,2    (default: auto-detected)
 
 set -euo pipefail
 
@@ -67,6 +69,8 @@ WHISPER_MODEL="${WHISPER_MODEL:-medium}"
 
 QWEN_MODE="${QWEN_MODE:-clone}"
 NO_DEMUCS="${NO_DEMUCS:-}"
+TTS_WORKERS="${TTS_WORKERS:-}"
+TTS_DEVICES="${TTS_DEVICES:-}"
 
 SKIP_NEMO="${SKIP_NEMO:-}"
 SKIP_TRANSLATE="${SKIP_TRANSLATE:-}"
