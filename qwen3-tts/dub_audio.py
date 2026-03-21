@@ -321,9 +321,14 @@ def _audio_duration(path: Path) -> float:
 
 def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> Path:
     """
-    Fit audio_path into target_dur seconds.
-    - Too short → pad tail with silence  (keeps natural cadence)
-    - Too long  → speed up, capped at max_speed  (avoids chipmunk)
+    Fit audio_path into EXACTLY target_dur seconds so the dub timeline
+    stays locked to the video.
+
+    - Very short (ratio < 0.85):  pad tail with silence.
+    - Slightly short (0.85 ≤ ratio < 1.0):  slow down gently (barely audible).
+    - Long (1.0 < ratio ≤ max_speed):  speed up to fit exactly.
+    - Very long (ratio > max_speed):  speed up to max_speed + hard-trim
+      so the clip NEVER overflows into the next segment.
     """
     curr = _audio_duration(audio_path)
     if curr <= 0:
@@ -332,18 +337,27 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
     out   = audio_path.with_name(audio_path.stem + "_fit.wav")
     ratio = curr / target_dur
 
-    if ratio < 0.95:
+    if ratio < 0.85:
+        # Too short to slow down without sounding weird → pad silence at end
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
              "-af", f"apad,atrim=0:{target_dur:.6f}",
              "-y", str(out), "-loglevel", "error"],
             check=True,
         )
-    else:
-        speed = min(ratio, max_speed)
+    elif ratio <= max_speed:
+        # 0.85–1.0: gentle slow-down;  1.0–max_speed: speed up to fit exactly
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={speed:.4f}",
+             "-filter:a", f"atempo={ratio:.4f}",
+             "-vn", "-y", str(out), "-loglevel", "error"],
+            check=True,
+        )
+    else:
+        # Severely over — speed up to max_speed + hard-trim to target_dur
+        subprocess.run(
+            ["ffmpeg", "-i", str(audio_path),
+             "-filter:a", f"atempo={max_speed:.4f},atrim=0:{target_dur:.6f}",
              "-vn", "-y", str(out), "-loglevel", "error"],
             check=True,
         )

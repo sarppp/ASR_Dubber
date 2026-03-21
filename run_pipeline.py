@@ -125,6 +125,8 @@ def main():
                    help="Max TTS speed-up before capping (default: 1.35)")
     p.add_argument("--merge-gap",      type=float, default=1.0, metavar="SEC",
                    help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
+    p.add_argument("--merge-max-dur",  type=float, default=10.0, metavar="SEC",
+                   help="Max duration for a merged segment in seconds (default: 10)")
     p.add_argument("--whisper-model",  default="medium",
                    choices=["tiny", "base", "small", "medium", "large-v3", "turbo"],
                    help="Whisper model for language detection (default: medium)")
@@ -367,6 +369,8 @@ def main():
             dub_cmd.extend(["--max-speed", str(args.max_speed)])
         if args.merge_gap is not None:
             dub_cmd.extend(["--merge-gap", str(args.merge_gap)])
+        if args.merge_max_dur is not None:
+            dub_cmd.extend(["--merge-max-dur", str(args.merge_max_dur)])
 
         _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS")
     else:

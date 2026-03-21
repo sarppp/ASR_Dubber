@@ -90,6 +90,9 @@ Examples:
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
+    parser.add_argument("--merge-max-dur", type=float, default=10.0,
+                        help="Max duration (seconds) for a merged segment "
+                             "(default: 10 — prevents giant TTS blocks)")
     args = parser.parse_args()
 
     search_dir = Path(args.search_dir).resolve()
@@ -171,7 +174,8 @@ Examples:
         log.error("No segments parsed — make sure this is a diarized+translated SRT")
         return 1
     if args.merge_gap > 0:
-        segments = merge_segments(segments, gap_sec=args.merge_gap)
+        segments = merge_segments(segments, gap_sec=args.merge_gap,
+                                  max_dur=args.merge_max_dur)
 
     # Compute SRT duration early — used for trimming audio AND final video
     srt_end = max(s["end"] for s in segments)

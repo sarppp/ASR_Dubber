@@ -114,7 +114,11 @@ def parse_srt(path: Path) -> List[Dict]:
 # Segment merging (naturalness improvement)
 # ---------------------------------------------------------------------------
 
-def merge_segments(segments: List[Dict], gap_sec: float = 1.0) -> List[Dict]:
+def merge_segments(
+    segments: List[Dict],
+    gap_sec: float = 1.0,
+    max_dur: float = 10.0,
+) -> List[Dict]:
     """Merge consecutive same-speaker segments separated by a gap ≤ gap_sec.
 
     Synthesising short subtitle lines individually causes choppy speech — the
@@ -125,6 +129,10 @@ def merge_segments(segments: List[Dict], gap_sec: float = 1.0) -> List[Dict]:
     The merged segment keeps the first segment's index, spans start→end of the
     whole group, and concatenates text with a single space.  Pass gap_sec=0
     to disable merging entirely.
+
+    max_dur caps how long a merged segment can grow (default 10s).  Without
+    this, a single-speaker monologue merges into one giant block; the TTS
+    finishes early/late and speed_fit pads/compresses by huge amounts.
     """
     if not segments:
         return segments
@@ -134,7 +142,10 @@ def merge_segments(segments: List[Dict], gap_sec: float = 1.0) -> List[Dict]:
 
     for seg in segments[1:]:
         gap = seg["start"] - current["end"]
-        if seg["speaker"] == current["speaker"] and 0 <= gap <= gap_sec:
+        merged_dur = seg["end"] - current["start"]
+        if (seg["speaker"] == current["speaker"]
+                and 0 <= gap <= gap_sec
+                and merged_dur <= max_dur):
             current["end"]  = seg["end"]
             current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
         else:
