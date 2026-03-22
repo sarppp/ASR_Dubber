@@ -24,7 +24,6 @@ Usage:
 
 import argparse
 import logging
-import queue
 import re
 import sys
 import threading
@@ -36,7 +35,10 @@ from tqdm import tqdm
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-from dub_srt import QWEN_FEMALE_VOICES, _qwen_lang, parse_srt, merge_segments, build_voice_map
+from dub_srt import (
+    QWEN_FEMALE_VOICES, _qwen_lang, parse_srt, merge_segments,
+    build_voice_map, write_dub_srt,
+)
 from dub_audio import (
     extract_audio,
     separate_audio,
@@ -220,99 +222,94 @@ Examples:
         for spk, voice in voice_map.items():
             log.info(f"   {spk} → clone ref (fallback: {voice})")
 
-    # ── 5. TTS loop (parallel workers) ───────────────────────────────────────
+    # ── 5. TTS loop ──────────────────────────────────────────────────────────
+    # Architecture: ONE TTS subprocess (one model on GPU) does all synthesis
+    # sequentially. A thread pool runs speed_fit (CPU/ffmpeg) in parallel so
+    # the next TTS call isn't blocked waiting for ffmpeg.
     qwen_language = _qwen_lang(args.language)
     log.info(f"Qwen language: '{args.language}' → '{qwen_language}'")
     checkpoint_path = work_dir / "checkpoint.json"
     final_files: List[Tuple[Path, float, float]] = _load_checkpoint(checkpoint_path)
     done_indices = {int(Path(c).stem.split("_")[1]) for c, _, _ in final_files}
 
-    devices   = [int(d.strip()) for d in args.tts_devices.split(",")]
-    n_workers = args.tts_workers
-    log.info(f"🗣️  Synthesising {len(segments)} segments — "
-             f"{n_workers} worker(s), device(s): {devices}")
+    todo = [seg for seg in segments if seg["index"] not in done_indices]
+    log.info(f"🗣️  Synthesising {len(segments)} segments "
+             f"({len(done_indices)} cached, {len(todo)} remaining)")
 
-    # Pre-populate queue with segments not already done
-    work_q: queue.Queue = queue.Queue()
-    for seg in segments:
-        if seg["index"] not in done_indices:
-            work_q.put(seg)
-
-    pbar           = tqdm(total=len(segments), initial=len(done_indices), desc="TTS",
-                          unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
-                                                  "[{elapsed}<{remaining}, {rate_fmt}]")
+    pbar = tqdm(total=len(segments), initial=len(done_indices), desc="TTS",
+                unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
+                                        "[{elapsed}<{remaining}, {rate_fmt}]")
     final_files_lock = threading.Lock()
 
-    def worker_fn(worker_id: int) -> None:
-        device_id     = devices[worker_id % len(devices)]
-        clone_worker: Optional[PersistentTTSWorker] = None
-        custom_worker: Optional[PersistentTTSWorker] = None
-        clone_broken  = False
-        custom_broken = False
+    # Single shared TTS worker (one model on GPU)
+    clone_worker: Optional[PersistentTTSWorker] = None
+    custom_worker: Optional[PersistentTTSWorker] = None
+    clone_broken = False
 
-        try:
-            while True:
-                try:
-                    seg = work_q.get_nowait()
-                except queue.Empty:
-                    break
+    # Thread pool for parallel speed_fit (CPU work)
+    from concurrent.futures import ThreadPoolExecutor
+    fit_pool = ThreadPoolExecutor(max_workers=4)
+    fit_futures = []
 
-                i          = seg["index"]
-                spk        = seg["speaker"]
-                text       = seg["text"]
-                start, end = seg["start"], seg["end"]
-                target_dur = max(0.1, end - start)
-                raw_out    = temp_dir / f"seg_{i:04d}.wav"
-                ok         = False
+    def _do_fit(raw_out: Path, target_dur: float, start: float, end: float):
+        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed)
+        with final_files_lock:
+            final_files.append((fitted, start, end))
+            _save_checkpoint(checkpoint_path, final_files)
 
-                if raw_out.exists() and raw_out.stat().st_size > 500:
-                    ok = True
-                else:
-                    if args.qwen_mode == "clone" and not clone_broken:
-                        ref = clone_refs.get(spk)
-                        if ref and ref.exists():
-                            log.info(f"   [{i:04d}] 🎙️  clone ({spk}) [w{worker_id}]")
-                            if clone_worker is None:
-                                clone_worker = PersistentTTSWorker(
-                                    "clone", qwen_python, qwen_worker, device_id=device_id)
-                            ok = clone_worker.generate_clone(text, ref, qwen_language, raw_out)
-                            if not ok:
-                                log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
-                                clone_broken = True
-                                clone_worker.close()
-                                clone_worker = None
-                        else:
-                            log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
+    try:
+        for seg in todo:
+            i          = seg["index"]
+            spk        = seg["speaker"]
+            text       = seg["text"]
+            start, end = seg["start"], seg["end"]
+            target_dur = max(0.1, end - start)
+            raw_out    = temp_dir / f"seg_{i:04d}.wav"
+            ok         = False
 
-                    if not ok and not custom_broken:
-                        voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
-                        log.info(f"   [{i:04d}] 🔊 custom voice: {voice} [w{worker_id}]")
-                        if custom_worker is None:
-                            custom_worker = PersistentTTSWorker(
-                                "custom", qwen_python, qwen_worker, device_id=device_id)
-                        ok = custom_worker.generate_custom(text, voice, qwen_language, raw_out)
+            if raw_out.exists() and raw_out.stat().st_size > 500:
+                ok = True
+            else:
+                if args.qwen_mode == "clone" and not clone_broken:
+                    ref = clone_refs.get(spk)
+                    if ref and ref.exists():
+                        log.info(f"   [{i:04d}] 🎙️  clone ({spk})")
+                        if clone_worker is None:
+                            clone_worker = PersistentTTSWorker(
+                                "clone", qwen_python, qwen_worker)
+                        ok = clone_worker.generate_clone(text, ref, qwen_language, raw_out)
                         if not ok:
-                            log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
-                            custom_broken = True
+                            log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
+                            clone_broken = True
+                            clone_worker.close()
+                            clone_worker = None
+                    else:
+                        log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
 
-                if ok and raw_out.exists():
-                    fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed)
-                    with final_files_lock:
-                        final_files.append((fitted, start, end))
-                        _save_checkpoint(checkpoint_path, final_files)
+                if not ok:
+                    voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
+                    log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
+                    if custom_worker is None:
+                        custom_worker = PersistentTTSWorker(
+                            "custom", qwen_python, qwen_worker)
+                    ok = custom_worker.generate_custom(text, voice, qwen_language, raw_out)
+                    if not ok:
+                        log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
-                pbar.update(1)
+            if ok and raw_out.exists():
+                # Run speed_fit in background thread (CPU work)
+                fit_futures.append(fit_pool.submit(_do_fit, raw_out, target_dur, start, end))
 
-        finally:
-            if clone_worker:  clone_worker.close()
-            if custom_worker: custom_worker.close()
+            pbar.update(1)
 
-    threads = [threading.Thread(target=worker_fn, args=(i,), daemon=True)
-               for i in range(n_workers)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    finally:
+        # Wait for all speed_fit jobs to finish
+        for fut in fit_futures:
+            fut.result()
+        fit_pool.shutdown(wait=True)
+        if clone_worker:  clone_worker.close()
+        if custom_worker: custom_worker.close()
+
     pbar.close()
 
     # Sort by start time — parallel workers may have appended out of order
@@ -325,14 +322,19 @@ Examples:
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
     # srt_end already computed above (reused for audio trim + video trim)
     log.info("🎬 Stitching and mixing…")
-    final = stitch_and_mix(
+    final, actual_positions = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
         background=background,   # None when --no-demucs
         trim_to=srt_end,
     )
 
+    # ── 7. Write dubbed SRT with actual audio timestamps ─────────────────
+    dub_srt_path = output_dir / srt_path.name.replace(".srt", "_dub.srt")
+    write_dub_srt(dub_srt_path, actual_positions, segments)
+
     log.info("=" * 60)
     log.info(f"✅ Done!  →  {final}")
+    log.info(f"📝 Dub SRT →  {dub_srt_path}")
     log.info("=" * 60)
     return 0
 

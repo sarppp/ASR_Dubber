@@ -169,10 +169,6 @@ class PersistentTTSWorker:
     MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
     REQUEST_TIMEOUT    = 600  # seconds per synthesis request (12 Hz autoregressive — long segments take time)
 
-    # Class-level lock: only one worker loads its model at a time.
-    # Prevents GPU memory bandwidth contention during model init.
-    _startup_lock: threading.Lock = threading.Lock()
-
     def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
                  device_id: Optional[int] = None) -> None:
         self.mode = mode
@@ -184,12 +180,6 @@ class PersistentTTSWorker:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def _start(self) -> None:
-        # Serialize model loading: only one worker loads at a time to avoid
-        # GPU memory bandwidth contention that causes all workers to timeout.
-        with self._startup_lock:
-            self._start_inner()
-
-    def _start_inner(self) -> None:
         dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
         env = None
@@ -199,28 +189,42 @@ class PersistentTTSWorker:
             [self._qwen_python, self._qwen_worker_path, "--mode", self.mode],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=None,   # inherit → visible in container logs
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1,     # line-buffered
             env=env,
         )
-        # Block until model is loaded
+        # Drain stderr in a background thread to prevent pipe-buffer deadlock.
+        # Model loading can dump >64 KB of torch warnings / download progress
+        # to stderr; if nobody reads it the pipe fills and the process blocks,
+        # never reaching the "READY" print on stdout.
         import select
         import time
+        stderr_lines: list = []
+
+        def _drain_stderr():
+            assert self._proc and self._proc.stderr
+            for line in self._proc.stderr:
+                stderr_lines.append(line.rstrip("\n"))
+
+        drain_t = threading.Thread(target=_drain_stderr, daemon=True)
+        drain_t.start()
+
         deadline = time.monotonic() + self.MODEL_LOAD_TIMEOUT
         ready = False
         last_line = ""
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
+                drain_t.join(timeout=5)
+                tail = "\n".join(stderr_lines[-15:])
                 raise RuntimeError(
                     f"TTS worker (mode={self.mode}) exited before sending READY "
-                    f"(rc={self._proc.returncode})"
+                    f"(rc={self._proc.returncode})\n--- stderr (last 15 lines) ---\n{tail}"
                 )
             rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
             if rlist:
                 line = self._proc.stdout.readline()
                 if not line:
-                    # EOF
                     break
                 line = line.strip()
                 if line == "READY":
@@ -228,8 +232,10 @@ class PersistentTTSWorker:
                     break
                 elif line.startswith("LOAD_ERROR:"):
                     self._proc.wait(timeout=10)
+                    drain_t.join(timeout=5)
+                    tail = "\n".join(stderr_lines[-15:])
                     raise RuntimeError(
-                        f"TTS worker model load failed: {line}"
+                        f"TTS worker model load failed: {line}\n--- stderr ---\n{tail}"
                     )
                 elif line:
                     last_line = line
@@ -237,9 +243,11 @@ class PersistentTTSWorker:
 
         if not ready:
             self._proc.kill()
+            drain_t.join(timeout=5)
+            tail = "\n".join(stderr_lines[-15:])
             raise RuntimeError(
                 f"TTS worker did not send READY within {self.MODEL_LOAD_TIMEOUT}s "
-                f"(last line got {last_line!r})"
+                f"(last line got {last_line!r})\n--- stderr (last 15 lines) ---\n{tail}"
             )
         log.info(f"TTS worker ready (mode={self.mode})")
 
@@ -348,11 +356,14 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
     Fit audio_path into EXACTLY target_dur seconds so the dub timeline
     stays locked to the video.
 
+    Every branch guarantees the output is exactly target_dur via
+    ``apad,atrim=0:{target_dur}`` — pad if short, trim if long.
+    This eliminates cumulative drift in the stitched dub track.
+
     - Very short (ratio < 0.85):  pad tail with silence.
-    - Slightly short (0.85 ≤ ratio < 1.0):  slow down gently (barely audible).
-    - Long (1.0 < ratio ≤ max_speed):  speed up to fit exactly.
-    - Very long (ratio > max_speed):  speed up to max_speed + hard-trim
-      so the clip NEVER overflows into the next segment.
+    - Slightly short (0.85 ≤ ratio < 1.0):  slow down gently + pad/trim.
+    - Long (1.0 < ratio ≤ max_speed):  speed up + pad/trim.
+    - Very long (ratio > max_speed):  speed up to max_speed + hard-trim.
     """
     curr = _audio_duration(audio_path)
     if curr <= 0:
@@ -370,10 +381,12 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
             check=True,
         )
     elif ratio <= max_speed:
-        # 0.85–1.0: gentle slow-down;  1.0–max_speed: speed up to fit exactly
+        # 0.85–1.0: gentle slow-down;  1.0–max_speed: speed up
+        # apad + atrim guarantee exact target duration (atempo alone drifts by
+        # a few ms due to sample-rate rounding in ffmpeg)
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={ratio:.4f}",
+             "-filter:a", f"atempo={ratio:.4f},apad,atrim=0:{target_dur:.6f}",
              "-vn", "-y", str(out), "-loglevel", "error"],
             check=True,
         )
@@ -381,7 +394,7 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
         # Severely over — speed up to max_speed + hard-trim to target_dur
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={max_speed:.4f},atrim=0:{target_dur:.6f}",
+             "-filter:a", f"atempo={max_speed:.4f},apad,atrim=0:{target_dur:.6f}",
              "-vn", "-y", str(out), "-loglevel", "error"],
             check=True,
         )
@@ -400,33 +413,54 @@ def stitch_and_mix(
     temp_dir: Path,
     background: Optional[Path] = None,   # None when --no-demucs
     trim_to: Optional[float] = None,     # trim video to this many seconds (from SRT end)
-) -> Path:
+) -> Tuple[Path, List[Tuple[float, float, float, float]]]:
     """
     Concatenate dubbed clips with silence gaps → dub track.
     Then mix over video:
       - With demucs:    dub (loud) + background music (quiet) + original video
       - Without demucs: dub track replaces audio entirely
     If trim_to is set, the output video is trimmed to that duration.
+
+    Returns (final_video_path, actual_positions) where actual_positions is
+    a list of (actual_start, actual_end, original_start, original_end) for
+    each clip — representing where each segment actually lands in the dubbed
+    audio timeline.
     """
     concat_list = temp_dir / "concat.txt"
-    cur = 0.0
+    actual_cur = 0.0    # tracks actual position in the dubbed audio timeline
+    actual_positions: List[Tuple[float, float, float, float]] = []
 
     with open(concat_list, "w") as f:
         for clip_path, start, end in final_files:
             if not clip_path.exists():
                 log.warning(f"Missing clip, skipping: {clip_path}")
                 continue
-            gap = start - cur
-            if gap > 0.05:
-                sil = temp_dir / f"sil_{cur:.3f}.wav"
+            # Absolute positioning: place each clip at its original start time.
+            # The gap is computed from actual_cur (real position) so cumulative
+            # drift from previous clips is corrected each iteration.
+            gap = start - actual_cur
+            if gap > 0.001:
+                sil = temp_dir / f"sil_{actual_cur:.3f}.wav"
                 subprocess.run(
                     f'ffmpeg -f lavfi -i anullsrc=r=24000:cl=mono -t {gap:.6f}'
                     f' "{sil}" -y -loglevel error',
                     shell=True, check=True,
                 )
                 f.write(f"file '{sil.resolve()}'\n")
+                actual_cur += gap
+            elif gap < -0.001:
+                # Previous clip overran into this slot (shouldn't happen with
+                # exact speed_fit, but handle gracefully).  The clip will start
+                # slightly late — better than overlapping or crashing.
+                log.warning(
+                    f"Clip at {start:.3f}s: previous segment overran by "
+                    f"{-gap:.3f}s — slight timing shift"
+                )
+            actual_start = actual_cur
+            clip_dur = _audio_duration(clip_path)
+            actual_cur += clip_dur
+            actual_positions.append((actual_start, actual_cur, start, end))
             f.write(f"file '{clip_path.resolve()}'\n")
-            cur = end
 
     dub_track = output_dir / "dub_track.wav"
     subprocess.run(
@@ -469,7 +503,7 @@ def stitch_and_mix(
             check=True,
         )
 
-    return final
+    return final, actual_positions
 
 
 # ---------------------------------------------------------------------------

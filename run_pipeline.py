@@ -110,15 +110,18 @@ def _auto_tts_workers() -> tuple:
     """Detect available GPUs and decide how many TTS workers to run.
 
     Returns (n_workers, devices_str).
-    Rules:
-      - No GPU / detection fails → (1, "0")   — CPU fallback, single worker
-      - 1 GPU with ≤ 8 GB free   → (1, "0")   — one model fits, no room for more
-      - 1 GPU with 9–19 GB free  → (2, "0")   — 2 workers (e.g. RTX 3060 8GB)
-      - 1 GPU with 20–47 GB free → (4, "0")   — 4 workers (e.g. RTX 3090/4090)
-      - 1 GPU with 40–55 GB free → (8, "0")   — 8 workers (e.g. L40S 48GB, ~44GB free)
-      - 1 GPU with 56–79 GB free → (12, "0")  — 12 workers (e.g. A100/H100 80GB, ~78GB free)
-      - 1 GPU with ≥ 80 GB free  → (16, "0")  — 16 workers (e.g. H100 NVL 96GB, ~93GB free)
-      - N GPUs                   → (N, "0,1,...,N-1") — 1 worker per GPU
+
+    On a **single GPU** more workers ≠ more throughput — they share the same
+    memory bus, so the autoregressive decoder cannot run faster.  Extra workers
+    only help overlap CPU work (ffmpeg speed_fit) with GPU inference.
+    2-3 workers saturate that benefit; beyond that, startup cost dominates.
+
+    Rules (single GPU):
+      - ≤ 8 GB free  → 1 worker  (barely fits one 3.4 GB model)
+      - 9-19 GB      → 2 workers
+      - ≥ 20 GB      → 3 workers (sweet spot: GPU always busy, fast startup)
+
+    Multi-GPU: 1 worker per GPU (each gets dedicated bandwidth).
     """
     import subprocess as _sp
     try:
@@ -138,13 +141,11 @@ def _auto_tts_workers() -> tuple:
         # One worker per GPU
         return n_gpus, ",".join(str(i) for i in range(n_gpus))
 
-    # Single GPU — scale workers by free VRAM (each model needs ~3.4 GB)
+    # Single GPU — 2-3 workers is the sweet spot (overlap CPU/GPU work).
+    # More workers just add startup time without real throughput gain.
     free_gb = free_mbs[0] / 1024
-    if   free_gb >= 80: workers = 16   # H100 NVL 96GB  (~93GB free)
-    elif free_gb >= 56: workers = 12   # A100/H100 80GB (~78GB free)
-    elif free_gb >= 40: workers = 8    # L40S 48GB      (~44GB free)
-    elif free_gb >= 17: workers = 4    # RTX 4090 24GB  (~22GB free)
-    elif free_gb >=  8: workers = 2
+    if   free_gb >= 12: workers = 3    # 3 models ≈ 10 GB — fits easily on 12+ GB
+    elif free_gb >=  8: workers = 2    # 2 models ≈ 7 GB
     else:               workers = 1
     print(f"🖥️  GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s)")
     return workers, "0"

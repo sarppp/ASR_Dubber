@@ -1,11 +1,12 @@
 """
-dub_srt.py — Voice tables, SRT parsing, and voice assignment for the dub pipeline.
+dub_srt.py — Voice tables, SRT parsing, voice assignment, and dubbed SRT
+             generation for the dub pipeline.
 """
 
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -185,3 +186,61 @@ def build_voice_map(segments: List[Dict]) -> Dict[str, str]:
             mi += 1
 
     return voice_map
+
+
+# ---------------------------------------------------------------------------
+# Write dubbed SRT with actual audio timestamps
+# ---------------------------------------------------------------------------
+
+def _fmt_ts(seconds: float) -> str:
+    """Seconds → SRT timestamp  HH:MM:SS,mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
+
+
+def write_dub_srt(
+    out_path: Path,
+    actual_positions: List[Tuple[float, float, float, float]],
+    segments: List[Dict],
+) -> Path:
+    """Write a new SRT whose timestamps match the dubbed audio timeline.
+
+    Parameters
+    ----------
+    out_path : Path
+        Where to write the SRT (e.g. ``output/video_dub.srt``).
+    actual_positions : list of (actual_start, actual_end, orig_start, orig_end)
+        Returned by ``stitch_and_mix`` — the real position of each clip in the
+        dubbed audio track.
+    segments : list of dicts
+        The (merged) segments with ``start``, ``end``, ``speaker``, ``text``.
+
+    Returns the path written.
+    """
+    # Build lookup: (orig_start, orig_end) → segment dict
+    seg_lookup: Dict[Tuple[float, float], Dict] = {}
+    for seg in segments:
+        seg_lookup[(seg["start"], seg["end"])] = seg
+
+    lines: List[str] = []
+    idx = 1
+    for actual_start, actual_end, orig_start, orig_end in actual_positions:
+        seg = seg_lookup.get((orig_start, orig_end))
+        if seg is None:
+            log.warning(f"No segment match for orig ({orig_start:.3f}–{orig_end:.3f})")
+            continue
+        text = seg["text"]
+        speaker = seg.get("speaker", "")
+        label = f"[{speaker}] " if speaker else ""
+        lines.append(
+            f"{idx}\n"
+            f"{_fmt_ts(actual_start)} --> {_fmt_ts(actual_end)}\n"
+            f"{label}{text}\n"
+        )
+        idx += 1
+
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log.info(f"📝 Dubbed SRT written: {out_path}  ({idx - 1} segments)")
+    return out_path
