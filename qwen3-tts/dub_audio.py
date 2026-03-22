@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -67,7 +68,7 @@ def separate_audio(video_path: Path, temp_dir: Path, trim_sec: float = 0) -> Tup
     )
     subprocess.run(
         [sys.executable, "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals",
-         str(raw_wav), "-o", str(demucs_out)],
+         "--device", "cuda", str(raw_wav), "-o", str(demucs_out)],
         check=True,
     )
     if not vocals.exists():
@@ -168,6 +169,10 @@ class PersistentTTSWorker:
     MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
     REQUEST_TIMEOUT    = 600  # seconds per synthesis request (12 Hz autoregressive — long segments take time)
 
+    # Class-level lock: only one worker loads its model at a time.
+    # Prevents GPU memory bandwidth contention during model init.
+    _startup_lock: threading.Lock = threading.Lock()
+
     def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
                  device_id: Optional[int] = None) -> None:
         self.mode = mode
@@ -179,6 +184,12 @@ class PersistentTTSWorker:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def _start(self) -> None:
+        # Serialize model loading: only one worker loads at a time to avoid
+        # GPU memory bandwidth contention that causes all workers to timeout.
+        with self._startup_lock:
+            self._start_inner()
+
+    def _start_inner(self) -> None:
         dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
         env = None
@@ -215,10 +226,15 @@ class PersistentTTSWorker:
                 if line == "READY":
                     ready = True
                     break
+                elif line.startswith("LOAD_ERROR:"):
+                    self._proc.wait(timeout=10)
+                    raise RuntimeError(
+                        f"TTS worker model load failed: {line}"
+                    )
                 elif line:
                     last_line = line
                     log.debug(f"Worker stdout: {line}")
-                    
+
         if not ready:
             self._proc.kill()
             raise RuntimeError(

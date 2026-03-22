@@ -95,7 +95,14 @@ def _synthesise(model, req: dict, mode: str) -> str | None:
 
 def _daemon(mode: str, device: str) -> None:
     """Load model once then serve all requests from stdin until quit or EOF."""
-    model = _load_model(mode, device)
+    try:
+        model = _load_model(mode, device)
+    except Exception as exc:
+        # Send error on stdout so PersistentTTSWorker can capture it
+        # (otherwise it only sees '' and times out with no diagnostics)
+        print(f"LOAD_ERROR: {exc}", flush=True)
+        print(f"LOAD_ERROR: {exc}", file=sys.stderr, flush=True)
+        sys.exit(1)
     # Signal readiness — PersistentTTSWorker blocks waiting for this line on stdout
     print("READY", flush=True)
     print(f"READY (mode={mode}, device={device})", file=sys.stderr, flush=True)
