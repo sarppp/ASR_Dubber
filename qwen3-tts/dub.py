@@ -24,9 +24,12 @@ Usage:
 
 import argparse
 import logging
+import queue as _queue
 import re
+import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -51,6 +54,33 @@ from dub_audio import (
     _save_checkpoint,
     _load_checkpoint,
 )
+
+
+# ---------------------------------------------------------------------------
+# VRAM auto-detection
+# ---------------------------------------------------------------------------
+
+def _auto_workers(device_ids: List[int]) -> int:
+    """Return the total number of TTS workers that fit in the given devices.
+
+    Uses nvidia-smi to query each device's total VRAM and computes
+    floor(vram_gb / 4.0) per device (4 GB headroom per 3.4 GB model).
+    Falls back to 1 if nvidia-smi is unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, check=True,
+        )
+        # nvidia-smi returns MiB, one line per physical GPU
+        vram_mib = [int(x.strip()) for x in result.stdout.strip().splitlines()]
+        total = 0
+        for d in device_ids:
+            if d < len(vram_mib):
+                total += max(1, int(vram_mib[d] / 1024 / 4.0))
+        return max(1, total)
+    except Exception:
+        return 1
 
 
 # ---------------------------------------------------------------------------
@@ -97,9 +127,9 @@ Examples:
     parser.add_argument("--merge-max-dur", type=float, default=10.0,
                         help="Max duration (seconds) for a merged segment "
                              "(default: 10 — prevents giant TTS blocks)")
-    parser.add_argument("--tts-workers", type=int, default=1,
-                        help="Number of parallel TTS workers (default: 1). "
-                             "Each worker loads one model copy — needs VRAM×N.")
+    parser.add_argument("--tts-workers", default="auto",
+                        help="Number of parallel TTS workers, or 'auto' to detect from VRAM "
+                             "(default: auto). Each worker needs ~4 GB VRAM.")
     parser.add_argument("--tts-devices", default="0",
                         help="Comma-separated GPU IDs for workers, e.g. '0,1,2' "
                              "(default: '0'). Workers round-robin across devices.")
@@ -120,7 +150,6 @@ Examples:
                 f"No translated SRTs found in {search_dir} — "
                 "expected pattern: *.nemo.LANG.diarize_TARGETLANG.srt"
             )
-            return 1
             return 1
 
         chosen_srt = Path(args.srt).resolve() if args.srt else srt_candidates[0]
@@ -223,9 +252,18 @@ Examples:
             log.info(f"   {spk} → clone ref (fallback: {voice})")
 
     # ── 5. TTS loop ──────────────────────────────────────────────────────────
-    # Architecture: ONE TTS subprocess (one model on GPU) does all synthesis
-    # sequentially. A thread pool runs speed_fit (CPU/ffmpeg) in parallel so
-    # the next TTS call isn't blocked waiting for ffmpeg.
+    # N workers (--tts-workers), each on its assigned GPU (--tts-devices).
+    # Workers run in parallel threads, each owning one TTS subprocess.
+    # Model loading is serialized via PersistentTTSWorker._startup_lock so
+    # VRAM isn't double-allocated during init.
+    # Speed-fit (CPU/ffmpeg) runs in a shared thread pool alongside TTS.
+    #
+    # Sizing guide:
+    #   Each worker holds one 1.7B bfloat16 model (~3.4 GB).
+    #   6 GB GPU  → 1 worker
+    #   16 GB GPU → 4 workers
+    #   48 GB GPU → 14 workers
+    #   Multi-GPU → set --tts-devices 0,1,2 --tts-workers 6 (2 per GPU)
     qwen_language = _qwen_lang(args.language)
     log.info(f"Qwen language: '{args.language}' → '{qwen_language}'")
     checkpoint_path = work_dir / "checkpoint.json"
@@ -236,81 +274,121 @@ Examples:
     log.info(f"🗣️  Synthesising {len(segments)} segments "
              f"({len(done_indices)} cached, {len(todo)} remaining)")
 
-    pbar = tqdm(total=len(segments), initial=len(done_indices), desc="TTS",
-                unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
-                                        "[{elapsed}<{remaining}, {rate_fmt}]")
+    device_ids = [int(x.strip()) for x in args.tts_devices.split(",")]
+    n_workers  = (_auto_workers(device_ids)
+                  if args.tts_workers == "auto"
+                  else int(args.tts_workers))
+    log.info(f"TTS workers: {n_workers}  |  devices: {device_ids}")
+
+    pbar             = tqdm(total=len(segments), initial=len(done_indices), desc="TTS",
+                            unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
+                                                    "[{elapsed}<{remaining}, {rate_fmt}]")
     final_files_lock = threading.Lock()
+    fit_lock         = threading.Lock()
+    worker_exc_lock  = threading.Lock()
+    worker_exceptions: List[Exception] = []
 
-    # Single shared TTS worker (one model on GPU)
-    clone_worker: Optional[PersistentTTSWorker] = None
-    custom_worker: Optional[PersistentTTSWorker] = None
-    clone_broken = False
+    seg_queue: _queue.Queue = _queue.Queue()
+    for seg in todo:
+        seg_queue.put(seg)
 
-    # Thread pool for parallel speed_fit (CPU work)
-    from concurrent.futures import ThreadPoolExecutor
-    fit_pool = ThreadPoolExecutor(max_workers=4)
-    fit_futures = []
+    fit_pool    = ThreadPoolExecutor(max_workers=max(4, n_workers * 2))
+    fit_futures: List = []
 
-    def _do_fit(raw_out: Path, target_dur: float, start: float, end: float):
+    def _do_fit(raw_out: Path, target_dur: float, start: float, end: float) -> None:
         fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed)
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
 
-    try:
-        for seg in todo:
-            i          = seg["index"]
-            spk        = seg["speaker"]
-            text       = seg["text"]
-            start, end = seg["start"], seg["end"]
-            target_dur = max(0.1, end - start)
-            raw_out    = temp_dir / f"seg_{i:04d}.wav"
-            ok         = False
+    def _run_worker(device_id: Optional[int]) -> None:
+        clone_w: Optional[PersistentTTSWorker] = None
+        custom_w: Optional[PersistentTTSWorker] = None
+        clone_broken_local = (args.qwen_mode != "clone")
+        try:
+            while True:
+                try:
+                    seg = seg_queue.get_nowait()
+                except _queue.Empty:
+                    break
+                i          = seg["index"]
+                spk        = seg["speaker"]
+                text       = seg["text"]
+                start, end = seg["start"], seg["end"]
+                target_dur = max(0.1, end - start)
+                raw_out    = temp_dir / f"seg_{i:04d}.wav"
+                ok         = False
 
-            if raw_out.exists() and raw_out.stat().st_size > 500:
-                ok = True
-            else:
-                if args.qwen_mode == "clone" and not clone_broken:
-                    ref = clone_refs.get(spk)
-                    if ref and ref.exists():
-                        log.info(f"   [{i:04d}] 🎙️  clone ({spk})")
-                        if clone_worker is None:
-                            clone_worker = PersistentTTSWorker(
-                                "clone", qwen_python, qwen_worker)
-                        ok = clone_worker.generate_clone(text, ref, qwen_language, raw_out)
-                        if not ok:
-                            log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
-                            clone_broken = True
-                            clone_worker.close()
-                            clone_worker = None
-                    else:
-                        log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
+                if raw_out.exists() and raw_out.stat().st_size > 500:
+                    ok = True
+                else:
+                    if not clone_broken_local:
+                        ref = clone_refs.get(spk)
+                        if ref and ref.exists():
+                            log.info(f"   [{i:04d}] 🎙️  clone ({spk})")
+                            if clone_w is None:
+                                clone_w = PersistentTTSWorker(
+                                    "clone", qwen_python, qwen_worker, device_id=device_id)
+                            ok = clone_w.generate_clone(text, ref, qwen_language, raw_out)
+                            if not ok:
+                                log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
+                                clone_broken_local = True
+                                clone_w.close()   # free VRAM before loading custom
+                                clone_w = None
+                        else:
+                            log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
 
-                if not ok:
-                    voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
-                    log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
-                    if custom_worker is None:
-                        custom_worker = PersistentTTSWorker(
-                            "custom", qwen_python, qwen_worker)
-                    ok = custom_worker.generate_custom(text, voice, qwen_language, raw_out)
                     if not ok:
-                        log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
+                        voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
+                        log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
+                        if custom_w is None:
+                            custom_w = PersistentTTSWorker(
+                                "custom", qwen_python, qwen_worker, device_id=device_id)
+                        ok = custom_w.generate_custom(text, voice, qwen_language, raw_out)
+                        if not ok:
+                            log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
-            if ok and raw_out.exists():
-                # Run speed_fit in background thread (CPU work)
-                fit_futures.append(fit_pool.submit(_do_fit, raw_out, target_dur, start, end))
+                if ok and raw_out.exists():
+                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end)
+                    with fit_lock:
+                        fit_futures.append(fut)
 
-            pbar.update(1)
+                pbar.update(1)
 
-    finally:
-        # Wait for all speed_fit jobs to finish
-        for fut in fit_futures:
-            fut.result()
-        fit_pool.shutdown(wait=True)
-        if clone_worker:  clone_worker.close()
-        if custom_worker: custom_worker.close()
+        except Exception as exc:
+            log.error(f"TTS worker thread failed: {exc}")
+            with worker_exc_lock:
+                worker_exceptions.append(exc)
+        finally:
+            if clone_w:  clone_w.close()
+            if custom_w: custom_w.close()
+
+    worker_threads = [
+        threading.Thread(
+            target=_run_worker,
+            args=(device_ids[i % len(device_ids)],),
+            daemon=True,
+            name=f"tts-{i}",
+        )
+        for i in range(n_workers)
+    ]
+    for t in worker_threads:
+        t.start()
+    for t in worker_threads:
+        t.join()
 
     pbar.close()
+
+    # Wait for all speed_fit jobs
+    for fut in fit_futures:
+        try:
+            fut.result()
+        except Exception as exc:
+            log.error(f"speed_fit error (segment skipped on resume): {exc}")
+    fit_pool.shutdown(wait=True)
+
+    if worker_exceptions and not final_files:
+        raise worker_exceptions[0]
 
     # Sort by start time — parallel workers may have appended out of order
     final_files.sort(key=lambda x: x[1])
