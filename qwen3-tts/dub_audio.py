@@ -478,7 +478,7 @@ def stitch_and_mix(
              "-filter_complex",
              "[1:a]volume=1.5[v];[2:a]volume=0.4[b];[v][b]amix=inputs=2:duration=first[out]",
              "-map", "0:v", "-map", "[out]",
-             *video_codec, str(final), "-y", "-loglevel", "error"],
+             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
             check=True,
         )
     else:
@@ -488,7 +488,7 @@ def stitch_and_mix(
              "-i", str(dub_track),
              *trim_flags,
              "-map", "0:v", "-map", "1:a",
-             *video_codec, str(final), "-y", "-loglevel", "error"],
+             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
             check=True,
         )
 
