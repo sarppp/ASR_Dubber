@@ -137,20 +137,21 @@ def _auto_tts_workers() -> tuple:
     if n_gpus == 0:
         return 1, "0"
 
-    if n_gpus > 1:
-        # One worker per GPU
-        return n_gpus, ",".join(str(i) for i in range(n_gpus))
+    def _workers_for_gpu(free_gb: float) -> int:
+        if   free_gb >= 17: return 3
+        elif free_gb >= 12: return 2
+        else:               return 1
 
-    # Single GPU — each Qwen3-TTS worker uses ~5.5 GB at runtime
-    # (3.4 GB model weights + CUDA context + synthesis activations).
-    # Tiers leave ~2-3 GB headroom for synthesis allocations:
-    #   ≥ 17 GB free → 3 workers (16.5 GB + 0.5 GB headroom)
-    #   ≥ 12 GB free → 2 workers (11.0 GB + 1.0 GB headroom)
-    #   else         → 1 worker
+    if n_gpus > 1:
+        # Apply per-GPU tiers and sum — e.g. 4× 16 GB → 2 per GPU → 8 total
+        devices = list(range(n_gpus))
+        workers = sum(_workers_for_gpu(free_mbs[d] / 1024) for d in devices)
+        print(f"🖥️  {n_gpus} GPUs → {workers} TTS worker(s) total")
+        return max(1, workers), ",".join(str(i) for i in devices)
+
+    # Single GPU
     free_gb = free_mbs[0] / 1024
-    if   free_gb >= 17: workers = 3
-    elif free_gb >= 12: workers = 2
-    else:               workers = 1
+    workers = _workers_for_gpu(free_gb)
     print(f"🖥️  GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s)")
     return workers, "0"
 

@@ -75,7 +75,8 @@ def _auto_workers(device_ids: List[int]) -> int:
       8-11 GB → 2 workers
       ≥ 12 GB → 3 workers  (sweet spot regardless of total VRAM)
 
-    Multi-GPU: 1 worker per device.
+    Multi-GPU: same tiers applied per device, summed across all devices.
+    e.g. 4× 16 GB → 2 workers per GPU → 8 workers total.
     """
     try:
         result = subprocess.run(
@@ -91,20 +92,27 @@ def _auto_workers(device_ids: List[int]) -> int:
     if n_gpus == 0:
         return 1
 
-    if n_gpus > 1:
-        # True parallelism: one worker per requested device
-        return len(device_ids)
+    def _workers_for_gpu(free_gb: float) -> int:
+        # Each worker uses ~5.5 GB at runtime (weights + CUDA context + activations).
+        # Tiers leave headroom for synthesis allocations:
+        #   ≥ 17 GB → 3 workers (16.5 GB + 0.5 GB buffer)
+        #   ≥ 12 GB → 2 workers (11.0 GB + 1.0 GB buffer)
+        #   else    → 1 worker
+        if   free_gb >= 17: return 3
+        elif free_gb >= 12: return 2
+        else:               return 1
 
-    # Single GPU — each Qwen3-TTS worker uses ~5.5 GB at runtime
-    # (3.4 GB model weights + CUDA context + synthesis activations).
-    # Tiers leave ~2-3 GB headroom for synthesis allocations:
-    #   ≥ 17 GB free → 3 workers (16.5 GB + 0.5 GB headroom)
-    #   ≥ 12 GB free → 2 workers (11.0 GB + 1.0 GB headroom)
-    #   else         → 1 worker
+    if n_gpus > 1:
+        # Sum workers across all requested devices
+        total = sum(
+            _workers_for_gpu(free_mib[d] / 1024)
+            for d in device_ids if d < len(free_mib)
+        )
+        return max(1, total)
+
+    # Single GPU
     free_gb = free_mib[0] / 1024
-    if   free_gb >= 17: workers = 3
-    elif free_gb >= 12: workers = 2
-    else:               workers = 1
+    workers = _workers_for_gpu(free_gb)
     log.info(f"GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s) (auto)")
     return workers
 
