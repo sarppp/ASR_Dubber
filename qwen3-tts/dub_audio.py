@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -166,7 +167,11 @@ class PersistentTTSWorker:
     clone_broken is set, so at most one model is ever resident on tight GPUs.
     """
 
-    MODEL_LOAD_TIMEOUT = 900  # seconds — model download + CUDA init can take >5 min in Docker
+    # Serialize model loading across all workers: prevents GPU memory bandwidth
+    # contention when N workers start simultaneously.
+    _startup_lock: threading.Lock = threading.Lock()
+
+    MODEL_LOAD_TIMEOUT = 500  # seconds — model download + CUDA init (remote GPU has fast internet)
     REQUEST_TIMEOUT    = 600  # seconds per synthesis request
 
     def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
@@ -180,6 +185,12 @@ class PersistentTTSWorker:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def _start(self) -> None:
+        # Hold the class-level lock so that when N workers start simultaneously
+        # each model finishes loading before the next begins (avoids VRAM spike).
+        with PersistentTTSWorker._startup_lock:
+            self._start_inner()
+
+    def _start_inner(self) -> None:
         dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
@@ -269,10 +280,10 @@ class PersistentTTSWorker:
         })
 
     def _send(self, request: dict) -> bool:
-        self._ensure_alive()
         import select
         import time
         try:
+            self._ensure_alive()
             self._proc.stdin.write(json.dumps(request) + "\n")
             self._proc.stdin.flush()
             deadline = time.monotonic() + self.REQUEST_TIMEOUT
