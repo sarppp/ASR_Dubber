@@ -61,26 +61,47 @@ from dub_audio import (
 # ---------------------------------------------------------------------------
 
 def _auto_workers(device_ids: List[int]) -> int:
-    """Return the total number of TTS workers that fit in the given devices.
+    """Return the number of TTS workers that fit across the given devices.
 
-    Uses nvidia-smi to query each device's total VRAM and computes
-    floor(vram_gb / 4.0) per device (4 GB headroom per 3.4 GB model).
-    Falls back to 1 if nvidia-smi is unavailable.
+    On a SINGLE GPU multiple workers don't speed up inference — they all share
+    the same GPU compute and the autoregressive decoder runs sequentially.
+    Extra workers only help overlap CPU speed_fit with GPU synthesis; 2-3
+    saturates that benefit. Beyond that, startup cost dominates.
+
+    On MULTIPLE GPUs each device gets its own worker for true parallelism.
+
+    Single-GPU tiers (free VRAM at query time):
+      < 8 GB  → 1 worker
+      8-11 GB → 2 workers
+      ≥ 12 GB → 3 workers  (sweet spot regardless of total VRAM)
+
+    Multi-GPU: 1 worker per device.
     """
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, check=True,
         )
         # nvidia-smi returns MiB, one line per physical GPU
-        vram_mib = [int(x.strip()) for x in result.stdout.strip().splitlines()]
-        total = 0
-        for d in device_ids:
-            if d < len(vram_mib):
-                total += max(1, int(vram_mib[d] / 1024 / 4.0))
-        return max(1, total)
+        free_mib = [int(x.strip()) for x in result.stdout.strip().splitlines()]
     except Exception:
         return 1
+
+    n_gpus = len(free_mib)
+    if n_gpus == 0:
+        return 1
+
+    if n_gpus > 1:
+        # True parallelism: one worker per requested device
+        return len(device_ids)
+
+    # Single GPU — cap at 3 regardless of VRAM size
+    free_gb = free_mib[0] / 1024
+    if   free_gb >= 12: workers = 3
+    elif free_gb >=  8: workers = 2
+    else:               workers = 1
+    log.info(f"GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s) (auto)")
+    return workers
 
 
 # ---------------------------------------------------------------------------
