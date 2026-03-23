@@ -113,6 +113,8 @@ services:
       # ── Dubbing (Qwen TTS) ────────────────────────────────────────────────
       QWEN_MODE:      "${QWEN_MODE:-clone}"        # clone | custom
       NO_DEMUCS:      "${NO_DEMUCS:-}"             # 1/true = skip demucs (faster, no bgm)
+      TTS_WORKERS:    "${TTS_WORKERS:-}"           # parallel TTS workers (default: auto-detected)
+      TTS_DEVICES:    "${TTS_DEVICES:-}"           # GPU IDs for workers, e.g. 0,1,2 (default: auto)
     # By default uses entrypoint.sh env-var mode.
     # Pass extra flags: docker compose run pipeline --help
     command: []

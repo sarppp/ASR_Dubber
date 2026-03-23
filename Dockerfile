@@ -47,7 +47,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --frozen --no-dev --project /app/nemo          && \
     uv sync --frozen --no-dev --project /app/translate-gemma && \
     uv sync --frozen --no-dev --project /app/qwen3-tts     && \
-    uv sync --frozen --no-dev --project /app/whisper
+    uv sync --frozen --no-dev --project /app/whisper       && \
+    # triton is only needed for torch.compile() JIT — not for inference.
+    # Removing it here (same RUN layer) saves ~400-500 MB per venv.
+    # Must be in the same RUN so the files never land in the final image layer.
+    for f in /app/*/.venv/lib/python*/site-packages/triton \
+              /app/*/.venv/lib/python*/site-packages/triton-*.dist-info; do \
+        [ -e "$f" ] && rm -rf "$f"; done; true
 
 # ── Source code — separate layer so code edits don't bust the dep cache ───────
 COPY run_pipeline.py pipeline_utils.py pipeline_paths.py  /app/

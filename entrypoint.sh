@@ -104,8 +104,10 @@ RESERVE_FLAG=();    [[ -n "$RESERVE_GB"     ]] && RESERVE_FLAG=(--reserve-gb "$R
 SAFETY_FLAG=();     [[ -n "$SAFETY_FACTOR"  ]] && SAFETY_FLAG=(--safety-factor "$SAFETY_FACTOR")
 TRIM_FLAG=();       [[ -n "$TRIM" && "$TRIM" != "0" ]] && TRIM_FLAG=(--trim "$TRIM")
 WHISPER_FLAG=();    [[ -n "$WHISPER_MODEL"  ]] && WHISPER_FLAG=(--whisper-model "$WHISPER_MODEL")
-QWEN_FLAG=();       [[ -n "$QWEN_MODE" ]] && QWEN_FLAG=(--qwen-mode "$QWEN_MODE")
+QWEN_FLAG=();       [[ -n "$QWEN_MODE"    ]] && QWEN_FLAG=(--qwen-mode "$QWEN_MODE")
 DEMUCS_FLAG=();     [[ "$NO_DEMUCS"  =~ ^(1|true|yes)$ ]] && DEMUCS_FLAG=(--no-demucs)
+TTS_WORKERS_FLAG=(); [[ -n "$TTS_WORKERS" ]] && TTS_WORKERS_FLAG=(--tts-workers "$TTS_WORKERS")
+TTS_DEVICES_FLAG=(); [[ -n "$TTS_DEVICES" ]] && TTS_DEVICES_FLAG=(--tts-devices "$TTS_DEVICES")
 SKIP_NEMO_FLAG=();  [[ "$SKIP_NEMO"  =~ ^(1|true|yes)$ ]] && SKIP_NEMO_FLAG=(--skip-nemo)
 SKIP_TRANS_FLAG=(); [[ "$SKIP_TRANSLATE" =~ ^(1|true|yes)$ ]] && SKIP_TRANS_FLAG=(--skip-translate)
 SKIP_DUB_FLAG=();   [[ "$SKIP_DUB"   =~ ^(1|true|yes)$ ]] && SKIP_DUB_FLAG=(--skip-dub)
@@ -125,6 +127,8 @@ exec /app/nemo/.venv/bin/python /app/run_pipeline.py \
     "${WHISPER_FLAG[@]}"            \
     "${QWEN_FLAG[@]}"               \
     "${DEMUCS_FLAG[@]}"             \
+    "${TTS_WORKERS_FLAG[@]}"        \
+    "${TTS_DEVICES_FLAG[@]}"        \
     "${SKIP_NEMO_FLAG[@]}"          \
     "${SKIP_TRANS_FLAG[@]}"         \
     "${SKIP_DUB_FLAG[@]}"
