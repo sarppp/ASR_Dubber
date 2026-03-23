@@ -16,7 +16,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        python3.12 python3.12-venv python3.12-dev \
        python3.11 python3.11-venv python3.11-dev \
-       ffmpeg libsndfile1 \
+       ffmpeg libsndfile1 sox \
        build-essential \
        curl ca-certificates git \
     && rm -rf /var/lib/apt/lists/*

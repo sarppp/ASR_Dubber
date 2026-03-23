@@ -95,10 +95,15 @@ def _auto_workers(device_ids: List[int]) -> int:
         # True parallelism: one worker per requested device
         return len(device_ids)
 
-    # Single GPU — cap at 3 regardless of VRAM size
+    # Single GPU — each Qwen3-TTS worker uses ~5.5 GB at runtime
+    # (3.4 GB model weights + CUDA context + synthesis activations).
+    # Tiers leave ~2-3 GB headroom for synthesis allocations:
+    #   ≥ 17 GB free → 3 workers (16.5 GB + 0.5 GB headroom)
+    #   ≥ 12 GB free → 2 workers (11.0 GB + 1.0 GB headroom)
+    #   else         → 1 worker
     free_gb = free_mib[0] / 1024
-    if   free_gb >= 12: workers = 3
-    elif free_gb >=  8: workers = 2
+    if   free_gb >= 17: workers = 3
+    elif free_gb >= 12: workers = 2
     else:               workers = 1
     log.info(f"GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s) (auto)")
     return workers
