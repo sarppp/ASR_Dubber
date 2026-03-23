@@ -83,17 +83,20 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
  
     # Find final_dub.mp4 — use explicit per-video workdir if given, else fall back to old shared path
     dubbed_videos = []
+    dub_srts = []
     if dub_workdir:
         dub_out = Path(dub_workdir) / "output"
         dubbed_videos = glob.glob(str(dub_out / '*.mp4'))
+        dub_srts = glob.glob(str(dub_out / '*_dub.srt'))
         if not dubbed_videos:
             print(f"   ⚠️  No dubbed MP4 found in {dub_out}")
     else:
         # Legacy fallback: old shared output path
         old_out = ROOT / 'qwen3-tts' / 'output' / 'dub' / 'output'
         dubbed_videos = glob.glob(str(old_out / '*.mp4'))
- 
-    files_to_move = all_srts + dubbed_videos + intermediate_files
+        dub_srts = glob.glob(str(old_out / '*_dub.srt'))
+
+    files_to_move = all_srts + dubbed_videos + dub_srts + intermediate_files
  
     if not files_to_move:
         print("   No files found to move.")

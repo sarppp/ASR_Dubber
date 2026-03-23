@@ -26,20 +26,24 @@ from pathlib import Path
 
 
 def _load_model(mode: str, device: str):
+    print("[worker] _load_model: importing torch…", file=sys.stderr, flush=True)
     import torch
+    print("[worker] _load_model: importing Qwen3TTSModel…", file=sys.stderr, flush=True)
     from qwen_tts import Qwen3TTSModel
+    print("[worker] _load_model: imports done", file=sys.stderr, flush=True)
 
     model_id = (
         "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
         if mode == "clone"
         else "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     )
-    print(f"Loading {model_id} on {device}…", file=sys.stderr, flush=True)
+    print(f"[worker] Loading {model_id} on {device}…", file=sys.stderr, flush=True)
     model = Qwen3TTSModel.from_pretrained(
         model_id,
         device_map=device,
         dtype=torch.bfloat16,
     )
+    print("[worker] Model loaded successfully", file=sys.stderr, flush=True)
     return model
 
 
@@ -148,6 +152,7 @@ def _one_shot(mode: str, device: str, args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    print("[worker] parsing args…", file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description="Qwen TTS Worker")
     parser.add_argument("--mode",      choices=["clone", "custom"], default="custom")
     parser.add_argument("--device",    default=None,
@@ -161,8 +166,11 @@ def main() -> int:
     parser.add_argument("--ref-text",  default="")
     args = parser.parse_args()
 
+    print("[worker] importing torch…", file=sys.stderr, flush=True)
     import torch
+    print(f"[worker] torch imported, CUDA available: {torch.cuda.is_available()}", file=sys.stderr, flush=True)
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"[worker] device={device}, mode={args.mode}", file=sys.stderr, flush=True)
 
     # Daemon mode when stdin is a pipe (called from dub_audio.py)
     if not sys.stdin.isatty():

@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import sys
-import threading
+
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -166,8 +166,8 @@ class PersistentTTSWorker:
     clone_broken is set, so at most one model is ever resident on tight GPUs.
     """
 
-    MODEL_LOAD_TIMEOUT = 300  # seconds to wait for "READY" (model download included)
-    REQUEST_TIMEOUT    = 600  # seconds per synthesis request (12 Hz autoregressive — long segments take time)
+    MODEL_LOAD_TIMEOUT = 900  # seconds — model download + CUDA init can take >5 min in Docker
+    REQUEST_TIMEOUT    = 600  # seconds per synthesis request
 
     def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
                  device_id: Optional[int] = None) -> None:
@@ -182,44 +182,28 @@ class PersistentTTSWorker:
     def _start(self) -> None:
         dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
-        env = None
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if self._device_id is not None:
-            env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(self._device_id)}
+            env["CUDA_VISIBLE_DEVICES"] = str(self._device_id)
         self._proc = subprocess.Popen(
-            [self._qwen_python, self._qwen_worker_path, "--mode", self.mode],
+            [self._qwen_python, "-u", self._qwen_worker_path, "--mode", self.mode],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=None,   # inherit → prints directly to terminal (no pipe buffering)
             text=True,
-            bufsize=1,     # line-buffered
+            bufsize=1,
             env=env,
         )
-        # Drain stderr in a background thread to prevent pipe-buffer deadlock.
-        # Model loading can dump >64 KB of torch warnings / download progress
-        # to stderr; if nobody reads it the pipe fills and the process blocks,
-        # never reaching the "READY" print on stdout.
         import select
         import time
-        stderr_lines: list = []
-
-        def _drain_stderr():
-            assert self._proc and self._proc.stderr
-            for line in self._proc.stderr:
-                stderr_lines.append(line.rstrip("\n"))
-
-        drain_t = threading.Thread(target=_drain_stderr, daemon=True)
-        drain_t.start()
-
         deadline = time.monotonic() + self.MODEL_LOAD_TIMEOUT
         ready = False
         last_line = ""
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
-                drain_t.join(timeout=5)
-                tail = "\n".join(stderr_lines[-15:])
                 raise RuntimeError(
                     f"TTS worker (mode={self.mode}) exited before sending READY "
-                    f"(rc={self._proc.returncode})\n--- stderr (last 15 lines) ---\n{tail}"
+                    f"(rc={self._proc.returncode}) — check logs above for details"
                 )
             rlist, _, _ = select.select([self._proc.stdout], [], [], 1.0)
             if rlist:
@@ -232,22 +216,16 @@ class PersistentTTSWorker:
                     break
                 elif line.startswith("LOAD_ERROR:"):
                     self._proc.wait(timeout=10)
-                    drain_t.join(timeout=5)
-                    tail = "\n".join(stderr_lines[-15:])
-                    raise RuntimeError(
-                        f"TTS worker model load failed: {line}\n--- stderr ---\n{tail}"
-                    )
+                    raise RuntimeError(f"TTS worker model load failed: {line}")
                 elif line:
                     last_line = line
                     log.debug(f"Worker stdout: {line}")
 
         if not ready:
             self._proc.kill()
-            drain_t.join(timeout=5)
-            tail = "\n".join(stderr_lines[-15:])
             raise RuntimeError(
                 f"TTS worker did not send READY within {self.MODEL_LOAD_TIMEOUT}s "
-                f"(last line got {last_line!r})\n--- stderr (last 15 lines) ---\n{tail}"
+                f"(last line got {last_line!r}) — check logs above for details"
             )
         log.info(f"TTS worker ready (mode={self.mode})")
 

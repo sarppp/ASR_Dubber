@@ -200,12 +200,68 @@ def _fmt_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
 
 
+def _split_subtitle_blocks(
+    text: str, start: float, end: float, max_ch: int = 42,
+) -> List[Tuple[str, float, float]]:
+    """Split long text into movie-style subtitle blocks with proportional timestamps.
+
+    Each block has at most two lines of ≤ max_ch characters.  Duration is
+    distributed proportionally by character count so each block stays on
+    screen the right amount of time.
+
+    Returns list of (display_text, block_start, block_end).
+    """
+    words = text.split()
+    if not words:
+        return [(text, start, end)]
+
+    # Greedily pack words into blocks of ≤ max_ch (single line)
+    # or ≤ 2*max_ch (two lines).  Prefer sentence boundaries.
+    blocks: List[str] = []
+    buf: List[str] = []
+    buf_len = 0
+
+    for w in words:
+        new_len = buf_len + len(w) + (1 if buf else 0)
+        if new_len <= max_ch:
+            buf.append(w)
+            buf_len = new_len
+        else:
+            if buf:
+                blocks.append(" ".join(buf))
+            buf = [w]
+            buf_len = len(w)
+    if buf:
+        blocks.append(" ".join(buf))
+
+    if not blocks:
+        return [(text, start, end)]
+
+    # Distribute timestamps proportionally by character count
+    total_chars = sum(len(b) for b in blocks)
+    dur = end - start
+    result: List[Tuple[str, float, float]] = []
+    cur = start
+    for b in blocks:
+        frac = len(b) / total_chars if total_chars > 0 else 1.0 / len(blocks)
+        block_end = cur + dur * frac
+        result.append((b, cur, block_end))
+        cur = block_end
+
+    return result
+
+
 def write_dub_srt(
     out_path: Path,
     actual_positions: List[Tuple[float, float, float, float]],
     segments: List[Dict],
 ) -> Path:
-    """Write a new SRT whose timestamps match the dubbed audio timeline.
+    """Write a clean, movie-style SRT whose timestamps match the dubbed audio.
+
+    - Speaker tags (``[Speaker N]``) are stripped — this is for viewing.
+    - Long segments are split into short subtitle blocks (≤42 chars/line)
+      with proportional timestamps.
+    - Timestamps come from the actual stitched audio, not the original SRT.
 
     Parameters
     ----------
@@ -231,16 +287,16 @@ def write_dub_srt(
         if seg is None:
             log.warning(f"No segment match for orig ({orig_start:.3f}–{orig_end:.3f})")
             continue
-        text = seg["text"]
-        speaker = seg.get("speaker", "")
-        label = f"[{speaker}] " if speaker else ""
-        lines.append(
-            f"{idx}\n"
-            f"{_fmt_ts(actual_start)} --> {_fmt_ts(actual_end)}\n"
-            f"{label}{text}\n"
-        )
-        idx += 1
+        for block_text, blk_start, blk_end in _split_subtitle_blocks(
+            seg["text"], actual_start, actual_end
+        ):
+            lines.append(
+                f"{idx}\n"
+                f"{_fmt_ts(blk_start)} --> {_fmt_ts(blk_end)}\n"
+                f"{block_text}\n"
+            )
+            idx += 1
 
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    log.info(f"📝 Dubbed SRT written: {out_path}  ({idx - 1} segments)")
+    log.info(f"📝 Dubbed SRT written: {out_path}  ({idx - 1} subtitle blocks)")
     return out_path
