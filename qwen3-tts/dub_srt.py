@@ -131,12 +131,22 @@ def merge_segments(
     whole group, and concatenates text with a single space.  Pass gap_sec=0
     to disable merging entirely.
 
-    max_dur caps how long a merged segment can grow (default 10s).  Without
-    this, a single-speaker monologue merges into one giant block; the TTS
-    finishes early/late and speed_fit pads/compresses by huge amounts.
+    max_dur is a *soft* cap: merging stops at max_dur only when the current
+    text ends on a sentence boundary (. ? !).  If the sentence is incomplete
+    (e.g. ends mid-clause), merging continues up to max_dur * 2 so that TTS
+    never receives a fragment like "Comment réconcilier...avec" without its
+    completion.  This prevents audible mid-sentence cuts regardless of the
+    per-video timing.
     """
     if not segments:
         return segments
+
+    def _sentence_complete(text: str) -> bool:
+        """True when text ends with terminal punctuation."""
+        t = re.sub(r'\[Speaker\s+\d+\]\s*', '', text).strip().rstrip('"\'»›')
+        return bool(t) and t[-1] in '.?!'
+
+    hard_cap = max_dur * 2   # absolute ceiling — prevents runaway monologues
 
     merged: List[Dict] = []
     current = dict(segments[0])
@@ -145,9 +155,16 @@ def merge_segments(
     for seg in segments[1:]:
         gap = seg["start"] - current["end"]
         merged_dur = seg["end"] - current["start"]
+        within_hard_cap  = merged_dur <= hard_cap
+        within_soft_cap  = merged_dur <= max_dur
+        sentence_done    = _sentence_complete(current["text"])
+        # Merge when:
+        #   - same speaker, gap within threshold, AND
+        #   - either still within soft cap,
+        #     or sentence is incomplete and hard cap not yet reached
         if (seg["speaker"] == current["speaker"]
                 and 0 <= gap <= gap_sec
-                and merged_dur <= max_dur):
+                and (within_soft_cap or (not sentence_done and within_hard_cap))):
             current["end"]  = seg["end"]
             current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
             current["subsegments"].append({"start": seg["start"], "end": seg["end"]})

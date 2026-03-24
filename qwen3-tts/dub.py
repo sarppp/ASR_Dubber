@@ -52,6 +52,7 @@ from dub_audio import (
     speed_fit,
     split_tts_proportional,
     stitch_and_mix,
+    _audio_duration,
     _save_checkpoint,
     _load_checkpoint,
 )
@@ -313,6 +314,20 @@ Examples:
     log.info(f"🗣️  Synthesising {len(segments)} segments "
              f"({len(done_indices)} cached, {len(todo)} remaining)")
 
+    # Pre-compute available window per segment: slot + silence gap to next
+    # speaker.  TTS is allowed to overflow into that gap (no one is talking
+    # there) rather than being hard-compressed into just the slot.
+    # Cap: slot + 5 s max so we never stretch speech unnaturally over a long
+    # pause.
+    _available: Dict[int, float] = {}
+    for idx, seg in enumerate(segments):
+        slot = seg["end"] - seg["start"]
+        if idx + 1 < len(segments):
+            gap_end = segments[idx + 1]["start"]
+        else:
+            gap_end = seg["end"]
+        _available[seg["index"]] = min(gap_end - seg["start"], slot + 5.0)
+
     device_ids = [int(x.strip()) for x in args.tts_devices.split(",")]
     n_workers  = (_auto_workers(device_ids)
                   if args.tts_workers == "auto"
@@ -334,7 +349,12 @@ Examples:
     fit_pool    = ThreadPoolExecutor(max_workers=max(4, n_workers * 2))
     fit_futures: List = []
 
-    def _do_fit(raw_out: Path, target_dur: float, start: float, end: float) -> None:
+    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
+        slot = max(0.1, end - start)
+        raw_dur = _audio_duration(raw_out)
+        # Use overflow window only when TTS is too long for the original slot.
+        # Short/fitting clips use the slot so they aren't slowed unnecessarily.
+        target_dur = available_dur if raw_dur > slot * args.max_speed else slot
         fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
         with final_files_lock:
             final_files.append((fitted, start, end))
@@ -364,7 +384,7 @@ Examples:
                 spk        = seg["speaker"]
                 text       = seg["text"]
                 start, end = seg["start"], seg["end"]
-                target_dur = max(0.1, end - start)
+                target_dur = max(0.1, _available.get(i, end - start))
                 raw_out    = temp_dir / f"seg_{i:04d}.wav"
                 ok         = False
 
