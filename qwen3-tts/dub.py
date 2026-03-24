@@ -50,6 +50,7 @@ from dub_audio import (
     _qwen_worker,
     PersistentTTSWorker,
     speed_fit,
+    split_tts_proportional,
     stitch_and_mix,
     _save_checkpoint,
     _load_checkpoint,
@@ -155,6 +156,10 @@ Examples:
                         help="Path to the qwen3-tts uv project (default: current folder)")
     parser.add_argument("--max-speed",  type=float, default=1.35,
                         help="Max TTS speed-up before capping (default: 1.35)")
+    parser.add_argument("--min-speed",  type=float, default=0.65,
+                        help="Min TTS slow-down for short clips (default: 0.65). "
+                             "Clips shorter than this ratio are slowed to 0.65x speed "
+                             "to fill the slot, matching academic lecture pace.")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
@@ -330,10 +335,20 @@ Examples:
     fit_futures: List = []
 
     def _do_fit(raw_out: Path, target_dur: float, start: float, end: float) -> None:
-        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed)
+        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
+
+    def _do_fit_split(raw_out: Path, subsegments: list) -> None:
+        """Split TTS proportionally across original sub timings, fit each slice."""
+        slices = split_tts_proportional(raw_out, subsegments, temp_dir, raw_out.stem)
+        for slice_wav, sub_start, sub_end in slices:
+            slot = max(0.1, sub_end - sub_start)
+            fitted = speed_fit(slice_wav, slot, max_speed=args.max_speed)
+            with final_files_lock:
+                final_files.append((fitted, sub_start, sub_end))
+        _save_checkpoint(checkpoint_path, final_files)
 
     def _run_worker(device_id: Optional[int]) -> None:
         clone_w: Optional[PersistentTTSWorker] = None

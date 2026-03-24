@@ -140,6 +140,7 @@ def merge_segments(
 
     merged: List[Dict] = []
     current = dict(segments[0])
+    current["subsegments"] = [{"start": segments[0]["start"], "end": segments[0]["end"]}]
 
     for seg in segments[1:]:
         gap = seg["start"] - current["end"]
@@ -149,9 +150,11 @@ def merge_segments(
                 and merged_dur <= max_dur):
             current["end"]  = seg["end"]
             current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
+            current["subsegments"].append({"start": seg["start"], "end": seg["end"]})
         else:
             merged.append(current)
             current = dict(seg)
+            current["subsegments"] = [{"start": seg["start"], "end": seg["end"]}]
 
     merged.append(current)
 

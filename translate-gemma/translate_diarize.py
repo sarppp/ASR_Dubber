@@ -19,6 +19,7 @@ from translate_utils import (
     CHUNK_SIZE,
     translate_chunk,
     _translate_with_retry,
+    _translate_sentences_with_retry,
 )
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -282,7 +283,7 @@ try:
         poll_thread.start()
 
     print(f"\n--- Chunk 1/{total_chunks} (warmup) ---", flush=True)
-    warmup_translations = _translate_with_retry(
+    warmup_translations = _translate_sentences_with_retry(
         chunks[0], SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
 
     stop_event.set()
@@ -346,14 +347,14 @@ try:
     elif num_workers == 1:
         for chunk_idx, chunk in enumerate(remaining, 2):
             print(f"\n--- Chunk {chunk_idx}/{total_chunks} ---", flush=True)
-            translations = _translate_with_retry(
+            translations = _translate_sentences_with_retry(
                 chunk, SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
             _apply_translations(chunk, translations, chunk_idx)
     else:
         print(f"\nRunning {num_workers} parallel workers for {len(remaining)} remaining chunks...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
             future_to_chunk = {
-                executor.submit(_translate_with_retry,
+                executor.submit(_translate_sentences_with_retry,
                                 chunk, SOURCE_LANG_CODE, TARGET_LANG_CODE, client): (chunk_idx, chunk)
                 for chunk_idx, chunk in enumerate(remaining, 2)
             }

@@ -109,6 +109,153 @@ def translate_chunk(chunk_subs, src_code: str, tgt_code: str,
         return {}
 
 
+def _group_into_sentences(chunk_subs) -> list:
+    """
+    Group consecutive subs into sentence groups by terminal punctuation.
+
+    A group closes when the last non-whitespace character of a sub's content
+    (after stripping speaker tags and line-break markers) is '.', '?' or '!'.
+    Any trailing subs that don't end a sentence form a final open group.
+    """
+    groups: list = []
+    current: list = []
+    for sub in chunk_subs:
+        current.append(sub)
+        text = sub.text or ""
+        m = re.match(r'(\[Speaker\s+\d+\])\s*(.*)', text, re.DOTALL)
+        content = m.group(2) if m else text
+        content = content.replace('\n', ' ').replace('|', ' ').strip()
+        if content and content[-1] in '.?!':
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def translate_chunk_sentences(chunk_subs, src_code: str, tgt_code: str,
+                              client: Client) -> dict[int, str]:
+    """
+    Translate subtitles with sentence-awareness and duration constraints.
+
+    Groups consecutive fragments into complete sentences, computes total
+    wall-clock duration, and asks the LLM to produce a translation that
+    fits naturally in that time.  Returns {index: translated_text}.
+    """
+    src_name = LANG_MAP.get(src_code, src_code)
+    tgt_name = LANG_MAP.get(tgt_code, tgt_code)
+    results: dict[int, str] = {}
+
+    for group in _group_into_sentences(chunk_subs):
+        total_dur = (group[-1].end.ordinal - group[0].start.ordinal) / 1000.0
+        n = len(group)
+
+        speaker_map: dict[int, str] = {}
+        text_block = ""
+        for sub in group:
+            m = re.match(r'(\[Speaker\s+\d+\])\s*(.*)', sub.text or "", re.DOTALL)
+            if m:
+                tag, content = m.group(1), m.group(2)
+                speaker_map[sub.index] = tag
+            else:
+                content = sub.text or ""
+                speaker_map[sub.index] = ""
+            text_block += f"[{sub.index}] {content.replace(chr(10), ' | ')}\n"
+
+        if n == 1:
+            prompt = (
+                f"You are a professional dubbing translator from {src_name} to {tgt_name}.\n\n"
+                f"Translate this subtitle for voice dubbing. "
+                f"The speaker has {total_dur:.1f} seconds — keep it concise if needed.\n"
+                f"Return exactly 1 line with the [index] prefix. "
+                f"Do NOT add extra lines.\n\n"
+                f"{text_block}"
+            )
+        else:
+            prompt = (
+                f"You are a professional dubbing translator from {src_name} to {tgt_name}.\n\n"
+                f"Translate this complete sentence for voice dubbing.\n"
+                f"The speaker has EXACTLY {total_dur:.1f} seconds to say the full translation.\n"
+                f"The sentence spans {n} subtitle fragments — return exactly {n} lines.\n\n"
+                f"RULES:\n"
+                f"1. Keep [index] at the start of every line.\n"
+                f"2. Do NOT merge or split lines — return exactly {n} lines.\n"
+                f"3. Your translation must be speakable in {total_dur:.1f}s at a natural pace "
+                f"(~3 words/second in {tgt_name}). Use concise wording if the time is tight.\n"
+                f"4. Distribute the translation naturally across all {n} fragments.\n"
+                f"5. Do NOT translate speaker tags like [Speaker 1].\n\n"
+                f"{text_block}"
+            )
+
+        print(f"Sending {n} line(s) [{group[0].index}–{group[-1].index}] "
+              f"({total_dur:.1f}s) to {MODEL_NAME} ({src_code}->{tgt_code})...", flush=True)
+
+        try:
+            response = client.generate(
+                model=MODEL_NAME,
+                prompt=prompt,
+                options={"temperature": 0.1, "num_ctx": 2048},
+            )
+            raw = response['response'].replace('<|endoftext|>', '').strip()
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                m2 = _LINE_RE.match(line)
+                if m2:
+                    idx = int(m2.group(1))
+                    txt = m2.group(2).strip().replace(" | ", "\n").replace("|", "\n")
+                    tag = speaker_map.get(idx, "")
+                    results[idx] = f"{tag} {txt}".strip() if tag else txt
+
+            if not results and not any(r for r in results.values()):
+                print(f"\n❌ ERROR: No output for group [{group[0].index}–{group[-1].index}]."
+                      f"\nRaw output:\n{raw}\n")
+
+        except Exception as e:
+            print(f"\n💥 OLLAMA ERROR: {e}")
+
+    return results
+
+
+def _translate_sentences_with_retry(chunk_subs, src_code: str, tgt_code: str,
+                                    client: Client, retries: int = 3) -> dict[int, str]:
+    """
+    Sentence-aware translation with retry for missing indices.
+    Uses translate_chunk_sentences; falls back to translate_chunk for
+    any indices that remain missing after all attempts.
+    """
+    expected  = {sub.index for sub in chunk_subs}
+    best: dict[int, str] = {}
+    remaining = list(chunk_subs)
+
+    for attempt in range(1, retries + 1):
+        result = translate_chunk_sentences(remaining, src_code, tgt_code, client)
+        if result:
+            best.update(result)
+
+        missing = sorted(expected - best.keys())
+        if not missing:
+            return best
+
+        if attempt < retries:
+            print(f"   ⚠️  Attempt {attempt}/{retries} missing indices {missing} — retrying in 2s...")
+            missing_set = set(missing)
+            remaining = [s for s in chunk_subs if s.index in missing_set]
+            time.sleep(2)
+
+    # Final fallback: plain fragment-by-fragment for anything still missing
+    still_missing = sorted(expected - best.keys())
+    if still_missing:
+        print(f"   ↩️  Falling back to fragment mode for {still_missing}...")
+        missing_set = set(still_missing)
+        fallback_subs = [s for s in chunk_subs if s.index in missing_set]
+        fallback = _translate_with_retry(fallback_subs, src_code, tgt_code, client, retries=2)
+        best.update(fallback)
+
+    return best
+
+
 def _translate_with_retry(chunk_subs, src_code: str, tgt_code: str,
                           client: Client, retries: int = 3) -> dict[int, str]:
     """

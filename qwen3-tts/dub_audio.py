@@ -340,7 +340,69 @@ def _audio_duration(path: Path) -> float:
         return 0.0
 
 
-def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> Path:
+def strip_leading_silence(audio_path: Path) -> Path:
+    """
+    Remove leading silence from a TTS clip.
+
+    Qwen TTS (and most neural TTS) prepends ~0.1–0.5s of silence before the
+    first word.  Without stripping, proportional splits assign that silence to
+    the first sub-segment, making the clip start ~0.3s late.
+
+    Uses ffmpeg silenceremove: only the leading silence is removed;
+    trailing silence and inter-word pauses are kept intact.
+    Returns a new path (original unchanged); falls back to original on error.
+    """
+    out = audio_path.with_name(audio_path.stem + "_ns.wav")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-i", str(audio_path),
+             "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-40dB",
+             "-y", str(out), "-loglevel", "error"],
+            check=True,
+        )
+        if out.exists() and out.stat().st_size > 500:
+            stripped_dur = _audio_duration(out)
+            orig_dur     = _audio_duration(audio_path)
+            # Sanity: stripping shouldn't remove more than 1 s or 30 % of audio
+            if stripped_dur > 0 and (orig_dur - stripped_dur) < min(1.0, orig_dur * 0.3):
+                return out
+    except Exception:
+        pass
+    return audio_path
+
+
+def _last_word_boundary(audio_path: Path, before_sec: float) -> float:
+    """
+    Return the timestamp of the last inter-word silence that *starts* before
+    ``before_sec``.  If none is found, returns ``before_sec`` (fallback to
+    hard trim).
+
+    Uses ffmpeg silencedetect at -35 dB / 20 ms — short enough to catch the
+    brief pauses between TTS words without catching intra-phoneme dips.
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-i", str(audio_path),
+             "-af", "silencedetect=noise=-35dB:duration=0.02",
+             "-f", "null", "-"],
+            capture_output=True, text=True,
+        )
+        best = None
+        for line in r.stderr.splitlines():
+            m = re.search(r"silence_start:\s*([\d.]+)", line)
+            if m:
+                t = float(m.group(1))
+                if t < before_sec:
+                    best = t
+        if best is not None:
+            return best
+    except Exception:
+        pass
+    return before_sec
+
+
+def speed_fit(audio_path: Path, target_dur: float,
+              max_speed: float = 1.35, min_speed: float = 0.65) -> Path:
     """
     Fit audio_path into EXACTLY target_dur seconds so the dub timeline
     stays locked to the video.
@@ -349,10 +411,16 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
     ``apad,atrim=0:{target_dur}`` — pad if short, trim if long.
     This eliminates cumulative drift in the stitched dub track.
 
-    - Very short (ratio < 0.85):  pad tail with silence.
-    - Slightly short (0.85 ≤ ratio < 1.0):  slow down gently + pad/trim.
-    - Long (1.0 < ratio ≤ max_speed):  speed up + pad/trim.
-    - Very long (ratio > max_speed):  speed up to max_speed + hard-trim.
+    - Very short (ratio < min_speed):  slow to min_speed + pad tail.
+    - Short (min_speed ≤ ratio < 1.0): gentle slow-down to fill exactly.
+    - Long (1.0 < ratio ≤ max_speed):  speed up to fill exactly.
+    - Very long (ratio > max_speed):   speed up to max_speed, then trim at
+                                       last word boundary before target_dur
+                                       (avoids mid-syllable cuts).
+
+    min_speed=0.65 means TTS can be slowed up to ~1.54× before we give up
+    and pad the rest with silence.  This matches the deliberate speaking pace
+    of academic/lecture content (~2–2.5 words/s vs TTS ~3 words/s).
     """
     curr = _audio_duration(audio_path)
     if curr <= 0:
@@ -361,12 +429,12 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
     out   = audio_path.with_name(audio_path.stem + "_fit.wav")
     ratio = curr / target_dur
 
-    if ratio < 0.85:
-        # Too short to slow down without sounding weird → pad silence at end
+    if ratio < min_speed:
+        # Too short even at max slow-down → use min_speed + pad remainder
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
-             "-af", f"apad,atrim=0:{target_dur:.6f}",
-             "-y", str(out), "-loglevel", "error"],
+             "-filter:a", f"atempo={min_speed:.4f},apad,atrim=0:{target_dur:.6f}",
+             "-vn", "-y", str(out), "-loglevel", "error"],
             check=True,
         )
     elif ratio <= max_speed:
@@ -380,15 +448,86 @@ def speed_fit(audio_path: Path, target_dur: float, max_speed: float = 1.35) -> P
             check=True,
         )
     else:
-        # Severely over — speed up to max_speed + hard-trim to target_dur
+        # Severely over — speed up to max_speed, then trim at a word boundary
+        # to avoid cutting mid-syllable.
+        compressed = audio_path.with_name(audio_path.stem + "_cmp.wav")
         subprocess.run(
             ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={max_speed:.4f},apad,atrim=0:{target_dur:.6f}",
+             "-filter:a", f"atempo={max_speed:.4f}",
+             "-vn", "-y", str(compressed), "-loglevel", "error"],
+            check=True,
+        )
+        cut_at = _last_word_boundary(compressed, target_dur)
+        # Trim at word boundary then pad silence to exact target_dur
+        subprocess.run(
+            ["ffmpeg", "-i", str(compressed),
+             "-filter:a", f"atrim=0:{cut_at:.6f},apad,atrim=0:{target_dur:.6f}",
              "-vn", "-y", str(out), "-loglevel", "error"],
             check=True,
         )
+        try:
+            compressed.unlink()
+        except OSError:
+            pass
 
     return out if out.exists() else audio_path
+
+
+# ---------------------------------------------------------------------------
+# Proportional TTS split across original sub-segment timings
+# ---------------------------------------------------------------------------
+
+def split_tts_proportional(
+    raw_path: Path,
+    subsegments: List[Dict],   # list of {"start": float, "end": float}
+    temp_dir: Path,
+    base_stem: str,
+    strip_silence: bool = True,
+) -> List[Tuple[Path, float, float]]:
+    """
+    Split a merged TTS clip proportionally back across original sub-segment timings.
+
+    The TTS audio is sliced in proportion to each sub's duration relative to the
+    total sub duration.  Each slice is returned as (wav_path, sub_start, sub_end)
+    ready to be passed to speed_fit individually.
+
+    This ensures speech is placed at the right position in the video instead of
+    a single block at the start followed by a long silence.
+    """
+    if len(subsegments) <= 1:
+        # Nothing to split — caller should use raw_path directly
+        s = subsegments[0]
+        return [(raw_path, s["start"], s["end"])]
+
+    raw_dur = _audio_duration(raw_path)
+    if raw_dur <= 0:
+        return []
+
+    total_sub_dur = sum(s["end"] - s["start"] for s in subsegments)
+    if total_sub_dur <= 0:
+        return []
+
+    results: List[Tuple[Path, float, float]] = []
+    offset = 0.0
+    for i, sub in enumerate(subsegments):
+        sub_dur = sub["end"] - sub["start"]
+        proportion = sub_dur / total_sub_dur
+        tts_slice = raw_dur * proportion
+
+        out = temp_dir / f"{base_stem}_sub{i:02d}.wav"
+        subprocess.run(
+            ["ffmpeg",
+             "-ss", f"{offset:.6f}",
+             "-t",  f"{tts_slice:.6f}",
+             "-i",  str(raw_path),
+             "-y",  str(out),
+             "-loglevel", "error"],
+            check=True,
+        )
+        results.append((out, sub["start"], sub["end"]))
+        offset += tts_slice
+
+    return results
 
 
 # ---------------------------------------------------------------------------

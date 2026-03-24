@@ -175,6 +175,8 @@ def main():
                    help="Skip demucs — faster, no background music preserved")
     p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
                    help="Max TTS speed-up before capping (default: 1.35)")
+    p.add_argument("--min-speed",      type=float, default=0.65, metavar="SPEED",
+                   help="Min TTS slow-down for short clips (default: 0.65)")
     p.add_argument("--merge-gap",      type=float, default=1.0, metavar="SEC",
                    help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
     p.add_argument("--merge-max-dur",  type=float, default=10.0, metavar="SEC",
@@ -423,6 +425,8 @@ def main():
             dub_cmd.append("--no-demucs")
         if args.max_speed is not None:
             dub_cmd.extend(["--max-speed", str(args.max_speed)])
+        if args.min_speed is not None:
+            dub_cmd.extend(["--min-speed", str(args.min_speed)])
         if args.merge_gap is not None:
             dub_cmd.extend(["--merge-gap", str(args.merge_gap)])
         if args.merge_max_dur is not None:
