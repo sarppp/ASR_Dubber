@@ -188,17 +188,27 @@ def merge_segments(
 # Voice assignment (custom mode)
 # ---------------------------------------------------------------------------
 
-def build_voice_map(segments: List[Dict]) -> Dict[str, str]:
-    """Assign a Qwen voice to each speaker, alternating female/male pools."""
+def build_voice_map(
+    segments: List[Dict],
+    gender_hints: Dict[str, str] | None = None,
+) -> Dict[str, str]:
+    """Assign a Qwen voice to each speaker.
+
+    If gender_hints is provided ({speaker: "female"/"male"}), uses it to pick
+    from the correct pool.  Speakers without a hint fall back to alternating
+    by appearance order.
+    """
     seen: List[str] = []
     for seg in segments:
         if seg["speaker"] not in seen:
             seen.append(seg["speaker"])
 
+    hints = gender_hints or {}
     voice_map: Dict[str, str] = {}
     fi = mi = 0
     for i, spk in enumerate(seen):
-        if i % 2 == 0:
+        gender = hints.get(spk)
+        if gender == "female" or (gender is None and i % 2 == 0):
             voice_map[spk] = QWEN_FEMALE_VOICES[fi % len(QWEN_FEMALE_VOICES)]
             fi += 1
         else:

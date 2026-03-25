@@ -132,6 +132,34 @@ def extract_clone_refs(
     return refs
 
 
+def detect_speaker_genders(clone_refs: Dict[str, Path]) -> Dict[str, str]:
+    """
+    Estimate gender for each speaker from their clone-ref WAV using pitch (F0).
+    Returns {speaker: "female"/"male"}.  Speakers with no ref are omitted.
+    Requires librosa; silently returns {} if not available.
+    """
+    try:
+        import numpy as np
+        import librosa
+    except Exception:
+        return {}
+
+    out: Dict[str, str] = {}
+    for spk, wav in clone_refs.items():
+        try:
+            y, sr = librosa.load(str(wav), sr=16000, mono=True)
+            f0 = librosa.yin(y, fmin=50, fmax=400, sr=sr)
+            f0 = f0[np.isfinite(f0)]
+            if f0.size == 0:
+                continue
+            med = float(np.median(f0))
+            out[spk] = "female" if med >= 165 else "male"
+            log.info(f"   gender [{spk}]: pitch≈{med:.0f}Hz → {out[spk]}")
+        except Exception:
+            continue
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Qwen TTS — persistent worker (model loaded once, all segments served via IPC)
 # ---------------------------------------------------------------------------

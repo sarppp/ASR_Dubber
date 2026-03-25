@@ -47,6 +47,7 @@ from dub_audio import (
     extract_audio,
     separate_audio,
     extract_clone_refs,
+    detect_speaker_genders,
     _qwen_python,
     _qwen_worker,
     PersistentTTSWorker,
@@ -284,7 +285,8 @@ Examples:
 
     # ── 4. Voice map ─────────────────────────────────────────────────────────
     # Always build as fallback, but only log if we're actually in custom mode
-    voice_map = build_voice_map(segments)
+    gender_hints = detect_speaker_genders(clone_refs) if clone_refs else {}
+    voice_map = build_voice_map(segments, gender_hints=gender_hints)
     if args.qwen_mode == "custom":
         log.info("🎤 Voice assignments (custom mode):")
         for spk, voice in voice_map.items():
