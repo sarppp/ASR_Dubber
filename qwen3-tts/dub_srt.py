@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 # Voice tables
 # ---------------------------------------------------------------------------
 QWEN_FEMALE_VOICES = ["vivian", "ono_anna", "Chelsie"]
-QWEN_MALE_VOICES   = ["ryan", "ethan"]
+QWEN_MALE_VOICES   = ["ryan", "aiden"]
 
 # Qwen TTS requires full lowercase language names, not ISO codes
 LANG_CODE_TO_QWEN = {

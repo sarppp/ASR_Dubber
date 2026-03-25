@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -238,6 +239,8 @@ Examples:
     qwen_python = _qwen_python(qwen_dir)
     qwen_worker = _qwen_worker(script_dir)
 
+    t_start = time.perf_counter()
+
     log.info("=" * 60)
     log.info(f"Video        : {video_path.name}")
     log.info(f"SRT          : {srt_path.name}")
@@ -333,6 +336,7 @@ Examples:
                   if args.tts_workers == "auto"
                   else int(args.tts_workers))
     log.info(f"TTS workers: {n_workers}  |  devices: {device_ids}")
+    t_tts_start = time.perf_counter()
 
     pbar             = tqdm(total=len(segments), initial=len(done_indices), desc="TTS",
                             unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
@@ -468,6 +472,7 @@ Examples:
 
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
     # srt_end already computed above (reused for audio trim + video trim)
+    t_stitch_start = time.perf_counter()
     log.info("🎬 Stitching and mixing…")
     final, actual_positions = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
@@ -479,9 +484,23 @@ Examples:
     dub_srt_path = output_dir / srt_path.name.replace(".srt", "_dub.srt")
     write_dub_srt(dub_srt_path, actual_positions, segments)
 
+    t_end = time.perf_counter()
+    t_total   = t_end - t_start
+    t_tts     = t_stitch_start - t_tts_start
+    t_stitch  = t_end - t_stitch_start
+    t_pre     = t_tts_start - t_start
+
+    def _fmt(s: float) -> str:
+        m, sec = divmod(int(s), 60)
+        return f"{m}m {sec:02d}s" if m else f"{sec}s"
+
     log.info("=" * 60)
     log.info(f"✅ Done!  →  {final}")
     log.info(f"📝 Dub SRT →  {dub_srt_path}")
+    log.info(f"⏱  Pre-TTS  (dub): {_fmt(t_pre)}")
+    log.info(f"⏱  TTS+fit  (dub): {_fmt(t_tts)}")
+    log.info(f"⏱  Stitch   (dub): {_fmt(t_stitch)}")
+    log.info(f"⏱  Total    (dub): {_fmt(t_total)}")
     log.info("=" * 60)
     return 0
 
