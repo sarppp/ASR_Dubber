@@ -1020,12 +1020,13 @@ def _load_model(model_name: str, precision: str, device: str):
             raise RuntimeError(f"Insufficient VRAM: {free_before:.2f} GB free (need {min_vram_gb:.1f} GB)")
 
     t0 = time.perf_counter()
+    is_parakeet = "parakeet" in model_name.lower()
     print(f"Loading model: {model_name}…")
 
     # Patch GreedyBatchedTDTInfer BEFORE from_pretrained so the very first decoder
     # construction (which happens inside NeMo's model restore) already has CUDA
-    # graphs disabled.
-    if device == "cuda":
+    # graphs disabled.  Canary uses an encoder-decoder — no GreedyBatchedTDTInfer.
+    if device == "cuda" and is_parakeet:
         _patch_greedy_tdt_no_cuda_graphs()
 
     map_loc = "cpu" if device == "cpu" else None
@@ -1075,7 +1076,7 @@ def _load_model(model_name: str, precision: str, device: str):
     # addresses → XID 31 MMU fault → SIGABRT.
     # Fix: call change_decoding_strategy() with use_cuda_graphs=False so the
     # decoder is rebuilt without graph capture before any forward pass.
-    if device == "cuda" and hasattr(model, "cfg"):
+    if device == "cuda" and is_parakeet and hasattr(model, "cfg"):
         try:
             from omegaconf import OmegaConf
             # Must modify model.cfg.decoding IN PLACE.
@@ -1126,20 +1127,18 @@ def _load_model(model_name: str, precision: str, device: str):
     #     chunks frees the backing pages; the next chunk replays the stale graph
     #     onto freed addresses → XID 31 MMU fault → SIGABRT.
     #
-    # Also intercept every change_decoding_strategy() call (ours + NeMo's internal)
-    # and dump the decoder structure so we can confirm the class patch worked and
-    # understand exactly what attributes control graph capture.
-    if device == "cuda" and hasattr(model, "change_decoding_strategy"):
+    # Monkey-patch so every NeMo-internal change_decoding_strategy() re-invocation
+    # (e.g. rnnt_models.py:315 at the start of each transcribe()) also has graphs
+    # killed immediately after the rebuild.
+    if device == "cuda" and is_parakeet and hasattr(model, "change_decoding_strategy"):
         _orig_cds = model.change_decoding_strategy
 
         def _patched_cds(cfg=None, **kw):
             result = _orig_cds(cfg, **kw) if cfg is not None else _orig_cds(**kw)
-            _dump_decoder_structure(model)
             _disable_cuda_graphs_in_decoder(model)
             return result
 
         model.change_decoding_strategy = _patched_cds
-        _dump_decoder_structure(model)
         _disable_cuda_graphs_in_decoder(model)
 
     if device == "cuda":
