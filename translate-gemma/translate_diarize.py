@@ -16,16 +16,13 @@ from ollama import Client
 from translate_utils import (
     LANG_MAP,
     MODEL_NAME,
-    CHUNK_SIZE,
-    translate_chunk,
-    _translate_with_retry,
-    _translate_sentences_with_retry,
+    _group_into_sentences,
+    translate_group_with_retry,
 )
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
-CHUNK_SIZE          = int(os.getenv("CHUNK_SIZE", 15))  # allow local override
 OLLAMA_NUM_PARALLEL = int(os.getenv("OLLAMA_NUM_PARALLEL", "1"))
 OLLAMA_BIN          = os.getenv("OLLAMA_BIN", "ollama")
 OLLAMA_DOCKER_IMAGE = os.getenv("OLLAMA_DOCKER_IMAGE", "ollama/ollama")
@@ -248,8 +245,9 @@ except Exception as e:
     print(f"Could not open file: {e}")
     sys.exit(1)
 
-chunks       = [subs[i:i + CHUNK_SIZE] for i in range(0, len(subs), CHUNK_SIZE)]
-total_chunks = len(chunks)
+subs_list    = list(subs)
+all_groups   = _group_into_sentences(subs_list)
+total_groups = len(all_groups)
 
 # ── Ollama auto-start ─────────────────────────────────────────────────────────
 start_method: str | None = None
@@ -282,9 +280,9 @@ try:
             target=_poll_vram, args=(stop_event, poll_samples), daemon=True)
         poll_thread.start()
 
-    print(f"\n--- Chunk 1/{total_chunks} (warmup) ---", flush=True)
-    warmup_translations = _translate_sentences_with_retry(
-        chunks[0], SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
+    print(f"\n--- Group 1/{total_groups} (warmup) ---", flush=True)
+    warmup_translations = translate_group_with_retry(
+        all_groups[0], SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
 
     stop_event.set()
     if poll_thread is not None:
@@ -294,12 +292,12 @@ try:
     vram_idle = _get_vram_mib()
 
     if not warmup_translations:
-        print("\n❌ FATAL: chunk 1 returned nothing after 3 attempts — "
+        print("\n❌ FATAL: group 1 returned nothing after 3 attempts — "
               "Ollama error or model not found.")
         print(f"   Make sure the model is pulled: ollama pull {MODEL_NAME}")
         sys.exit(1)
 
-    for sub in chunks[0]:
+    for sub in all_groups[0]:
         if sub.index in warmup_translations:
             sub.text = warmup_translations[sub.index]
         else:
@@ -308,11 +306,11 @@ try:
 
     # ── Phase 3: Compute optimal workers ─────────────────────────────────────
     vram_ok = all(v is not None for v in [vram_baseline, vram_idle, vram_total])
-    print(f"[DEBUG CALL SITE] total_chunks={total_chunks}, type={type(total_chunks)}")
+    print(f"[DEBUG CALL SITE] total_groups={total_groups}, type={type(total_groups)}")
     if vram_ok:
         num_workers, stats = _compute_optimal_workers(
             vram_baseline, vram_idle, vram_peak,  # type: ignore[arg-type]
-            vram_total, OLLAMA_NUM_PARALLEL, 512, total_chunks,
+            vram_total, OLLAMA_NUM_PARALLEL, 512, total_groups,
         )
         if num_workers > 2 and OLLAMA_NUM_PARALLEL == 1:
             print(f"[VRAM] Warning: {num_workers} workers requested but OLLAMA_NUM_PARALLEL=1")
@@ -320,22 +318,17 @@ try:
                   f"OLLAMA_NUM_PARALLEL={min(num_workers-1, 4)}")
         _print_vram_summary(
             vram_baseline, vram_idle, vram_peak, vram_total,  # type: ignore[arg-type]
-            num_workers, stats, total_chunks,
+            num_workers, stats, total_groups,
         )
     else:
         print("[VRAM] nvidia-smi unavailable — using 2 workers (pipeline fill only)")
-        num_workers = min(2, total_chunks)
+        num_workers = min(2, total_groups)
 
-    # ── Phase 4: Remaining chunks ─────────────────────────────────────────────
-    remaining = chunks[1:]
+    # ── Phase 4: Remaining groups ─────────────────────────────────────────────
+    remaining = all_groups[1:]
 
-    def _apply_translations(chunk, translations: dict, chunk_num: int) -> None:
-        if not translations:
-            print(f"\n❌ FATAL: chunk {chunk_num} returned nothing after 3 attempts — "
-                  "Ollama error or model not found.")
-            print(f"   Make sure the model is pulled: ollama pull {MODEL_NAME}")
-            sys.exit(1)
-        for sub in chunk:
+    def _apply_group(group: list, translations: dict) -> None:
+        for sub in group:
             if sub.index in translations:
                 sub.text = translations[sub.index]
             else:
@@ -343,25 +336,25 @@ try:
                 missing_lines.append(sub.index)
 
     if not remaining:
-        pass  # only one chunk — already processed
+        pass  # only one group — already processed
     elif num_workers == 1:
-        for chunk_idx, chunk in enumerate(remaining, 2):
-            print(f"\n--- Chunk {chunk_idx}/{total_chunks} ---", flush=True)
-            translations = _translate_sentences_with_retry(
-                chunk, SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
-            _apply_translations(chunk, translations, chunk_idx)
+        for group in remaining:
+            translations = translate_group_with_retry(
+                group, SOURCE_LANG_CODE, TARGET_LANG_CODE, client)
+            _apply_group(group, translations)
     else:
-        print(f"\nRunning {num_workers} parallel workers for {len(remaining)} remaining chunks...")
+        print(f"\nRunning {num_workers} parallel workers for {len(remaining)} remaining groups...",
+              flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-            future_to_chunk = {
-                executor.submit(_translate_sentences_with_retry,
-                                chunk, SOURCE_LANG_CODE, TARGET_LANG_CODE, client): (chunk_idx, chunk)
-                for chunk_idx, chunk in enumerate(remaining, 2)
+            future_to_group = {
+                executor.submit(translate_group_with_retry,
+                                group, SOURCE_LANG_CODE, TARGET_LANG_CODE, client): group
+                for group in remaining
             }
-            for future in concurrent.futures.as_completed(future_to_chunk):
-                chunk_idx, chunk = future_to_chunk[future]
+            for future in concurrent.futures.as_completed(future_to_group):
+                group = future_to_group[future]
                 translations = future.result()
-                _apply_translations(chunk, translations, chunk_idx)
+                _apply_group(group, translations)
 
     subs.save(output_file, encoding='utf-8')
 
