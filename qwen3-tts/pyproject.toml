@@ -12,6 +12,7 @@ dependencies = [
     "soundfile",
     "demucs==4.0.1",
     "tqdm",
+    "modal",
 ]
 
 [tool.uv]
