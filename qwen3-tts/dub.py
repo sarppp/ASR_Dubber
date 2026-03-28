@@ -504,6 +504,25 @@ Examples:
     log.info(f"⏱  Stitch   (dub): {_fmt(t_stitch)}")
     log.info(f"⏱  Total    (dub): {_fmt(t_total)}")
     log.info("=" * 60)
+
+    import json as _json, datetime as _dt
+    timing_path = output_dir / f"{video_path.stem}_timing_dub.json"
+    timing_path.write_text(_json.dumps({
+        "video":    video_path.name,
+        "srt":      srt_path.name,
+        "date":     _dt.datetime.now().isoformat(timespec="seconds"),
+        "segments": len(segments),
+        "pre_tts_sec":  round(t_pre,    1),
+        "tts_sec":      round(t_tts,    1),
+        "stitch_sec":   round(t_stitch, 1),
+        "total_sec":    round(t_total,  1),
+        "pre_tts":  _fmt(t_pre),
+        "tts":      _fmt(t_tts),
+        "stitch":   _fmt(t_stitch),
+        "total":    _fmt(t_total),
+    }, indent=2))
+    log.info(f"⏱  Timing saved → {timing_path}")
+
     return 0
 
 

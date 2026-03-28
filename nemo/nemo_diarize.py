@@ -429,4 +429,11 @@ def _run_with_model(model, video_path: str, language: str, model_name: str,
         f"  Subtitle segments : {seg_count}\n"
         f"{'='*55}"
     )
-    return srt
+    timing = {
+        "total_sec":    round(wall,        1),
+        "asr_sec":      round(asr_elapsed, 1),
+        "audio_dur_sec": round(audio_dur,  1),
+        "rtf":          round(rtf,         3),
+        "segments":     seg_count,
+    }
+    return srt, timing

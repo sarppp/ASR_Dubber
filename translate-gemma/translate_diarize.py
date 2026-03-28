@@ -377,6 +377,20 @@ try:
     if total_seconds > 0:
         print(f"🚀 Speed: {len(subs)/total_seconds:.2f} lines per second", flush=True)
 
+    import json as _json, datetime as _dt
+    _stem = os.path.splitext(input_file)[0]
+    _timing_path = f"{_stem}_timing_translate.json"
+    with open(_timing_path, "w") as _f:
+        _json.dump({
+            "input":      os.path.basename(input_file),
+            "output":     os.path.basename(output_file),
+            "date":       _dt.datetime.now().isoformat(timespec="seconds"),
+            "lines":      len(subs),
+            "total_sec":  round(total_seconds, 1),
+            "total_min":  round(minutes, 2),
+            "lines_per_sec": round(len(subs) / total_seconds, 3) if total_seconds > 0 else 0,
+        }, _f, indent=2)
+
 finally:
     if start_method is not None:
         _stop_ollama(start_method, auto_proc)

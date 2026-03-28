@@ -88,6 +88,7 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
         dub_out = Path(dub_workdir) / "output"
         dubbed_videos = glob.glob(str(dub_out / '*.mp4'))
         dub_srts = glob.glob(str(dub_out / '*_dub.srt'))
+        dub_srts += glob.glob(str(dub_out / '*_timing_dub.json'))
         if not dubbed_videos:
             print(f"   ⚠️  No dubbed MP4 found in {dub_out}")
     else:
@@ -95,6 +96,7 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
         old_out = ROOT / 'qwen3-tts' / 'output' / 'dub' / 'output'
         dubbed_videos = glob.glob(str(old_out / '*.mp4'))
         dub_srts = glob.glob(str(old_out / '*_dub.srt'))
+        dub_srts += glob.glob(str(old_out / '*_timing_dub.json'))
 
     files_to_move = all_srts + dubbed_videos + dub_srts + intermediate_files
  

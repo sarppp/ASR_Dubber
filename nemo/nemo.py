@@ -111,14 +111,21 @@ def main():
         if len(videos) > 1:
             log.info(f"\n{'='*60}\nFile {i+1}/{len(videos)}: {vp.name}\n{'='*60}")
         try:
-            srt = _run_with_model(model, str(vp), args.language, model_name,
-                                   args.translate, args.diarize, args.trim,
-                                   args.safety_factor, args.reserve_gb, args.chunk_override)
+            srt, timing = _run_with_model(model, str(vp), args.language, model_name,
+                                           args.translate, args.diarize, args.trim,
+                                           args.safety_factor, args.reserve_gb, args.chunk_override)
         except Exception as e:
             ok = False; log.error(f"Failed for {vp.name}: {e}", exc_info=True); continue
 
         out_path = vp.parent / (vp.stem + srt_suffix)
         out_path.write_text(srt, encoding="utf-8")
+
+        import json as _json, datetime as _dt
+        timing_path = vp.parent / f"{vp.stem}_timing_transcribe.json"
+        timing_path.write_text(_json.dumps({
+            "video": vp.name, "date": _dt.datetime.now().isoformat(timespec="seconds"),
+            **timing,
+        }, indent=2))
         log.info(f"\n{'='*60}")
         log.info(f"✅ {task} complete!")
         log.info(f"📄 SRT saved: {out_path}")
