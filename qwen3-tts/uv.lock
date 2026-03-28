@@ -614,6 +614,23 @@ wheels = [
 ]
 
 [[package]]
+name = "faster-qwen3-tts"
+version = "0.2.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "qwen-tts" },
+    { name = "soundfile" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/07/58bfa2e8f9be5d97acd568560495fbf97404fc964262a7416db41551e62d/faster_qwen3_tts-0.2.5.tar.gz", hash = "sha256:5218dce4d2f421a1a4d9e2d0090e45979d2567ada35d333393063f8b6d976f5b", size = 75112, upload-time = "2026-03-27T16:47:57.631Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/57/1d9023d375ae1fd953abf69a6164c743e75d95224dc8cfe8a436aa7e8b58/faster_qwen3_tts-0.2.5-py3-none-any.whl", hash = "sha256:58e7164279668e9358a02a06abae0fbcf56564eb11a42b46400843712aab175c", size = 34875, upload-time = "2026-03-27T16:47:56.058Z" },
+]
+
+[[package]]
 name = "ffmpy"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2362,6 +2379,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "demucs" },
+    { name = "faster-qwen3-tts" },
     { name = "modal" },
     { name = "qwen-tts" },
     { name = "soundfile" },
@@ -2380,6 +2398,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "demucs", specifier = "==4.0.1" },
+    { name = "faster-qwen3-tts" },
     { name = "modal" },
     { name = "qwen-tts" },
     { name = "soundfile" },

@@ -29,7 +29,20 @@ def _load_model(mode: str, device: str):
     print("[worker] _load_model: importing torch…", file=sys.stderr, flush=True)
     import torch
     print("[worker] _load_model: importing Qwen3TTSModel…", file=sys.stderr, flush=True)
-    from qwen_tts import Qwen3TTSModel
+    # from qwen_tts import Qwen3TTSModel
+    import os
+    _use_faster = False
+    if not os.environ.get("FORCE_SLOW_TTS"):
+        try:
+            from faster_qwen3_tts import FasterQwen3TTS as _ModelClass
+            _use_faster = True
+            print("[worker] _load_model: using faster_qwen3_tts (CUDA graphs)", file=sys.stderr, flush=True)
+        except ImportError:
+            from qwen_tts import Qwen3TTSModel as _ModelClass
+            print("[worker] _load_model: faster_qwen3_tts not available, falling back to qwen_tts", file=sys.stderr, flush=True)
+    else:
+        from qwen_tts import Qwen3TTSModel as _ModelClass
+        print("[worker] _load_model: FORCE_SLOW_TTS set — using qwen_tts", file=sys.stderr, flush=True)
     print("[worker] _load_model: imports done", file=sys.stderr, flush=True)
 
     model_id = (
@@ -38,11 +51,11 @@ def _load_model(mode: str, device: str):
         else "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     )
     print(f"[worker] Loading {model_id} on {device}…", file=sys.stderr, flush=True)
-    model = Qwen3TTSModel.from_pretrained(
-        model_id,
-        device_map=device,
-        dtype=torch.bfloat16,
-    )
+    if _use_faster:
+        model = _ModelClass.from_pretrained(model_id, device=device, dtype=torch.bfloat16)
+    else:
+        model = _ModelClass.from_pretrained(model_id, device_map=device, dtype=torch.bfloat16)
+    model._use_faster = _use_faster
     print("[worker] Model loaded successfully", file=sys.stderr, flush=True)
     return model
 
@@ -71,9 +84,10 @@ def _synthesise(model, req: dict, mode: str) -> str | None:
                     ref_audio=ref_audio, ref_text=ref_text,
                 )
             else:
+                _xvec_kwarg = "xvec_only" if getattr(model, "_use_faster", False) else "x_vector_only_mode"
                 wavs, sr = model.generate_voice_clone(
                     text=text, language=language,
-                    ref_audio=ref_audio, x_vector_only_mode=True,
+                    ref_audio=ref_audio, **{_xvec_kwarg: True},
                 )
         else:
             voice = req.get("voice", "Chelsie")

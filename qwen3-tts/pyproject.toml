@@ -8,6 +8,7 @@ dependencies = [
     "torch",
     "torchaudio",
     "torchvision",
+    "faster-qwen3-tts",
     "qwen-tts",
     "soundfile",
     "demucs==4.0.1",
