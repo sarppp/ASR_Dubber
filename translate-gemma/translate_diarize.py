@@ -15,6 +15,9 @@ from ollama import Client
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("translate_local")
+# This stops the "HTTP Request: POST..." lines from cluttering your screen
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("ollama").setLevel(logging.WARNING)
 
 from translate_utils import (
     LANG_MAP,

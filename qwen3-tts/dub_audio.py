@@ -627,11 +627,33 @@ def stitch_and_mix(
     final = output_dir / "final_dub.mp4"
 
     # Build trim flag if needed (re-encodes video to allow cutting)
+# Build trim flag if needed
     if trim_to:
         log.info(f"✂️  Trimming output video to {trim_to:.2f}s (matches SRT duration)")
         trim_flags  = ["-t", str(trim_to)]
-        video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+        
+        # --- NEW GPU DETECTION LOGIC ---
+        try:
+            # Quick check if NVENC is available in this environment
+            check_gpu = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
+            if "nvenc" in check_gpu.stdout.lower():
+                log.info("🚀 RENDER MODE: GPU Accelerated (h264_nvenc)")
+                video_codec = [
+                    "-c:v", "h264_nvenc", 
+                    "-preset", "p4", 
+                    "-tune", "hq", 
+                    "-rc", "vbr", 
+                    "-cq", "19", 
+                    "-b:v", "0"
+                ]
+            else:
+                log.warning("⚠️  GPU Encoder not found! Falling back to CPU (libx264)")
+                video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+        except Exception:
+            video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+        # -------------------------------
     else:
+        log.info("🚀 RENDER MODE: Stream Copy (No re-encode)")
         trim_flags  = []
         video_codec = ["-c:v", "copy"]
 
