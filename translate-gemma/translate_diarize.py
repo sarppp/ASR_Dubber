@@ -12,6 +12,9 @@ import time
 import urllib.error
 import urllib.request
 from ollama import Client
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("translate_local")
 
 from translate_utils import (
     LANG_MAP,
@@ -363,19 +366,19 @@ try:
     failure_rate   = len(missing_lines) / len(subs) if len(subs) else 1.0
 
     if failure_rate > 0.3:
-        print(f"\n❌ TRANSLATION FAILED: {len(missing_lines)}/{len(subs)} lines missing "
+        log.error(f"❌ TRANSLATION FAILED: {len(missing_lines)}/{len(subs)} lines missing "
               f"({failure_rate:.0%}). Check Ollama is running and model is pulled.")
-        print(f"   Missing indices: {missing_lines}")
+        log.error(f"   Missing indices: {missing_lines}")
         sys.exit(1)
 
     if missing_lines:
-        print(f"\n⚠️  {len(missing_lines)} line(s) untranslated — saving partial result.")
+        log.warning(f"\n⚠️  {len(missing_lines)} line(s) untranslated — saving partial result.")
 
     minutes = total_seconds / 60 if total_seconds else 0
-    print(f"\n✅ SUCCESS! Saved to {output_file}", flush=True)
-    print(f"⏱️ Total Time: {total_seconds:.2f} seconds ({minutes:.2f} min)", flush=True)
+    log.info(f"✅ SUCCESS! Saved to {output_file}") # Remove the \n, logger handles spacing
+    log.info(f"⏱️ Total Time: {total_seconds:.2f} seconds ({minutes:.2f} min)")
     if total_seconds > 0:
-        print(f"🚀 Speed: {len(subs)/total_seconds:.2f} lines per second", flush=True)
+        log.info(f"🚀 Speed: {len(subs)/total_seconds:.2f} lines per second")
 
     import json as _json, datetime as _dt
     _stem = os.path.splitext(input_file)[0]
@@ -390,6 +393,7 @@ try:
             "total_min":  round(minutes, 2),
             "lines_per_sec": round(len(subs) / total_seconds, 3) if total_seconds > 0 else 0,
         }, _f, indent=2)
+    log.info(f"💾 Timing JSON saved: {os.path.basename(_timing_path)}")
 
 finally:
     if start_method is not None:

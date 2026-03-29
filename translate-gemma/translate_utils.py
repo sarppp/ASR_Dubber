@@ -21,7 +21,7 @@ LANG_MAP = {
     'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese',
 }
 
-MODEL_NAME   = os.getenv("TRANSLATE_MODEL", "translategemma:4b")
+MODEL_NAME   = os.getenv("TRANSLATE_MODEL", "translategemma:12b")
 CHUNK_SIZE   = int(os.getenv("CHUNK_SIZE", 15))
 
 # ── Regex ─────────────────────────────────────────────────────────────────────

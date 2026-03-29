@@ -60,62 +60,64 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
     destination_dir = END_PRODUCT_DIR if not run_label else END_PRODUCT_DIR / run_label
     print(f"\n2. Moving all SRTs, MP4s and intermediate files into '{destination_dir}' ...")
     os.makedirs(destination_dir, exist_ok=True)
- 
-    all_srts = glob.glob(str(NEMO_DIR / '*.srt'))
- 
-    # Find NeMo intermediate files for this run
-    intermediate_files = []
-    if run_label:
-        # Extract base name from run_label to find related files.
-        # Strip the trim suffix (_t40, _t200 …) — it's only in the SRT/run-label,
-        # not in the intermediate JSON/WAV filenames which use the raw video/WAV stem.
-        base_pattern = re.split(r"[._]nemo|__", run_label)[0]
-        base_pattern = re.sub(r"_t\d+$", "", base_pattern)
-        base_norm = re.sub(r"[^a-z0-9]", "", base_pattern.lower())
-        for f in NEMO_DIR.glob("*.json"):
-            f_norm = re.sub(r"[^a-z0-9]", "", f.stem.lower())
-            if base_norm in f_norm:
-                intermediate_files.append(str(f))
-        for f in NEMO_DIR.glob("*_16k_*.wav"):
-            f_norm = re.sub(r"[^a-z0-9]", "", f.stem.lower())
-            if base_norm in f_norm:
-                intermediate_files.append(str(f))
- 
-    # Find final_dub.mp4 — use explicit per-video workdir if given, else fall back to old shared path
-    dubbed_videos = []
-    dub_srts = []
-    if dub_workdir:
-        dub_out = Path(dub_workdir) / "output"
-        dubbed_videos = glob.glob(str(dub_out / '*.mp4'))
-        dub_srts = glob.glob(str(dub_out / '*_dub.srt'))
-        dub_srts += glob.glob(str(dub_out / '*_timing_dub.json'))
-        if not dubbed_videos:
-            print(f"   ⚠️  No dubbed MP4 found in {dub_out}")
-    else:
-        # Legacy fallback: old shared output path
-        old_out = ROOT / 'qwen3-tts' / 'output' / 'dub' / 'output'
-        dubbed_videos = glob.glob(str(old_out / '*.mp4'))
-        dub_srts = glob.glob(str(old_out / '*_dub.srt'))
-        dub_srts += glob.glob(str(old_out / '*_timing_dub.json'))
 
-    files_to_move = all_srts + dubbed_videos + dub_srts + intermediate_files
- 
+    # 1. Identify the base name for this specific run (e.g., 'biology')
+    if run_label:
+        base_pattern = re.split(r"[._]nemo|__", run_label)[0]
+        base_pattern = re.sub(r"_t\d+$", "", base_pattern) # remove _t120 etc
+    else:
+        base_pattern = ""
+
+    # 2. Gather ONLY SRTs belonging to this video
+    all_srts = [str(f) for f in NEMO_DIR.glob(f"{base_pattern}*.srt")]
+
+    # 3. Find NeMo intermediate files + our new timing JSONs
+    intermediate_files = []
+    if base_pattern:
+        # Search for any JSON that contains the video base name
+        for f in NEMO_DIR.glob("*.json"):
+            if base_pattern.lower() in f.name.lower():
+                intermediate_files.append(str(f))
+        
+        # Search for transcription WAVs
+        for f in NEMO_DIR.glob(f"{base_pattern}*_16k_*.wav"):
+            intermediate_files.append(str(f))
+
+    # 4. Find dubbed products (MP4, dub-SRT, dub-timing)
+    dub_files = []
+    if dub_workdir:
+        dub_path = Path(dub_workdir)
+        # Check 'output' subfolder AND the workdir itself
+        search_paths = [dub_path / "output", dub_path]
+        for path in search_paths:
+            if path.exists():
+                dub_files += [str(f) for f in path.glob('*.mp4')]
+                dub_files += [str(f) for f in path.glob('*_dub.srt')]
+                dub_files += [str(f) for f in path.glob('*_timing_dub.json')]
+
+    # Combine all specific files
+    files_to_move = list(set(all_srts + dub_files + intermediate_files))
+
     if not files_to_move:
         print("   No files found to move.")
         return destination_dir
- 
+
     for file_path in files_to_move:
         file_name = os.path.basename(file_path)
         short_name = get_shortened_filename(file_name)
         dest_path = destination_dir / short_name
+        
+        # Avoid moving a file onto itself
+        if Path(file_path).resolve() == dest_path.resolve():
+            continue
+
         try:
             shutil.move(file_path, dest_path)
             print(f"   Moved: {file_name} -> {short_name}")
         except Exception as e:
             print(f"   Failed to move {file_name}: {e}")
- 
+
     return destination_dir
- 
  
 def copy_source_video(run_label: str | None = None) -> None:
     """Move the source video/WAV into the end_product run folder (only called on success)."""

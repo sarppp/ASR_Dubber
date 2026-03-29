@@ -120,23 +120,38 @@ def main():
         out_path = vp.parent / (vp.stem + srt_suffix)
         out_path.write_text(srt, encoding="utf-8")
 
+        # 1. Get the correct keys from your dictionary
+        total_s = timing.get("total_sec", 0)
+        total_m = round(total_s / 60, 2) if total_s else 0
+        seg_count = timing.get("segments", 0)
+
+        # 2. Update the Print statements
+        print(f"\n✅ SUCCESS! Saved to {out_path}", flush=True)
+        print(f"⏱️ Total Time: {total_s:.2f} seconds ({total_m:.2f} min)", flush=True)
+        
+        if total_s > 0:
+            # Note: total_lines doesn't exist in your dict, segments does.
+            log.info(f"🚀 Speed: {seg_count/total_s:.2f} lines per second")
+
+        # 3. Save to JSON with identical order to translation JSON
         import json as _json, datetime as _dt
         timing_path = vp.parent / f"{vp.stem}_timing_transcribe.json"
-        timing_path.write_text(_json.dumps({
-            "video": vp.name, "date": _dt.datetime.now().isoformat(timespec="seconds"),
-            **timing,
-        }, indent=2))
-        log.info(f"\n{'='*60}")
-        log.info(f"✅ {task} complete!")
-        log.info(f"📄 SRT saved: {out_path}")
-        log.info(f"{'='*60}")
+        
+        # Build the dictionary manually to control the exact position of total_min
+        ordered_json = {
+            "video": vp.name, 
+            "date": _dt.datetime.now().isoformat(timespec="seconds"),
+            "total_sec": total_s,   # Seconds first
+            "total_min": total_m,   # Minutes immediately after
+        }
+        
+        # Now add the extra NeMo stats (asr_sec, rtf, etc.) from the timing dict
+        for key, value in timing.items():
+            if key != "total_sec": # Skip total_sec since we already added it
+                ordered_json[key] = value
 
-        if len(videos) == 1:
-            lines = srt.split("\n")
-            log.info("\n📋 Preview (first segments):\n" + "-" * 40)
-            for line in lines[:16]: log.info(f"  {line}")
-            seg_count = sum(1 for l in lines if l.strip().isdigit())
-            if seg_count > 4: log.info(f"  ... ({seg_count} segments total)")
+        timing_path.write_text(_json.dumps(ordered_json, indent=2))
+        log.info(f"💾 Timing JSON saved: {timing_path.name}")
 
     return 0 if ok else 1
 

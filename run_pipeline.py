@@ -190,6 +190,8 @@ def main():
                    help="Whisper model for language detection (default: medium)")
     p.add_argument("--skip-nemo",      action="store_true",
                    help="Skip NeMo step (diarized SRT already exists)")
+    p.add_argument("--translate-model", default="translategemma:4b", 
+                   help="Ollama model for translation (default: translategemma:4b)")
     p.add_argument("--skip-translate", action="store_true",
                    help="Skip translation (translated SRT already exists)")
     p.add_argument("--skip-dub",       action="store_true",
@@ -377,6 +379,8 @@ def main():
             env["SOURCE_LANG_CODE"] = source_lang
             env["INPUT_DIR"]        = str(nemo_dir)
             env["OUTPUT_DIR"]       = str(end_product_dir)
+
+            env["TRANSLATE_MODEL"]  = args.translate_model
 
             _banner(f"Step 2/3 — Translation ({source_lang} → {args.target_lang}) via Gemma")
             print(f"   cwd : {nemo_dir}")
