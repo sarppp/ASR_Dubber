@@ -94,6 +94,13 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
                 dub_files += [str(f) for f in path.glob('*.mp4')]
                 dub_files += [str(f) for f in path.glob('*_dub.srt')]
                 dub_files += [str(f) for f in path.glob('*_timing_dub.json')]
+    else:
+        # Fallback (no --dub-workdir): scan all per-video subdirs under dub/
+        dub_base = ROOT / 'qwen3-tts' / 'output' / 'dub'
+        for sub_out in dub_base.glob("*/output"):
+            dub_files += [str(f) for f in sub_out.glob('*.mp4')]
+            dub_files += [str(f) for f in sub_out.glob('*_dub.srt')]
+            dub_files += [str(f) for f in sub_out.glob('*_timing_dub.json')]
 
     # Combine all specific files
     files_to_move = list(set(all_srts + dub_files + intermediate_files))
@@ -113,7 +120,7 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
 
         try:
             shutil.move(file_path, dest_path)
-            print(f"   Moved: {file_name} -> {short_name}")
+            print(f"   Moved: {file_name} -> {dest_path}")
         except Exception as e:
             print(f"   Failed to move {file_name}: {e}")
 
