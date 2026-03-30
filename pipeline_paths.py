@@ -227,7 +227,8 @@ def _derive_run_label(
     return candidate
 
 
-def _finalize_outputs(run_label: str, dub_workdir: Path | None = None, *, nemo_dir: Path | None = None) -> None:
+def _finalize_outputs(run_label: str, dub_workdir: Path | None = None, *,
+                      nemo_dir: Path | None = None, log_file: Path | None = None) -> None:
     """Clean subtitles and gather all outputs into nemo/end_product/<run>."""
     nemo_dir = nemo_dir or NEMO_DIR
     if not CLEAN_SUBS_SCRIPT.exists():
@@ -240,7 +241,7 @@ def _finalize_outputs(run_label: str, dub_workdir: Path | None = None, *, nemo_d
     ]
     if dub_workdir:
         clean_cmd += ["--dub-workdir", str(dub_workdir)]
-    _run(clean_cmd, cwd=nemo_dir, label="Step 4 — Clean + gather outputs")
+    _run(clean_cmd, cwd=nemo_dir, label="Step 4 — Clean + gather outputs", log_file=log_file)
 
 
 # ── SRT validation ────────────────────────────────────────────────────────────

@@ -44,14 +44,33 @@ def _banner(text: str) -> None:
     print(f"\n{bar}\n▶  {text}\n{bar}\n", flush=True)
 
 
-def _run(cmd: list, cwd: Path, label: str) -> None:
+def _stream_proc(proc: subprocess.Popen, log_file: "Path | None" = None) -> int:
+    """Stream proc stdout+stderr to terminal and optionally a log file. Returns returncode."""
+    lf = open(log_file, "w", encoding="utf-8") if log_file else None
+    try:
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace")
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if lf:
+                lf.write(line)
+                lf.flush()
+        proc.wait()
+    finally:
+        if lf:
+            lf.close()
+    return proc.returncode
+
+
+def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None) -> None:
     _banner(label)
     print(f"   cwd : {cwd}")
     print(f"   cmd : {' '.join(str(c) for c in cmd)}\n", flush=True)
-    result = subprocess.run(cmd, cwd=str(cwd))
-    if result.returncode != 0:
-        print(f"\n❌  {label} failed (exit {result.returncode})", flush=True)
-        sys.exit(result.returncode)
+    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    rc = _stream_proc(proc, log_file)
+    if rc != 0:
+        print(f"\n❌  {label} failed (exit {rc})", flush=True)
+        sys.exit(rc)
     print(f"\n✅  {label} done", flush=True)
 
 

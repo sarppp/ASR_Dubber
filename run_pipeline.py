@@ -73,6 +73,8 @@ import argparse
 import atexit
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -89,6 +91,7 @@ from pipeline_utils import (
     TRANSLATE_PY,
     _banner,
     _run,
+    _stream_proc,
     _python,
     _ollama_start,
     _ollama_stop,
@@ -190,8 +193,9 @@ def main():
                    help="Whisper model for language detection (default: medium)")
     p.add_argument("--skip-nemo",      action="store_true",
                    help="Skip NeMo step (diarized SRT already exists)")
-    p.add_argument("--translate-model", default="translategemma:4b", 
-                   help="Ollama model for translation (default: translategemma:4b)")
+    p.add_argument("--translate-model", default="translategemma:4b",
+                   help="Ollama model for translation (default: translategemma:4b). "
+                        "Shorthand: '4b' or '12b' expands to translategemma:4b/12b.")
     p.add_argument("--skip-translate", action="store_true",
                    help="Skip translation (translated SRT already exists)")
     p.add_argument("--skip-dub",       action="store_true",
@@ -220,6 +224,10 @@ def main():
     p.add_argument("--safety-factor",  default=None, type=float, metavar="F",
                    help="VRAM safety multiplier for NeMo chunking (default: 0.85)")
     args = p.parse_args()
+
+    # Expand translate model shorthands: '4b' → 'translategemma:4b', etc.
+    if ":" not in args.translate_model:
+        args.translate_model = f"translategemma:{args.translate_model}"
 
     # Convenience presets for common partial runs
     if args.run_mode == "transcribe":
@@ -294,6 +302,12 @@ def main():
 
     print(f"🎬 Selected video : {video.name}  (base: '{video_base}')", flush=True)
 
+    # ── Per-run log files (written to nemo_dir, moved to run_dir at the end) ──
+    log_transcribe = nemo_dir / f"{video_base}_1_transcribe.log"
+    log_translate  = nemo_dir / f"{video_base}_2_translate.log"
+    log_dub        = nemo_dir / f"{video_base}_3_dub.log"
+    log_finalize   = nemo_dir / f"{video_base}_4_finalize.log"
+
     # Try to infer source lang from an existing diarized SRT for THIS video only
     if not source_lang:
         srt = _find_srt_for_video(video_base, "*.nemo.*.diarize.srt",
@@ -338,7 +352,8 @@ def main():
             nemo_cmd += ["--reserve-gb", str(args.reserve_gb)]
         if args.safety_factor:
             nemo_cmd += ["--safety-factor", str(args.safety_factor)]
-        _run(nemo_cmd, cwd=nemo_dir, label="Step 1/3 — NeMo transcription + diarization")
+        _run(nemo_cmd, cwd=nemo_dir, label="Step 1/3 — NeMo transcription + diarization",
+             log_file=log_transcribe)
 
         # If trimmed, rename NeMo's output SRT to include _t{N} suffix
         if args.trim:
@@ -385,15 +400,15 @@ def main():
             _banner(f"Step 2/3 — Translation ({source_lang} → {args.target_lang}) via Gemma")
             print(f"   cwd : {nemo_dir}")
             print(f"   cmd : {translate_py} {translate_script}\n", flush=True)
-            import subprocess
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 [translate_py, str(translate_script)],
-                cwd=str(nemo_dir),
-                env=env,
+                cwd=str(nemo_dir), env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
-            if result.returncode != 0:
-                print(f"\n❌  Translation failed (exit {result.returncode})")
-                sys.exit(result.returncode)
+            rc = _stream_proc(proc, log_translate)
+            if rc != 0:
+                print(f"\n❌  Translation failed (exit {rc})")
+                sys.exit(rc)
             print("\n✅  Translation done", flush=True)
         finally:
             _ollama_stop(ollama_proc)
@@ -443,13 +458,30 @@ def main():
         dub_cmd.extend(["--tts-workers", str(tts_workers),
                         "--tts-devices", tts_devices])
 
-        _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS")
+        _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS",
+             log_file=log_dub)
     else:
         print("⏭️  Skipping dub (--skip-dub)")
 
     run_label = _derive_run_label(source_lang, args.target_lang, video=video,
                                   nemo_dir=nemo_dir, end_product_dir=end_product_dir)
-    _finalize_outputs(run_label, dub_workdir=dub_workdir if not args.skip_dub else None, nemo_dir=nemo_dir)
+    _finalize_outputs(run_label, dub_workdir=dub_workdir if not args.skip_dub else None,
+                      nemo_dir=nemo_dir, log_file=log_finalize)
+
+    # ── Assemble logs into run_dir ────────────────────────────────────────────
+    run_dir = end_product_dir / run_label
+    run_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_log = run_dir / "pipeline.log"
+    step_logs = [log_transcribe, log_translate, log_dub, log_finalize]
+    with open(pipeline_log, "w", encoding="utf-8") as pf:
+        for lf in step_logs:
+            if not lf.exists():
+                continue
+            dest = run_dir / lf.name
+            shutil.move(str(lf), str(dest))
+            pf.write(f"\n{'='*60}\n{lf.name}\n{'='*60}\n")
+            pf.write(dest.read_text(encoding="utf-8", errors="replace"))
+    print(f"📋 Logs → {pipeline_log}", flush=True)
 
     summary_lines = [
         "╔══════════════════════════════════════════════════════════╗",
