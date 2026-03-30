@@ -201,10 +201,14 @@ def _ollama_start() -> subprocess.Popen | None:
                 sys.exit(1)
 
         print(f"🚀 Starting Ollama natively ({ollama_bin})...", flush=True)
+        ollama_env = os.environ.copy()
+        ollama_env["GIN_MODE"]     = "release"   # suppress HTTP request logs
+        ollama_env["OLLAMA_DEBUG"] = "0"          # suppress Ollama debug output
         proc = subprocess.Popen(
             [ollama_bin, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=ollama_env,
             preexec_fn=os.setsid,
         )
         started_via = "native"
