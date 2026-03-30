@@ -66,26 +66,31 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
     os.makedirs(destination_dir, exist_ok=True)
 
     # 1. Identify the base name for this specific run (e.g., 'biology')
+    # Normalize to lowercase with spaces so it matches filenames regardless of
+    # whether run_label used underscores vs the original filename used spaces.
     if run_label:
         base_pattern = re.split(r"[._]nemo|__", run_label)[0]
-        base_pattern = re.sub(r"_t\d+$", "", base_pattern) # remove _t120 etc
+        base_pattern = re.sub(r"_t\d+$", "", base_pattern)  # remove _t120 etc
     else:
         base_pattern = ""
+    base_norm = base_pattern.lower().replace("_", " ")
+
+    def _matches(name: str) -> bool:
+        return base_norm in name.lower().replace("_", " ")
 
     # 2. Gather ONLY SRTs belonging to this video
-    all_srts = [str(f) for f in NEMO_DIR.glob(f"{base_pattern}*.srt")]
+    all_srts = [str(f) for f in NEMO_DIR.glob("*.srt") if _matches(f.name)]
 
     # 3. Find NeMo intermediate files + our new timing JSONs
     intermediate_files = []
     if base_pattern:
-        # Search for any JSON that contains the video base name
         for f in NEMO_DIR.glob("*.json"):
-            if base_pattern.lower() in f.name.lower():
+            if _matches(f.name):
                 intermediate_files.append(str(f))
-        
-        # Search for transcription WAVs
-        for f in NEMO_DIR.glob(f"{base_pattern}*_16k_*.wav"):
-            intermediate_files.append(str(f))
+
+        for f in NEMO_DIR.glob("*_16k_*.wav"):
+            if _matches(f.name):
+                intermediate_files.append(str(f))
 
     # 4. Find dubbed products (MP4, dub-SRT, dub-timing)
     dub_files = []
