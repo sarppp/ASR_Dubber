@@ -1,10 +1,14 @@
 import argparse
 import glob
+import logging
 import os
 import re
 import shutil
 from pathlib import Path
 import pysrt
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("clean_subs")
  
 # --- Folder Paths ---
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,40 +29,40 @@ def get_shortened_filename(file_name: str, max_len: int = 60) -> str:
         return "output" + ext
 
 def clean_srt_files():
-    print(f" 1. Cleaning subtitles in '{NEMO_DIR}' ...")
+    log.info(f"1. Cleaning subtitles in '{NEMO_DIR}' ...")
     all_srt_files = glob.glob(str(NEMO_DIR / '*.srt'))
- 
+
     if not all_srt_files:
-        print("   No .srt files found to clean.")
+        log.info("No .srt files found to clean.")
         return
- 
+
     for file_path in all_srt_files:
         if file_path.endswith('_clean.srt'):
             continue
- 
+
         try:
             subs = pysrt.open(file_path)
         except Exception as e:
-            print(f"   Could not open {os.path.basename(file_path)}: {e}")
+            log.error(f"Could not open {os.path.basename(file_path)}: {e}")
             continue
- 
+
         change_count = 0
         for sub in subs:
             new_text = re.sub(r'\[Speaker\s+\d+\]\s*', '', sub.text)
             if new_text != sub.text:
                 sub.text = new_text.strip()
                 change_count += 1
- 
+
         if change_count > 0:
             base, ext = os.path.splitext(file_path)
             output_path = f"{base}_clean{ext}"
             subs.save(output_path, encoding='utf-8')
-            print(f"   Cleaned {change_count} tags -> Created: {os.path.basename(output_path)}")
+            log.info(f"Cleaned {change_count} tags -> Created: {os.path.basename(output_path)}")
  
  
 def move_final_products(run_label: str | None = None, dub_workdir: str | None = None) -> Path:
     destination_dir = END_PRODUCT_DIR if not run_label else END_PRODUCT_DIR / run_label
-    print(f"\n2. Moving all SRTs, MP4s and intermediate files into '{destination_dir}' ...")
+    log.info(f"2. Moving all SRTs, MP4s and intermediate files into '{destination_dir}' ...")
     os.makedirs(destination_dir, exist_ok=True)
 
     # 1. Identify the base name for this specific run (e.g., 'biology')
@@ -106,23 +110,23 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
     files_to_move = list(set(all_srts + dub_files + intermediate_files))
 
     if not files_to_move:
-        print("   No files found to move.")
+        log.info("No files found to move.")
         return destination_dir
 
     for file_path in files_to_move:
         file_name = os.path.basename(file_path)
         short_name = get_shortened_filename(file_name)
         dest_path = destination_dir / short_name
-        
+
         # Avoid moving a file onto itself
         if Path(file_path).resolve() == dest_path.resolve():
             continue
 
         try:
             shutil.move(file_path, dest_path)
-            print(f"   Moved: {file_name} -> {dest_path}")
+            log.info(f"Moved: {file_name} -> {dest_path}")
         except Exception as e:
-            print(f"   Failed to move {file_name}: {e}")
+            log.error(f"Failed to move {file_name}: {e}")
 
     return destination_dir
  
@@ -152,7 +156,7 @@ def copy_source_video(run_label: str | None = None) -> None:
     if destination_dir.exists():
         for f in destination_dir.iterdir():
             if match_file(f):
-                print(f"   Source file already in destination: {f.name}")
+                log.info(f"Source file already in destination: {f.name}")
                 return
 
     for f in NEMO_DIR.iterdir():
@@ -161,12 +165,12 @@ def copy_source_video(run_label: str | None = None) -> None:
             dest = destination_dir / short_name
             try:
                 shutil.move(str(f), str(dest))
-                print(f"   Moved source file: {f.name} -> {short_name}")
+                log.info(f"Moved source file: {f.name} -> {short_name}")
             except Exception as e:
-                print(f"   Failed to move source file {f.name}: {e}")
+                log.error(f"Failed to move source file {f.name}: {e}")
             return
 
-    print(f"   ⚠️  Source video/WAV not found in {NEMO_DIR} (or destination) for run '{run_label}'")
+    log.warning(f"Source video/WAV not found in {NEMO_DIR} (or destination) for run '{run_label}'")
  
  
 def cleanup_wav_chunks() -> None:
@@ -174,10 +178,10 @@ def cleanup_wav_chunks() -> None:
     chunks = list(NEMO_DIR.glob("_chunk_*.wav"))
     if not chunks:
         return
-    print(f"\n3. Cleaning up {len(chunks)} leftover chunk WAV(s) in '{NEMO_DIR}' ...")
+    log.info(f"3. Cleaning up {len(chunks)} leftover chunk WAV(s) in '{NEMO_DIR}' ...")
     for f in chunks:
         f.unlink()
-        print(f"   Deleted: {f.name}")
+        log.info(f"Deleted: {f.name}")
  
  
 def main() -> None:
@@ -192,7 +196,7 @@ def main() -> None:
     destination = move_final_products(args.run_label, args.dub_workdir)
     copy_source_video(args.run_label)
     cleanup_wav_chunks()
-    print(f"\nWorkspace is clean! All files are neatly packed in: {destination}")
+    log.info(f"Workspace is clean! All files are neatly packed in: {destination}")
  
  
 if __name__ == "__main__":
