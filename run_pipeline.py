@@ -159,6 +159,51 @@ def _auto_tts_workers() -> tuple:
     return workers, "0"
 
 
+# ── Timing summary ────────────────────────────────────────────────────────────
+
+def _append_timing_summary(run_dir: Path, pipeline_log: Path) -> None:
+    import json
+    lines = []
+    total_sec = 0.0
+
+    for f in run_dir.glob("*_timing_transcribe.json"):
+        d = json.loads(f.read_text())
+        t = d.get("total_sec", 0); total_sec += t
+        audio = d.get("audio_dur_sec", 0)
+        lines.append(f"  Transcribe : {t/60:.1f} min  "
+                     f"(audio: {audio/60:.1f} min, RTF: {d.get('rtf','?')}, segments: {d.get('segments','?')})")
+        break
+
+    for f in run_dir.glob("*_timing_translate.json"):
+        d = json.loads(f.read_text())
+        t = d.get("total_sec", 0); total_sec += t
+        lines.append(f"  Translate  : {t/60:.1f} min  "
+                     f"({d.get('lines','?')} lines, {d.get('lines_per_sec',0):.2f} lines/s)")
+        break
+
+    for f in run_dir.glob("*_timing_dub.json"):
+        d = json.loads(f.read_text())
+        t = d.get("total_sec", 0); total_sec += t
+        lines.append(f"  Dub        : {d.get('total', f'{t/60:.1f} min')}  "
+                     f"(TTS: {d.get('tts','?')}, stitch: {d.get('stitch','?')}, segments: {d.get('segments','?')})")
+        break
+
+    if not lines:
+        return
+
+    block = (
+        f"\n{'='*60}\n"
+        f"PIPELINE TIMING SUMMARY\n"
+        f"{'='*60}\n"
+        + "\n".join(lines)
+        + f"\n  {'─'*40}\n"
+        + f"  Total      : {total_sec/60:.1f} min\n"
+    )
+    with open(pipeline_log, "a", encoding="utf-8") as pf:
+        pf.write(block)
+    print(block, flush=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -481,6 +526,8 @@ def main():
             shutil.move(str(lf), str(dest))
             pf.write(f"\n{'='*60}\n{lf.name}\n{'='*60}\n")
             pf.write(dest.read_text(encoding="utf-8", errors="replace"))
+    # ── Append timing summary to pipeline.log ────────────────────────────────
+    _append_timing_summary(run_dir, pipeline_log)
     print(f"📋 Logs → {pipeline_log}", flush=True)
 
     summary_lines = [
