@@ -436,7 +436,7 @@ def main():
                 print(f"⏭️  Skipping gap fill — already exists: {filled_srt.name}")
             else:
                 fill_cmd = [
-                    str(TRANSLATE_PY),
+                    str(NEMO_PY),
                     str(NEMO_CODE_DIR / "srt_fill_gaps.py"),
                     str(video), str(srt_to_fill), str(filled_srt),
                     "--min-gap", str(args.fill_gaps),

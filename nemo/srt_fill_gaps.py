@@ -284,7 +284,7 @@ def check_audio_energy(audio_path: Path, threshold: float = 500.0) -> Tuple[bool
         return True, 0.0  # Assume speech on error
 
 
-def transcribe_with_whisper(audio_path: Path, model_name: str = 'base') -> List[dict]:
+def transcribe_with_whisper(audio_path: Path, model_name: str = 'base', model=None) -> List[dict]:
     """Transcribe audio with Whisper, returning segments with timestamps."""
     try:
         import whisper
@@ -292,7 +292,8 @@ def transcribe_with_whisper(audio_path: Path, model_name: str = 'base') -> List[
         print("Error: openai-whisper not installed. Run: uv pip install openai-whisper")
         return []
     
-    model = whisper.load_model(model_name)
+    if model is None:
+        model = whisper.load_model(model_name)
     result = model.transcribe(str(audio_path), language='en')
     
     segments = []
@@ -388,26 +389,42 @@ def main():
         log.error(f"SRT not found: {input_srt}")
         sys.exit(1)
     
+    import json as _json
+
+    checkpoint_path = output_srt.with_suffix('.checkpoint.json')
+
     # Parse input SRT
     log.info(f"Reading {input_srt}...")
     content = input_srt.read_text(encoding='utf-8')
     segments = parse_srt(content)
     log.info(f"  Found {len(segments)} segments")
-    
-    # Find gaps
+
+    # Find gaps (always from original SRT so the gap list is stable across runs)
     gaps = find_gaps(segments, min_gap=args.min_gap)
     log.info(f"  Found {len(gaps)} gaps >= {args.min_gap}s")
-    
+
     if not gaps:
         log.info("No gaps to fill.")
         output_srt.write_text(content, encoding='utf-8')
         return
-    
+
+    # ── Resume from checkpoint if available ──────────────────────────────────
+    done_gaps: set = set()
+    if checkpoint_path.exists():
+        try:
+            cp = _json.loads(checkpoint_path.read_text(encoding='utf-8'))
+            segments = cp['segments']
+            done_gaps = set(cp['done_gaps'])
+            log.info(f"  Resuming from checkpoint: {len(done_gaps)}/{len(gaps)} gaps already done")
+        except Exception as e:
+            log.warning(f"  Checkpoint unreadable ({e}) — starting from scratch")
+            checkpoint_path.unlink(missing_ok=True)
+
     # Load speaker embedding model if enabled
     speaker_model = None
     speaker_embeddings = None
     use_embeddings = not args.no_embeddings
-    
+
     if use_embeddings:
         try:
             log.info("Loading TitaNet speaker embedding model...")
@@ -415,73 +432,97 @@ def main():
         except Exception as e:
             log.warning(f"Failed to load speaker model, falling back to proximity: {e}")
             use_embeddings = False
-    
+
     # Process each gap
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-        
+
         # Compute speaker embeddings from known segments (if enabled)
         if use_embeddings and speaker_model:
             log.info("Computing speaker embeddings from known segments...")
-            speaker_embeddings = compute_speaker_embeddings(video_path, segments, speaker_model, tmpdir)
+            speaker_embeddings = compute_speaker_embeddings(video_path, parse_srt(content), speaker_model, tmpdir)
             if not speaker_embeddings:
                 log.warning("No speaker embeddings computed, falling back to proximity")
                 use_embeddings = False
-        
+
+        # Load Whisper once for all gaps
+        try:
+            import whisper as _whisper
+            log.info(f"Loading Whisper model ({args.whisper_model})...")
+            whisper_model = _whisper.load_model(args.whisper_model)
+        except ImportError:
+            log.error("openai-whisper not installed. Run: uv pip install openai-whisper")
+            sys.exit(1)
+
         for gap_start, gap_end, fallback_speaker in gaps:
             gap_duration = gap_end - gap_start
-            
+
             if gap_duration > args.max_gap:
                 log.info(f"  Skipping large gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s > max {args.max_gap}s)")
+                done_gaps.add(gap_start)
                 continue
-            
+
+            if gap_start in done_gaps:
+                log.info(f"  ✓ Gap {gap_start:.1f}s already done — skipping")
+                continue
+
             log.info(f"  Processing gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s)")
-            
+
             # Extract audio
             audio_path = tmpdir / f"gap_{gap_start:.0f}.wav"
             if not extract_audio_segment(video_path, gap_start, gap_end, audio_path):
                 log.warning(f"    Failed to extract audio for gap")
+                done_gaps.add(gap_start)
                 continue
-            
+
             # Check if audio has speech-like energy
             has_speech, rms = check_audio_energy(audio_path)
             log.info(f"    Audio energy: RMS={rms:.0f}, has_speech={has_speech}")
-            
+
             if not has_speech:
                 log.info(f"    Skipping: likely natural pause (low audio energy)")
+                done_gaps.add(gap_start)
                 continue
-            
+
             # Match speaker using embeddings (if available)
             speaker = fallback_speaker
             if use_embeddings and speaker_model and speaker_embeddings:
                 matched = match_speaker_by_embedding(
-                    audio_path, speaker_embeddings, speaker_model, 
+                    audio_path, speaker_embeddings, speaker_model,
                     threshold=args.embedding_threshold
                 )
                 if matched:
                     speaker = matched
                 else:
                     log.info(f"    Using fallback speaker: {fallback_speaker}")
-            
+
             if speaker:
                 log.info(f"    Speaker: {speaker}")
-            
+
             # Transcribe with Whisper
             log.info(f"    Transcribing with Whisper ({args.whisper_model})...")
-            new_segments = transcribe_with_whisper(audio_path, args.whisper_model)
-            
+            new_segments = transcribe_with_whisper(audio_path, args.whisper_model, model=whisper_model)
+
             if not new_segments:
                 log.warning(f"    No transcription produced")
+                done_gaps.add(gap_start)
                 continue
-            
+
             log.info(f"    Found {len(new_segments)} new segments")
-            
-            # Insert into segments list
+
             segments = insert_segments(segments, gap_start, gap_end, new_segments, speaker)
-    
-    # Write output
+            done_gaps.add(gap_start)
+
+            # Save checkpoint after every gap
+            checkpoint_path.write_text(
+                _json.dumps({'segments': segments, 'done_gaps': list(done_gaps)}, indent=2),
+                encoding='utf-8',
+            )
+
+    # Write output and clean up checkpoint
     log.info(f"Writing {output_srt}...")
     write_srt(segments, output_srt)
+    checkpoint_path.unlink(missing_ok=True)
     log.info(f"  {len(segments)} total segments")
     log.info("Done!")
 

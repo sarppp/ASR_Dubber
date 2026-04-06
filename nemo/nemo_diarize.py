@@ -134,11 +134,11 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
         # but large batch_size still creates big intermediate tensors.
         audio_dur = _audio_duration(audio_path)
         if audio_dur > 600:
-            batch_size = 1
+            batch_size = 64
         elif audio_dur > 300:
-            batch_size = 4
+            batch_size = 128
         else:
-            batch_size = 16
+            batch_size = 256
         log.info(f"Audio {_fmt_dur(audio_dur)} → diarization batch_size={batch_size}")
 
         # Build config using setdefault pattern — avoids "Multiscale parameters not properly setup"
