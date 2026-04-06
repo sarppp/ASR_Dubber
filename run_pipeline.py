@@ -443,11 +443,9 @@ def main():
                     "--whisper-model", args.fill_gaps_model,
                 ]
                 _run(fill_cmd, cwd=nemo_dir, label="Step 1b — Fill SRT gaps with Whisper")
-                # Replace original with filled version
                 if filled_srt.exists():
-                    srt_to_fill.unlink(missing_ok=True)
-                    filled_srt.rename(srt_to_fill)
-                    print(f"📝 Replaced SRT with gap-filled version: {srt_to_fill.name}", flush=True)
+                    shutil.copy2(str(filled_srt), str(srt_to_fill))
+                    print(f"� Replaced SRT with gap-filled version: {srt_to_fill.name}", flush=True)
         else:
             print(f"⚠️  No SRT found for gap filling")
 
