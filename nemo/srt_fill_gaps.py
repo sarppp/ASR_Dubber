@@ -2,20 +2,25 @@
 srt_fill_gaps.py — Fill gaps in SRT files using Whisper
 
 Detects gaps between subtitle segments, transcribes missing audio with Whisper,
-and inserts new segments with speaker attribution from surrounding context.
+and inserts new segments with speaker attribution using speaker embeddings.
 
 Usage:
   cd nemo && uv run python srt_fill_gaps.py video.mp4 input.srt output.srt --min-gap 2.0
   cd nemo && uv run python srt_fill_gaps.py video.mp4 input.srt output.srt --whisper-model base
+  cd nemo && uv run python srt_fill_gaps.py video.mp4 input.srt output.srt --no-embeddings  # Use old proximity method
 """
 
 import argparse
+import logging
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("srt_fill_gaps")
 
 
 def parse_srt_timestamp(ts: str) -> float:
@@ -81,7 +86,7 @@ def find_gaps(segments: List[dict], min_gap: float = 2.0) -> List[Tuple[float, f
     """Find gaps between segments longer than min_gap seconds.
     
     Returns list of (start, end, speaker) tuples where speaker is inferred
-    from surrounding segments.
+    from surrounding segments (fallback when embeddings unavailable).
     """
     gaps = []
     
@@ -91,17 +96,146 @@ def find_gaps(segments: List[dict], min_gap: float = 2.0) -> List[Tuple[float, f
         gap_duration = next_start - current_end
         
         if gap_duration >= min_gap:
-            # Infer speaker from surrounding segments
-            # Use the speaker of the segment before the gap
+            # Infer speaker from surrounding segments (fallback)
             speaker = segments[i].get('speaker')
-            
-            # If no speaker before, try the one after
             if not speaker:
                 speaker = segments[i + 1].get('speaker')
             
             gaps.append((current_end, next_start, speaker))
     
     return gaps
+
+
+# ── Speaker Embedding Functions ───────────────────────────────────────────────
+
+def _import_nemo_asr():
+    """Import nemo.collections.asr, handling the case where local nemo.py exists."""
+    import importlib
+    script_dir = Path(__file__).resolve().parent
+    original_path = list(sys.path)
+    
+    def _is_script_dir(entry: str) -> bool:
+        try:
+            return entry and Path(entry).resolve() == script_dir
+        except OSError:
+            return False
+    
+    try:
+        sys.path = [e for e in original_path if not _is_script_dir(e)]
+        return importlib.import_module("nemo.collections.asr")
+    finally:
+        sys.path = original_path
+
+
+def load_speaker_model():
+    """Load TitaNet speaker embedding model."""
+    nemo_asr = _import_nemo_asr()
+    model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
+        "nvidia/speakerverification_en_titanet_large"
+    )
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device)
+    return model
+
+
+def extract_speaker_embedding(audio_path: Path, model) -> Optional['numpy.ndarray']:
+    """Extract speaker embedding from audio file using TitaNet."""
+    try:
+        import torch
+        with torch.no_grad():
+            emb = model.get_embedding(str(audio_path))
+            # Normalize embedding for cosine similarity
+            emb = emb / emb.norm(dim=-1, keepdim=True)
+            return emb.cpu().numpy().flatten()
+    except Exception as e:
+        log.warning(f"Failed to extract embedding: {e}")
+        return None
+
+
+def compute_speaker_embeddings(
+    video_path: Path,
+    segments: List[dict],
+    model,
+    tmpdir: Path,
+    max_segments_per_speaker: int = 5
+) -> Dict[str, 'numpy.ndarray']:
+    """Compute average speaker embeddings from known segments.
+    
+    For each speaker, extract audio from a few segments and average their embeddings.
+    """
+    import numpy as np
+    
+    # Group segments by speaker
+    speaker_segments: Dict[str, List[dict]] = {}
+    for seg in segments:
+        speaker = seg.get('speaker')
+        if speaker:
+            if speaker not in speaker_segments:
+                speaker_segments[speaker] = []
+            speaker_segments[speaker].append(seg)
+    
+    speaker_embeddings = {}
+    
+    for speaker, segs in speaker_segments.items():
+        # Take up to max_segments_per_speaker longest segments
+        segs = sorted(segs, key=lambda s: s['end'] - s['start'], reverse=True)[:max_segments_per_speaker]
+        
+        embeddings = []
+        for seg in segs:
+            # Extract audio for this segment
+            audio_path = tmpdir / f"spk_{speaker}_{seg['start']:.0f}.wav"
+            if extract_audio_segment(video_path, seg['start'], seg['end'], audio_path):
+                emb = extract_speaker_embedding(audio_path, model)
+                if emb is not None:
+                    embeddings.append(emb)
+        
+        if embeddings:
+            # Average embeddings for this speaker
+            avg_emb = np.mean(embeddings, axis=0)
+            # Re-normalize
+            avg_emb = avg_emb / np.linalg.norm(avg_emb)
+            speaker_embeddings[speaker] = avg_emb
+            log.info(f"  Computed embedding for speaker '{speaker}' from {len(embeddings)} segments")
+    
+    return speaker_embeddings
+
+
+def match_speaker_by_embedding(
+    audio_path: Path,
+    speaker_embeddings: Dict[str, 'numpy.ndarray'],
+    model,
+    threshold: float = 0.5
+) -> Optional[str]:
+    """Match gap audio to closest speaker using embeddings.
+    
+    Returns speaker name if match above threshold, else None.
+    """
+    import numpy as np
+    
+    if not speaker_embeddings:
+        return None
+    
+    gap_emb = extract_speaker_embedding(audio_path, model)
+    if gap_emb is None:
+        return None
+    
+    # Compute cosine similarity with each speaker
+    best_speaker = None
+    best_score = -1.0
+    
+    for speaker, emb in speaker_embeddings.items():
+        score = float(np.dot(gap_emb, emb))  # Cosine similarity (embeddings normalized)
+        if score > best_score:
+            best_score = score
+            best_speaker = speaker
+    
+    if best_score >= threshold:
+        log.info(f"    Speaker match: '{best_speaker}' (similarity={best_score:.3f})")
+        return best_speaker
+    else:
+        log.info(f"    No speaker match (best={best_score:.3f} < threshold={threshold})")
+        return None
 
 
 def extract_audio_segment(video_path: Path, start: float, end: float, output_path: Path) -> bool:
@@ -227,7 +361,7 @@ def write_srt(segments: List[dict], output_path: Path) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fill gaps in SRT files using Whisper")
+    parser = argparse.ArgumentParser(description="Fill gaps in SRT files using Whisper with speaker embedding matching")
     parser.add_argument("video", help="Video file to extract audio from")
     parser.add_argument("input_srt", help="Input SRT file with gaps")
     parser.add_argument("output_srt", help="Output SRT file with gaps filled")
@@ -237,6 +371,10 @@ def main():
                         help="Whisper model size (default: base)")
     parser.add_argument("--max-gap", type=float, default=60.0,
                         help="Maximum gap duration to fill (seconds, default: 60)")
+    parser.add_argument("--no-embeddings", action="store_true",
+                        help="Disable speaker embedding matching, use proximity-based fallback")
+    parser.add_argument("--embedding-threshold", type=float, default=0.5,
+                        help="Minimum cosine similarity for speaker match (default: 0.5)")
     args = parser.parse_args()
     
     video_path = Path(args.video).resolve()
@@ -244,74 +382,108 @@ def main():
     output_srt = Path(args.output_srt).resolve()
     
     if not video_path.exists():
-        print(f"Error: Video not found: {video_path}")
+        log.error(f"Video not found: {video_path}")
         sys.exit(1)
     if not input_srt.exists():
-        print(f"Error: SRT not found: {input_srt}")
+        log.error(f"SRT not found: {input_srt}")
         sys.exit(1)
     
     # Parse input SRT
-    print(f"Reading {input_srt}...")
+    log.info(f"Reading {input_srt}...")
     content = input_srt.read_text(encoding='utf-8')
     segments = parse_srt(content)
-    print(f"  Found {len(segments)} segments")
+    log.info(f"  Found {len(segments)} segments")
     
     # Find gaps
     gaps = find_gaps(segments, min_gap=args.min_gap)
-    print(f"  Found {len(gaps)} gaps >= {args.min_gap}s")
+    log.info(f"  Found {len(gaps)} gaps >= {args.min_gap}s")
     
     if not gaps:
-        print("No gaps to fill.")
+        log.info("No gaps to fill.")
         output_srt.write_text(content, encoding='utf-8')
         return
+    
+    # Load speaker embedding model if enabled
+    speaker_model = None
+    speaker_embeddings = None
+    use_embeddings = not args.no_embeddings
+    
+    if use_embeddings:
+        try:
+            log.info("Loading TitaNet speaker embedding model...")
+            speaker_model = load_speaker_model()
+        except Exception as e:
+            log.warning(f"Failed to load speaker model, falling back to proximity: {e}")
+            use_embeddings = False
     
     # Process each gap
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
         
-        for gap_start, gap_end, speaker in gaps:
+        # Compute speaker embeddings from known segments (if enabled)
+        if use_embeddings and speaker_model:
+            log.info("Computing speaker embeddings from known segments...")
+            speaker_embeddings = compute_speaker_embeddings(video_path, segments, speaker_model, tmpdir)
+            if not speaker_embeddings:
+                log.warning("No speaker embeddings computed, falling back to proximity")
+                use_embeddings = False
+        
+        for gap_start, gap_end, fallback_speaker in gaps:
             gap_duration = gap_end - gap_start
             
             if gap_duration > args.max_gap:
-                print(f"  Skipping large gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s > max {args.max_gap}s)")
+                log.info(f"  Skipping large gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s > max {args.max_gap}s)")
                 continue
             
-            print(f"  Processing gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s)")
-            if speaker:
-                print(f"    Speaker: {speaker}")
+            log.info(f"  Processing gap: {gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s)")
             
             # Extract audio
             audio_path = tmpdir / f"gap_{gap_start:.0f}.wav"
             if not extract_audio_segment(video_path, gap_start, gap_end, audio_path):
-                print(f"    Warning: Failed to extract audio for gap")
+                log.warning(f"    Failed to extract audio for gap")
                 continue
             
             # Check if audio has speech-like energy
             has_speech, rms = check_audio_energy(audio_path)
-            print(f"    Audio energy: RMS={rms:.0f}, has_speech={has_speech}")
+            log.info(f"    Audio energy: RMS={rms:.0f}, has_speech={has_speech}")
             
             if not has_speech:
-                print(f"    Skipping: likely natural pause (low audio energy)")
+                log.info(f"    Skipping: likely natural pause (low audio energy)")
                 continue
             
+            # Match speaker using embeddings (if available)
+            speaker = fallback_speaker
+            if use_embeddings and speaker_model and speaker_embeddings:
+                matched = match_speaker_by_embedding(
+                    audio_path, speaker_embeddings, speaker_model, 
+                    threshold=args.embedding_threshold
+                )
+                if matched:
+                    speaker = matched
+                else:
+                    log.info(f"    Using fallback speaker: {fallback_speaker}")
+            
+            if speaker:
+                log.info(f"    Speaker: {speaker}")
+            
             # Transcribe with Whisper
-            print(f"    Transcribing with Whisper ({args.whisper_model})...")
+            log.info(f"    Transcribing with Whisper ({args.whisper_model})...")
             new_segments = transcribe_with_whisper(audio_path, args.whisper_model)
             
             if not new_segments:
-                print(f"    Warning: No transcription produced")
+                log.warning(f"    No transcription produced")
                 continue
             
-            print(f"    Found {len(new_segments)} new segments")
+            log.info(f"    Found {len(new_segments)} new segments")
             
             # Insert into segments list
             segments = insert_segments(segments, gap_start, gap_end, new_segments, speaker)
     
     # Write output
-    print(f"\nWriting {output_srt}...")
+    log.info(f"Writing {output_srt}...")
     write_srt(segments, output_srt)
-    print(f"  {len(segments)} total segments")
-    print("Done!")
+    log.info(f"  {len(segments)} total segments")
+    log.info("Done!")
 
 
 if __name__ == "__main__":
