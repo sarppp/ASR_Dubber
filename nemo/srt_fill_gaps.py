@@ -393,6 +393,13 @@ def main():
 
     checkpoint_path = output_srt.with_suffix('.checkpoint.json')
 
+    # ── Per-run log file ──────────────────────────────────────────────────────
+    log_path = output_srt.with_suffix('.log')
+    file_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s │ %(levelname)-8s │ %(message)s', datefmt='%H:%M:%S'))
+    log.addHandler(file_handler)
+    log.info(f"Log: {log_path}")
+
     # Parse input SRT
     log.info(f"Reading {input_srt}...")
     content = input_srt.read_text(encoding='utf-8')
@@ -509,6 +516,8 @@ def main():
                 continue
 
             log.info(f"    Found {len(new_segments)} new segments")
+            for ns in new_segments:
+                log.info(f"      [{ns['start']:.2f}s → {ns['end']:.2f}s] {ns['text'] or '(empty)'}")
 
             segments = insert_segments(segments, gap_start, gap_end, new_segments, speaker)
             done_gaps.add(gap_start)
