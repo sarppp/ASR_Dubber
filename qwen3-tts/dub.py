@@ -66,60 +66,19 @@ from dub_audio import (
 # ---------------------------------------------------------------------------
 
 def _auto_workers(device_ids: List[int]) -> int:
-    """Return the number of TTS workers that fit across the given devices.
-
-    On a SINGLE GPU multiple workers don't speed up inference — they all share
-    the same GPU compute and the autoregressive decoder runs sequentially.
-    Extra workers only help overlap CPU speed_fit with GPU synthesis; 2-3
-    saturates that benefit. Beyond that, startup cost dominates.
-
-    On MULTIPLE GPUs each device gets its own worker for true parallelism.
-
-    Single-GPU tiers (free VRAM at query time):
-      < 8 GB  → 1 worker
-      8-11 GB → 2 workers
-      ≥ 12 GB → 3 workers  (sweet spot regardless of total VRAM)
-
-    Multi-GPU: same tiers applied per device, summed across all devices.
-    e.g. 4× 16 GB → 2 workers per GPU → 8 workers total.
+    """Return the number of TTS worker threads.
+    
+    With SharedTTSManager, VRAM is constant (~6GB) regardless of worker count.
+    Workers overlap CPU speed_fit with GPU synthesis.
+    
+    2 workers is the sweet spot: one synthesizes while other does speed_fit.
+    More workers add overhead without much benefit.
+    
+    Multi-GPU: same logic, but each GPU gets its own model (not yet implemented).
     """
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, check=True,
-        )
-        # nvidia-smi returns MiB, one line per physical GPU
-        free_mib = [int(x.strip()) for x in result.stdout.strip().splitlines()]
-    except Exception:
-        return 1
-
-    n_gpus = len(free_mib)
-    if n_gpus == 0:
-        return 1
-
-    def _workers_for_gpu(free_gb: float) -> int:
-        # Each worker uses ~5.5 GB at runtime (weights + CUDA context + activations).
-        # Tiers leave headroom for synthesis allocations:
-        #   ≥ 17 GB → 3 workers (16.5 GB + 0.5 GB buffer)
-        #   ≥ 12 GB → 2 workers (11.0 GB + 1.0 GB buffer)
-        #   else    → 1 worker
-        if   free_gb >= 17: return 3
-        elif free_gb >= 12: return 2
-        else:               return 1
-
-    if n_gpus > 1:
-        # Sum workers across all requested devices
-        total = sum(
-            _workers_for_gpu(free_mib[d] / 1024)
-            for d in device_ids if d < len(free_mib)
-        )
-        return max(1, total)
-
-    # Single GPU
-    free_gb = free_mib[0] / 1024
-    workers = _workers_for_gpu(free_gb)
-    log.info(f"GPU 0: {free_gb:.1f} GB free → {workers} TTS worker(s) (auto)")
-    return workers
+    # With shared model, VRAM no longer scales with workers
+    # 2 workers = optimal CPU/GPU overlap
+    return 2
 
 
 # ---------------------------------------------------------------------------
