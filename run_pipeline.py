@@ -248,6 +248,9 @@ def main():
                    help="Fill gaps >= N seconds in SRT using Whisper (default: 2.0). "
                         "Detects missing speech and transcribes with Whisper, attributing speakers from context. "
                         "Set to 0 to disable.")
+    p.add_argument("--fill-gaps-model", default="base",
+                   choices=["tiny", "base", "small", "medium", "large-v3", "turbo"],
+                   help="Whisper model for gap filling (default: base, faster but less accurate)")
     p.add_argument("--translate-model", default="translategemma:4b",
                    help="Ollama model for translation (default: translategemma:4b). "
                         "Shorthand: '4b' or '12b' expands to translategemma:4b/12b.")
@@ -432,11 +435,12 @@ def main():
             if filled_srt.exists():
                 print(f"⏭️  Skipping gap fill — already exists: {filled_srt.name}")
             else:
-                fill_cmd = _python(NEMO_PY, nemo_dir) + [
+                fill_cmd = [
+                    str(TRANSLATE_PY),
                     str(NEMO_CODE_DIR / "srt_fill_gaps.py"),
                     str(video), str(srt_to_fill), str(filled_srt),
                     "--min-gap", str(args.fill_gaps),
-                    "--whisper-model", "base",  # Fast model for gap filling
+                    "--whisper-model", args.fill_gaps_model,
                 ]
                 _run(fill_cmd, cwd=nemo_dir, label="Step 1b — Fill SRT gaps with Whisper")
                 # Replace original with filled version
