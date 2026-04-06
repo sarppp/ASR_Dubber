@@ -73,10 +73,12 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
         base_pattern = re.sub(r"_t\d+$", "", base_pattern)  # remove _t120 etc
     else:
         base_pattern = ""
-    base_norm = base_pattern.lower().replace("_", " ")
+    # Normalize by removing all non-alphanumeric chars for robust matching
+    base_norm = re.sub(r"[^a-z0-9]", "", base_pattern.lower())
 
     def _matches(name: str) -> bool:
-        return base_norm in name.lower().replace("_", " ")
+        name_norm = re.sub(r"[^a-z0-9]", "", name.lower())
+        return base_norm in name_norm if base_norm else True
 
     # 2. Gather ONLY SRTs belonging to this video
     all_srts = [str(f) for f in NEMO_DIR.glob("*.srt") if _matches(f.name)]
@@ -88,9 +90,11 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
             if _matches(f.name):
                 intermediate_files.append(str(f))
 
-        for f in NEMO_DIR.glob("*_16k_*.wav"):
-            if _matches(f.name):
-                intermediate_files.append(str(f))
+        # Match both _16k_ and _nemo_16k patterns
+        for pattern in ["*_16k_*.wav", "*_nemo_16k*.wav"]:
+            for f in NEMO_DIR.glob(pattern):
+                if _matches(f.name):
+                    intermediate_files.append(str(f))
 
     # 4. Find dubbed products (MP4, dub-SRT, dub-timing)
     dub_files = []
