@@ -43,6 +43,7 @@ nemo/*
 !nemo/nemo.py
 !nemo/nemo_modal_app.py
 !nemo/nemo_diarization_report.py
+!nemo/srt_fill_gaps.py
 !nemo/canary_patch.py
 !nemo/nemo_diarize.py
 !nemo/nemo_model.py

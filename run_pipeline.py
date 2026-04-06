@@ -31,6 +31,9 @@ uv run python run_pipeline.py --target-lang fr --skip-dub
 uv run python run_pipeline.py --target-lang fr --qwen-mode clone       # clones original speakers
 uv run python run_pipeline.py --target-lang fr --qwen-mode custom      # uses fixed Qwen voices
 
+# Fill gaps in SRT (detects missing speech, transcribes with Whisper)
+uv run python run_pipeline.py --target-lang fr --fill-gaps 2           # fill gaps >= 2s
+
 # Faster — skip background music preservation
 uv run python run_pipeline.py --target-lang fr --no-demucs
 
@@ -241,6 +244,10 @@ def main():
                    help="Skip NeMo step (diarized SRT already exists)")
     p.add_argument("--no-diarize",    action="store_true",
                    help="Skip speaker diarization (transcribe only, no speaker labels)")
+    p.add_argument("--fill-gaps",      type=float, default=2.0, metavar="SEC",
+                   help="Fill gaps >= N seconds in SRT using Whisper (default: 2.0). "
+                        "Detects missing speech and transcribes with Whisper, attributing speakers from context. "
+                        "Set to 0 to disable.")
     p.add_argument("--translate-model", default="translategemma:4b",
                    help="Ollama model for translation (default: translategemma:4b). "
                         "Shorthand: '4b' or '12b' expands to translategemma:4b/12b.")
@@ -412,6 +419,33 @@ def main():
             if original_srt.exists() and original_srt != trimmed_srt:
                 original_srt.rename(trimmed_srt)
                 print(f"📝 Renamed SRT: {original_srt.name} → {trimmed_srt.name}", flush=True)
+
+    # ── Step 1b: Fill gaps in SRT (optional) ─────────────────────────────────────
+    if args.fill_gaps > 0:
+        # Find the SRT to fill gaps in
+        srt_to_fill = _find_srt_for_video(
+            video_base, f"*.nemo.{source_lang}.diarize.srt",
+            nemo_dir=nemo_dir, end_product_dir=end_product_dir,
+        )
+        if srt_to_fill:
+            filled_srt = srt_to_fill.parent / srt_to_fill.name.replace(".diarize.srt", ".diarize_filled.srt")
+            if filled_srt.exists():
+                print(f"⏭️  Skipping gap fill — already exists: {filled_srt.name}")
+            else:
+                fill_cmd = _python(NEMO_PY, nemo_dir) + [
+                    str(NEMO_CODE_DIR / "srt_fill_gaps.py"),
+                    str(video), str(srt_to_fill), str(filled_srt),
+                    "--min-gap", str(args.fill_gaps),
+                    "--whisper-model", "base",  # Fast model for gap filling
+                ]
+                _run(fill_cmd, cwd=nemo_dir, label="Step 1b — Fill SRT gaps with Whisper")
+                # Replace original with filled version
+                if filled_srt.exists():
+                    srt_to_fill.unlink(missing_ok=True)
+                    filled_srt.rename(srt_to_fill)
+                    print(f"📝 Replaced SRT with gap-filled version: {srt_to_fill.name}", flush=True)
+        else:
+            print(f"⚠️  No SRT found for gap filling")
 
     if args.target_lang == "same":
         args.target_lang = source_lang
