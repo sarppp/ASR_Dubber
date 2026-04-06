@@ -269,22 +269,36 @@ def _merge_split_speakers(turns: list) -> list:
                         f"{s2} ({dur[s2]:.0f}s) → {s1} ({dur[s1]:.0f}s)"
                     )
 
-    # ── Pass 2: long 1-turn false split into dominant ─────────────────────────
+    # ── Pass 2: long 1-turn speakers ─────────────────────────────────────────
+    # A speaker with exactly 1 turn and duration > _SHORT_TURN_SEC is either:
+    #   (a) A false split of the dominant speaker (single occurrence) → merge into dominant
+    #   (b) A real secondary speaker appearing in separate windows with long turns
+    #       (multiple occurrences, each gets its own ID) → group together
     dominant = max(
         (s for s in dur if s not in merge_map),
         key=lambda s: dur[s],
         default=None,
     )
-    if dominant:
-        for s in list(dur):
-            if s == dominant or s in merge_map:
-                continue
-            if cnt[s] == 1 and dur[s] > _SHORT_TURN_SEC:
-                merge_map[s] = dominant
-                log.info(
-                    f"  [merge] long 1-turn false split: "
-                    f"{s} ({dur[s]:.0f}s, 1 turn) → {dominant}"
-                )
+    long_singles = sorted(
+        [s for s in dur
+         if s not in merge_map and s != dominant
+         and cnt[s] == 1 and dur[s] > _SHORT_TURN_SEC],
+        key=lambda s: min(times[s]),
+    )
+    if len(long_singles) == 1:
+        merge_map[long_singles[0]] = dominant
+        log.info(
+            f"  [merge] long 1-turn false split: "
+            f"{long_singles[0]} ({dur[long_singles[0]]:.0f}s, 1 turn) → {dominant}"
+        )
+    elif len(long_singles) >= 2:
+        keep = long_singles[0]
+        for s in long_singles[1:]:
+            merge_map[s] = keep
+            log.info(
+                f"  [merge] long 1-turn secondary fragment: "
+                f"{s} ({dur[s]:.0f}s) → {keep}"
+            )
 
     # ── Pass 3: short 1-turn rare-speaker fragments → one ID ─────────────────
     fragments = sorted(
