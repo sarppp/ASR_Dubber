@@ -87,6 +87,299 @@ def _validate_checkpoint(checkpoint_file: Path, audio_path: str,
     return True
 
 
+# ── Diarization helpers ──────────────────────────────────────────────────────
+
+_DIAR_WINDOW_SEC  = 180   # process audio in 3-min windows
+_DIAR_OVERLAP_SEC =  30   # 30-s overlap for speaker-ID alignment
+_DIAR_STEP_SEC    = _DIAR_WINDOW_SEC - _DIAR_OVERLAP_SEC
+
+
+def _make_diarizer_cfg(safe_wav: Path, out_dir: Path, batch_size: int):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    mpath  = out_dir / "manifest.json"
+    mpath.write_text(
+        json.dumps({
+            "audio_filepath": str(safe_wav.resolve()),
+            "offset": 0, "duration": None, "label": "infer",
+            "text": "", "num_speakers": None,
+            "rttm_filepath": "", "uem_filepath": "",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    cfg = {
+        "name": "ClusterDiarizer",
+        "num_workers": 0, "sample_rate": 16000,
+        "batch_size": batch_size, "device": device, "verbose": False,
+        "diarizer": {
+            "manifest_filepath": str(mpath),
+            "out_dir": str(out_dir),
+            "oracle_vad": False, "collar": 0.25, "ignore_overlap": True,
+            "vad": {
+                "model_path": "vad_multilingual_marblenet",
+                "parameters": {
+                    "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
+                    "smoothing": False, "overlap": 0.5,
+                    "onset": 0.5, "offset": 0.3,
+                    "pad_onset": 0.0, "pad_offset": 0.0,
+                    "min_duration_on": 0.0, "min_duration_off": 0.6,
+                    "filter_speech_first": True,
+                },
+            },
+            "speaker_embeddings": {
+                "model_path": "titanet_large",
+                "parameters": {
+                    "window_length_in_sec": [1.5, 1.0, 0.5],
+                    "shift_length_in_sec":  [0.75, 0.5, 0.25],
+                    "multiscale_weights":   [1, 1, 1],
+                    "save_embeddings":      False,
+                },
+            },
+            "clustering": {
+                "parameters": {
+                    "oracle_num_speakers":  False,
+                    "max_num_speakers":     8,
+                    "enhanced_count_thres": 80,
+                    "max_rp_threshold":     0.25,
+                    "sparse_search_volume": 30,
+                    "maj_vote_spk_count":   False,
+                    "chunk_cluster_count":  50,
+                    "embeddings_per_chunk": 10000,
+                },
+            },
+        },
+    }
+    return OmegaConf.create(cfg)
+
+
+def _parse_rttm_dir(pred_rttm_dir: Path) -> list:
+    """Parse turns from pred_rttms/*.rttm.  Returns [] if nothing found."""
+    files = list(pred_rttm_dir.glob("*.rttm")) or list(pred_rttm_dir.parent.rglob("*.rttm"))
+    turns = []
+    for line in (files[0].read_text().splitlines() if files else []):
+        parts = line.split()
+        if len(parts) >= 8 and parts[0].upper() == "SPEAKER":
+            try:
+                s, d = float(parts[3]), float(parts[4])
+                turns.append({"speaker": parts[7], "start": s, "end": s + d})
+            except (ValueError, IndexError):
+                pass
+    return sorted(turns, key=lambda t: t["start"])
+
+
+def _diarize_one_window(
+    safe_wav: Path, win_dir: Path,
+    ClusteringDiarizer, device: str, batch_size: int = 64,
+) -> list:
+    """Run ClusteringDiarizer on one (short) audio window. Returns local turns."""
+    win_dir.mkdir(parents=True, exist_ok=True)
+    cfg = _make_diarizer_cfg(safe_wav, win_dir, batch_size)
+    ClusteringDiarizer(cfg=cfg).to(device).diarize()
+    return _parse_rttm_dir(win_dir / "pred_rttms")
+
+
+def _align_speakers(prev_turns: list, curr_turns: list,
+                    overlap_start: float, overlap_end: float) -> dict:
+    """
+    Build a mapping {curr_speaker → prev_speaker} by computing temporal
+    overlap between the two sets of turns within the overlap window.
+    Unmatched curr speakers are NOT included — caller assigns new global IDs.
+    """
+    scores: dict = {}   # (prev_spk, curr_spk) → total overlap seconds
+    for pt in prev_turns:
+        if pt["end"] <= overlap_start or pt["start"] >= overlap_end:
+            continue
+        for ct in curr_turns:
+            if ct["end"] <= overlap_start or ct["start"] >= overlap_end:
+                continue
+            ov = max(0.0, min(pt["end"], ct["end"]) - max(pt["start"], ct["start"]))
+            if ov > 0:
+                k = (pt["speaker"], ct["speaker"])
+                scores[k] = scores.get(k, 0.0) + ov
+
+    mapping: dict = {}       # curr_spk → prev_spk
+    used_prev: set = set()
+    for (ps, cs), _ in sorted(scores.items(), key=lambda x: -x[1]):
+        if cs not in mapping and ps not in used_prev:
+            mapping[cs] = ps
+            used_prev.add(ps)
+    return mapping
+
+
+def _merge_split_speakers(turns: list) -> list:
+    """
+    Post-process windowed diarization output to undo spurious label switches.
+
+    When alignment fails at a window boundary (e.g. silence in overlap region),
+    NeMo assigns a fresh speaker ID to what is actually the same person.  This
+    shows up as two dominant speakers whose turns are *sequential* in time
+    (one speaker appears almost entirely before the other).
+
+    Algorithm:
+      - Only considers "substantial" speakers (≥ 5 % of total speech).
+      - Merges a pair when 75th-percentile start-time of the earlier speaker
+        is less than the 25th-percentile start-time of the later speaker
+        (strong sequentiality — they don't interleave).
+      - After merging, renumbers speakers by first-appearance order.
+    """
+    from collections import defaultdict
+
+    if not turns or len({t["speaker"] for t in turns}) < 3:
+        return turns
+
+    dur:   dict = defaultdict(float)
+    times: dict = defaultdict(list)
+    for t in sorted(turns, key=lambda x: x["start"]):
+        s = t["speaker"]
+        dur[s]   += max(0.0, t["end"] - t["start"])
+        times[s].append(t["start"])
+
+    total_dur = sum(dur.values()) or 1.0
+    substantial = [s for s, d in dur.items() if d / total_dur >= 0.05]
+    if len(substantial) < 2:
+        return turns
+
+    # Sort substantial speakers by total duration desc
+    substantial.sort(key=lambda s: -dur[s])
+
+    merge_map: dict = {}
+    merged:    set  = set()
+
+    for i, s1 in enumerate(substantial):
+        if s1 in merged:
+            continue
+        for s2 in substantial[i + 1:]:
+            if s2 in merged:
+                continue
+            t1 = sorted(times[s1])
+            t2 = sorted(times[s2])
+            # 75th pct of earlier / 25th pct of later
+            q75 = lambda lst: lst[max(0, int(len(lst) * 0.75) - 1)]
+            q25 = lambda lst: lst[max(0, int(len(lst) * 0.25) - 1)]
+            early, late = (s1, s2) if (sum(t1) / len(t1)) < (sum(t2) / len(t2)) else (s2, s1)
+            if q75(sorted(times[early])) < q25(sorted(times[late])):
+                # Merge late into the higher-duration one
+                keep = s1  # s1 has higher duration (sorted desc)
+                merge_map[s2] = keep
+                merged.add(s2)
+                log.info(
+                    f"  Merging sequential label-switch: {s2} ({dur[s2]:.0f}s) "
+                    f"→ {keep} ({dur[keep]:.0f}s)"
+                )
+
+    if not merge_map:
+        return turns
+
+    for t in turns:
+        t["speaker"] = merge_map.get(t["speaker"], t["speaker"])
+
+    # Re-number by first appearance
+    order: dict = {}
+    for t in sorted(turns, key=lambda x: x["start"]):
+        if t["speaker"] not in order:
+            order[t["speaker"]] = f"speaker_{len(order)}"
+    for t in turns:
+        t["speaker"] = order[t["speaker"]]
+
+    return turns
+
+
+def _diarize_windowed(
+    safe_wav: Path,
+    ddir: Path,
+    ClusteringDiarizer,
+    device: str,
+    audio_dur: float,
+    batch_size: int = 64,
+) -> list:
+    """
+    Diarize long audio in overlapping 3-min windows and merge speaker IDs.
+
+    Why: NeMo's spectral clustering collapses a minority speaker (<1% of
+    embeddings) to the dominant cluster for audio longer than ~5 min.  Short
+    windows preserve the relative proportion so default params work.
+    """
+    import subprocess
+
+    n_windows = max(1, -(-int(audio_dur) // _DIAR_STEP_SEC))  # ceiling div
+    log.info(
+        f"Windowed diarization: {n_windows} × {_fmt_dur(_DIAR_WINDOW_SEC)} windows "
+        f"({_fmt_dur(_DIAR_OVERLAP_SEC)} overlap)"
+    )
+
+    all_turns: list = []
+    next_id:   list = [0]   # mutable int via list
+
+    for i in range(n_windows):
+        win_start = i * _DIAR_STEP_SEC
+        win_dur   = min(_DIAR_WINDOW_SEC, audio_dur - win_start)
+        if win_dur < 5.0:
+            break
+
+        win_dir = ddir / f"win_{i:03d}"
+        win_wav = win_dir / "input_16k_mono.wav"
+        win_dir.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(safe_wav),
+             "-ss", str(win_start), "-t", str(win_dur),
+             "-ar", "16000", "-ac", "1", str(win_wav)],
+            check=True, capture_output=True,
+        )
+
+        log.info(
+            f"  Window {i+1}/{n_windows}: "
+            f"[{_fmt_dur(win_start)} – {_fmt_dur(win_start + win_dur)}]"
+        )
+        local_turns = _diarize_one_window(win_wav, win_dir, ClusteringDiarizer,
+                                          device, batch_size)
+
+        # Shift local timestamps to global
+        for t in local_turns:
+            t["start"] += win_start
+            t["end"]   += win_start
+
+        if not local_turns:
+            continue
+
+        # Build local→global speaker mapping
+        local_ids = sorted(set(t["speaker"] for t in local_turns))
+        if i == 0:
+            id_map = {lid: f"speaker_{next_id[0] + j}" for j, lid in enumerate(local_ids)}
+            next_id[0] += len(local_ids)
+        else:
+            # Use the full previous step + overlap as context (wider = more robust)
+            ctx_start = max(0.0, win_start - _DIAR_STEP_SEC)
+            ctx_end   = win_start + _DIAR_OVERLAP_SEC
+            raw_map = _align_speakers(all_turns, local_turns, ctx_start, ctx_end)
+            id_map  = {}
+            for lid in local_ids:
+                if lid in raw_map:
+                    id_map[lid] = raw_map[lid]
+                else:
+                    id_map[lid] = f"speaker_{next_id[0]}"
+                    next_id[0] += 1
+
+        for t in local_turns:
+            t["speaker"] = id_map[t["speaker"]]
+
+        # Only keep turns from the non-overlap portion of this window
+        keep_start = win_start + (_DIAR_OVERLAP_SEC if i > 0 else 0.0)
+        keep_end   = (win_start + win_dur
+                      if i == n_windows - 1
+                      else win_start + _DIAR_STEP_SEC + _DIAR_OVERLAP_SEC)
+        all_turns.extend(
+            t for t in local_turns
+            if t["start"] >= keep_start and t["start"] < keep_end
+        )
+
+    all_turns.sort(key=lambda t: t["start"])
+    all_turns = _merge_split_speakers(all_turns)
+    all_turns.sort(key=lambda t: t["start"])
+    spk_set = {t["speaker"] for t in all_turns}
+    log.info(f"Windowed diarization complete — {len(spk_set)} speaker(s), {len(all_turns)} turns")
+    return all_turns
+
+
 # ── Diarization ───────────────────────────────────────────────────────────────
 
 def _run_diarization(audio_path: str, work_dir: Path) -> list:
@@ -117,81 +410,26 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
         shutil.copy2(audio_path, safe_wav)
         log.info(f"Copied WAV to safe path: {safe_wav.name}")
 
-        mpath = ddir / "manifest.json"
-        mpath.write_text(json.dumps({
-            "audio_filepath": str(safe_wav.resolve()),
-            "offset": 0,
-            "duration": None,
-            "label": "infer",
-            "text": "",
-            "num_speakers": None,
-            "rttm_filepath": "",
-            "uem_filepath": "",
-        }) + "\n", encoding="utf-8")
-
-        # Scale batch_size down for long audio to limit peak STFT VRAM usage.
-        # The ASR model is offloaded to CPU before this call, so we have headroom —
-        # but large batch_size still creates big intermediate tensors.
         audio_dur = _audio_duration(audio_path)
-        if audio_dur > 600:
-            batch_size = 64
-        elif audio_dur > 300:
-            batch_size = 128
-        else:
-            batch_size = 256
+        batch_size = 64 if audio_dur > 600 else (128 if audio_dur > 300 else 256)
         log.info(f"Audio {_fmt_dur(audio_dur)} → diarization batch_size={batch_size}")
 
-        # Build config using setdefault pattern — avoids "Multiscale parameters not properly setup"
-        cfg = {
-            "name": "ClusterDiarizer",
-            "num_workers": 0,
-            "sample_rate": 16000,
-            "batch_size": batch_size,
-            "device": device,
-            "verbose": True,
-            "diarizer": {
-                "manifest_filepath": str(mpath),
-                "out_dir": str(ddir),
-                "oracle_vad": False,
-                "collar": 0.25,
-                "ignore_overlap": True,
-                "vad": {"model_path": "vad_multilingual_marblenet"},
-                "speaker_embeddings": {
-                    "model_path": "titanet_large",
-                    "parameters": {"save_embeddings": False},
-                },
-                "clustering": {},
-            },
-        }
-
-        cfg["diarizer"]["vad"].setdefault("parameters", {
-            "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
-            "smoothing": False, "overlap": 0.5,
-            "onset": 0.5, "offset": 0.3,  # Lower thresholds to catch softer speech
-            "pad_onset": 0.0, "pad_offset": 0.0,
-            "min_duration_on": 0.0, "min_duration_off": 0.6,
-            "filter_speech_first": True,
-        })
-
-        spk = cfg["diarizer"]["speaker_embeddings"]["parameters"]
-        spk.setdefault("window_length_in_sec", [1.5, 1.0, 0.5])
-        spk.setdefault("shift_length_in_sec",  [0.75, 0.5, 0.25])
-        spk.setdefault("multiscale_weights",   [1, 1, 1])
-
-        cfg["diarizer"]["clustering"].setdefault("parameters", {
-            "oracle_num_speakers": False,
-            "max_num_speakers": 8,
-            "enhanced_count_thres": 80,
-            "max_rp_threshold": 0.25,
-            "sparse_search_volume": 30,
-            "maj_vote_spk_count": False,
-            "chunk_cluster_count": 50,
-            "embeddings_per_chunk": 10000,
-        })
-
-        cfg = OmegaConf.create(cfg)
         try:
-            ClusteringDiarizer(cfg=cfg).to(device).diarize()
+            if audio_dur > _DIAR_WINDOW_SEC:
+                # Long audio: use windowed approach so minority speakers aren't
+                # buried by the dominant speaker's embeddings in global clustering.
+                turns = _diarize_windowed(
+                    safe_wav, ddir, ClusteringDiarizer, device, audio_dur, batch_size
+                )
+            else:
+                # Short audio: single run is fine.
+                single_dir = ddir / "single"
+                single_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(safe_wav, single_dir / "input_16k_mono.wav")
+                turns = _diarize_one_window(
+                    single_dir / "input_16k_mono.wav",
+                    single_dir, ClusteringDiarizer, device, batch_size,
+                )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError):
                 torch.cuda.empty_cache()
@@ -203,17 +441,6 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
                 ) from e
             raise
 
-        rttm_files = list((ddir / "pred_rttms").glob("*.rttm")) or list(ddir.rglob("*.rttm"))
-        turns = []
-        if rttm_files:
-            for line in rttm_files[0].read_text().splitlines():
-                parts = line.split()
-                if len(parts) >= 8 and parts[0].upper() == "SPEAKER":
-                    try:
-                        s, d = float(parts[3]), float(parts[4])
-                        turns.append({"speaker": parts[7], "start": s, "end": s + d})
-                    except (ValueError, IndexError):
-                        pass
         turns.sort(key=lambda t: t["start"])
         log.info(f"Diarization done — {len({t['speaker'] for t in turns})} speaker(s), {len(turns)} turns")
         return turns
