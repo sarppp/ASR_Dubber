@@ -24,6 +24,9 @@ NEMO_PY       = NEMO_CODE_DIR / ".venv" / "bin" / "python"
 QWEN_PY       = QWEN_DIR           / ".venv" / "bin" / "python"
 WHISPER_PY    = WHISPER_DIR        / ".venv" / "bin" / "python"
 TRANSLATE_PY  = TRANSLATE_DIR      / ".venv" / "bin" / "python"
+
+_whisper_site = next((WHISPER_DIR / ".venv" / "lib").glob("python*/site-packages"), None)
+WHISPER_SITE_PACKAGES = str(_whisper_site) if _whisper_site else ""
 CLEAN_SUBS_SCRIPT = TRANSLATE_DIR / "clean_subs.py"
 END_PRODUCT_DIR   = Path(os.getenv("OUTPUT_DIR", str(NEMO_DIR / "end_product")))
 
@@ -62,11 +65,11 @@ def _stream_proc(proc: subprocess.Popen, log_file: "Path | None" = None) -> int:
     return proc.returncode
 
 
-def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None) -> None:
+def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None, env: "dict | None" = None) -> None:
     _banner(label)
     print(f"   cwd : {cwd}")
     print(f"   cmd : {' '.join(str(c) for c in cmd)}\n", flush=True)
-    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     rc = _stream_proc(proc, log_file)
     if rc != 0:
         print(f"\n❌  {label} failed (exit {rc})", flush=True)

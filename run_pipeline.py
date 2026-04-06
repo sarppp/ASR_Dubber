@@ -442,7 +442,8 @@ def main():
                     "--min-gap", str(args.fill_gaps),
                     "--whisper-model", args.fill_gaps_model,
                 ]
-                _run(fill_cmd, cwd=nemo_dir, label="Step 1b — Fill SRT gaps with Whisper")
+                _fill_env = {**os.environ, "WHISPER_PY": str(WHISPER_PY)}
+                _run(fill_cmd, cwd=nemo_dir, label="Step 1b — Fill SRT gaps with Whisper", env=_fill_env)
                 if filled_srt.exists():
                     shutil.copy2(str(filled_srt), str(srt_to_fill))
                     print(f"� Replaced SRT with gap-filled version: {srt_to_fill.name}", flush=True)

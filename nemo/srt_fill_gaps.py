@@ -12,12 +12,16 @@ Usage:
 
 import argparse
 import logging
+import os
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
+
+_WHISPER_PY = os.environ.get("WHISPER_PY", "")
+_WHISPER_HELPER = Path(__file__).parent / "whisper_transcribe_helper.py"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("srt_fill_gaps")
@@ -285,26 +289,21 @@ def check_audio_energy(audio_path: Path, threshold: float = 500.0) -> Tuple[bool
 
 
 def transcribe_with_whisper(audio_path: Path, model_name: str = 'base', model=None) -> List[dict]:
-    """Transcribe audio with Whisper, returning segments with timestamps."""
-    try:
-        import whisper
-    except ImportError:
-        print("Error: openai-whisper not installed. Run: uv pip install openai-whisper")
+    """Transcribe audio via whisper venv subprocess, returning segments with timestamps."""
+    import json
+    if not _WHISPER_PY:
+        log.error("WHISPER_PY env var not set — cannot run whisper")
         return []
-    
-    if model is None:
-        model = whisper.load_model(model_name)
-    result = model.transcribe(str(audio_path), language='en')
-    
-    segments = []
-    for seg in result.get('segments', []):
-        segments.append({
-            'start': seg['start'],
-            'end': seg['end'],
-            'text': seg['text'].strip()
-        })
-    
-    return segments
+    cmd = [_WHISPER_PY, str(_WHISPER_HELPER), str(audio_path), model_name]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)
+    except subprocess.CalledProcessError as e:
+        log.error(f"Whisper subprocess failed: {e.stderr}")
+        return []
+    except Exception as e:
+        log.error(f"Whisper subprocess error: {e}")
+        return []
 
 
 def insert_segments(original: List[dict], gap_start: float, gap_end: float, 
@@ -452,14 +451,12 @@ def main():
                 log.warning("No speaker embeddings computed, falling back to proximity")
                 use_embeddings = False
 
-        # Load Whisper once for all gaps
-        try:
-            import whisper as _whisper
-            log.info(f"Loading Whisper model ({args.whisper_model})...")
-            whisper_model = _whisper.load_model(args.whisper_model)
-        except ImportError:
-            log.error("openai-whisper not installed. Run: uv pip install openai-whisper")
+        # Verify whisper subprocess is available
+        if not _WHISPER_PY:
+            log.error("WHISPER_PY env var not set. Pass the whisper venv Python path via WHISPER_PY.")
             sys.exit(1)
+        log.info(f"Whisper model: {args.whisper_model} (via subprocess: {_WHISPER_PY})")
+        whisper_model = None
 
         for gap_start, gap_end, fallback_speaker in gaps:
             gap_duration = gap_end - gap_start
@@ -508,7 +505,7 @@ def main():
 
             # Transcribe with Whisper
             log.info(f"    Transcribing with Whisper ({args.whisper_model})...")
-            new_segments = transcribe_with_whisper(audio_path, args.whisper_model, model=whisper_model)
+            new_segments = transcribe_with_whisper(audio_path, args.whisper_model)
 
             if not new_segments:
                 log.warning(f"    No transcription produced")
