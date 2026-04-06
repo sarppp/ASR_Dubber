@@ -51,6 +51,7 @@ from dub_audio import (
     _qwen_python,
     _qwen_worker,
     PersistentTTSWorker,
+    SharedTTSManager,
     speed_fit,
     split_tts_proportional,
     stitch_and_mix,
@@ -355,6 +356,28 @@ Examples:
     fit_pool    = ThreadPoolExecutor(max_workers=max(4, n_workers * 2))
     fit_futures: List = []
 
+    # ── Shared TTS Managers (one model instance per mode) ─────────────────────
+    # Instead of each worker loading its own model, we use shared managers.
+    # This keeps VRAM constant (~6GB) regardless of n_workers.
+    # Workers submit requests to the shared manager and wait for results.
+    clone_manager: Optional[SharedTTSManager] = None
+    custom_manager: Optional[SharedTTSManager] = None
+    clone_broken_global = (args.qwen_mode != "clone")
+    
+    if not clone_broken_global and clone_refs:
+        log.info("Loading shared clone TTS model...")
+        clone_manager = SharedTTSManager(
+            "clone", qwen_python, qwen_worker, device_id=device_ids[0]
+        )
+        clone_manager.start()
+    
+    # Always load custom model as fallback (or primary if not cloning)
+    log.info("Loading shared custom TTS model...")
+    custom_manager = SharedTTSManager(
+        "custom", qwen_python, qwen_worker, device_id=device_ids[0]
+    )
+    custom_manager.start()
+
     def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
         slot = max(0.1, end - start)
         raw_dur = _audio_duration(raw_out)
@@ -377,9 +400,8 @@ Examples:
         _save_checkpoint(checkpoint_path, final_files)
 
     def _run_worker(device_id: Optional[int]) -> None:
-        clone_w: Optional[PersistentTTSWorker] = None
-        custom_w: Optional[PersistentTTSWorker] = None
-        clone_broken_local = (args.qwen_mode != "clone")
+        """Worker thread: pulls segments from queue, uses shared TTS managers."""
+        clone_broken_local = clone_broken_global
         try:
             while True:
                 try:
@@ -398,33 +420,23 @@ Examples:
                 if raw_out.exists() and raw_out.stat().st_size > 500:
                     ok = True
                 else:
-                    if not clone_broken_local:
+                    # Try clone mode first (if available and not broken)
+                    if not clone_broken_local and clone_manager:
                         ref = clone_refs.get(spk)
                         if ref and ref.exists():
                             log.info(f"   [{i:04d}] 🎙️  clone ({spk})")
-                            if clone_w is None:
-                                clone_w = PersistentTTSWorker(
-                                    "clone", qwen_python, qwen_worker, device_id=device_id)
-                            ok = clone_w.generate_clone(text, ref, qwen_language, raw_out)
+                            ok = clone_manager.generate_clone(text, ref, qwen_language, raw_out)
                             if not ok:
                                 log.warning(f"   [{i:04d}] Clone failed — falling back to custom")
                                 clone_broken_local = True
-                                clone_w.close()   # free VRAM before loading custom
-                                clone_w = None
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
-                            # Free clone model before loading custom (different model weights)
-                            if clone_w:
-                                clone_w.close()
-                                clone_w = None
 
-                    if not ok:
+                    # Fallback to custom mode
+                    if not ok and custom_manager:
                         voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
                         log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
-                        if custom_w is None:
-                            custom_w = PersistentTTSWorker(
-                                "custom", qwen_python, qwen_worker, device_id=device_id)
-                        ok = custom_w.generate_custom(text, voice, qwen_language, raw_out)
+                        ok = custom_manager.generate_custom(text, voice, qwen_language, raw_out)
                         if not ok:
                             log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
@@ -439,9 +451,7 @@ Examples:
             log.error(f"TTS worker thread failed: {exc}")
             with worker_exc_lock:
                 worker_exceptions.append(exc)
-        finally:
-            if clone_w:  clone_w.close()
-            if custom_w: custom_w.close()
+        # No finally block needed - shared managers are closed outside
 
     worker_threads = [
         threading.Thread(
@@ -456,6 +466,12 @@ Examples:
         t.start()
     for t in worker_threads:
         t.join()
+
+    # Close shared TTS managers (free VRAM)
+    if clone_manager:
+        clone_manager.close()
+    if custom_manager:
+        custom_manager.close()
 
     pbar.close()
 

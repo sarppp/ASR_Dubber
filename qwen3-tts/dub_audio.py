@@ -6,6 +6,7 @@ and checkpoint management for the dub pipeline.
 import json
 import logging
 import os
+import queue as _queue
 import re
 import subprocess
 import sys
@@ -388,6 +389,138 @@ class PersistentTTSWorker:
             log.error(f"TTS worker IPC error: {exc}")
             self._proc = None
             return False
+
+
+# ---------------------------------------------------------------------------
+# Shared TTS Manager — single model instance, multiple request threads
+# ---------------------------------------------------------------------------
+
+class SharedTTSManager:
+    """Shares ONE model instance across N worker threads via request queue.
+    
+    Problem: N workers each load the model → N× VRAM usage → OOM.
+    Solution: 1 model + request queue → 1× VRAM + parallel CPU/GPU overlap.
+    
+    Architecture:
+      - 1 synthesis thread: pops requests from queue, runs GPU inference
+      - N worker threads: submit requests, wait for result, then do CPU speed_fit
+    
+    This overlaps CPU (speed_fit) with GPU (TTS) while keeping VRAM constant.
+    """
+    
+    def __init__(self, mode: str, qwen_python: str, qwen_worker_path: str,
+                 device_id: Optional[int] = None):
+        self.mode = mode
+        self._qwen_python = qwen_python
+        self._qwen_worker_path = qwen_worker_path
+        self._device_id = device_id
+        
+        self._request_queue: _queue.Queue = _queue.Queue()
+        self._result_events: Dict[int, threading.Event] = {}
+        self._results: Dict[int, bool] = {}
+        self._request_counter = 0
+        self._counter_lock = threading.Lock()
+        
+        self._worker: Optional[PersistentTTSWorker] = None
+        self._synth_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+    
+    def start(self) -> None:
+        """Start the single model instance and synthesis thread."""
+        # Load model once
+        self._worker = PersistentTTSWorker(
+            self.mode, self._qwen_python, self._qwen_worker_path, self._device_id
+        )
+        self._worker._ensure_alive()
+        
+        # Start synthesis thread that processes queue
+        self._synth_thread = threading.Thread(
+            target=self._synthesis_loop, daemon=True, name="tts-synth"
+        )
+        self._synth_thread.start()
+        log.info(f"SharedTTSManager started (mode={self.mode}, device={self._device_id})")
+    
+    def _synthesis_loop(self) -> None:
+        """Process TTS requests sequentially from queue."""
+        while not self._stop_event.is_set():
+            try:
+                # Wait for request with timeout to check stop_event periodically
+                try:
+                    req_id, request = self._request_queue.get(timeout=0.5)
+                except _queue.Empty:
+                    continue
+                
+                # Run synthesis
+                ok = self._worker._send(request) if self._worker else False
+                
+                # Store result and signal waiting thread
+                self._results[req_id] = ok
+                if req_id in self._result_events:
+                    self._result_events[req_id].set()
+                    
+            except Exception as e:
+                log.error(f"Synthesis loop error: {e}")
+    
+    def submit(self, request: dict, timeout: float = 600) -> bool:
+        """Submit a TTS request and wait for result.
+        
+        Returns True on success, False on failure.
+        """
+        # Get unique request ID
+        with self._counter_lock:
+            req_id = self._request_counter
+            self._request_counter += 1
+        
+        # Create event for this request
+        event = threading.Event()
+        self._result_events[req_id] = event
+        self._results[req_id] = False
+        
+        # Submit to queue
+        self._request_queue.put((req_id, request))
+        
+        # Wait for result
+        if event.wait(timeout=timeout):
+            result = self._results.get(req_id, False)
+        else:
+            log.error(f"TTS request {req_id} timed out after {timeout}s")
+            result = False
+        
+        # Cleanup
+        self._result_events.pop(req_id, None)
+        self._results.pop(req_id, None)
+        
+        return result
+    
+    def generate_custom(self, text: str, voice: str, language: str, output: Path) -> bool:
+        return self.submit({
+            "text": text, "voice": voice,
+            "language": language, "output": str(output),
+        })
+    
+    def generate_clone(self, text: str, ref_audio: Path, language: str, 
+                       output: Path, ref_text: str = "") -> bool:
+        return self.submit({
+            "text": text, "ref_audio": str(ref_audio), "ref_text": ref_text,
+            "language": language, "output": str(output),
+        })
+    
+    def close(self) -> None:
+        """Stop synthesis thread and free model."""
+        self._stop_event.set()
+        if self._synth_thread and self._synth_thread.is_alive():
+            self._synth_thread.join(timeout=5)
+        if self._worker:
+            self._worker.close()
+            self._worker = None
+        log.info("SharedTTSManager closed")
+    
+    def __enter__(self):
+        self.start()
+        return self
+    
+    def __exit__(self, *_):
+        self.close()
 
 
 # ---------------------------------------------------------------------------
