@@ -89,7 +89,7 @@ def _validate_checkpoint(checkpoint_file: Path, audio_path: str,
 
 # ── Diarization helpers ──────────────────────────────────────────────────────
 
-_DIAR_WINDOW_SEC  = 180   # process audio in 3-min windows
+_DIAR_WINDOW_SEC  =  90   # process audio in 90-s windows
 _DIAR_OVERLAP_SEC =  30   # 30-s overlap for speaker-ID alignment
 _DIAR_STEP_SEC    = _DIAR_WINDOW_SEC - _DIAR_OVERLAP_SEC
 
@@ -207,70 +207,113 @@ def _align_speakers(prev_turns: list, curr_turns: list,
 
 def _merge_split_speakers(turns: list) -> list:
     """
-    Post-process windowed diarization output to undo spurious label switches.
+    Post-process windowed diarization output to undo three kinds of artefacts.
 
-    When alignment fails at a window boundary (e.g. silence in overlap region),
-    NeMo assigns a fresh speaker ID to what is actually the same person.  This
-    shows up as two dominant speakers whose turns are *sequential* in time
-    (one speaker appears almost entirely before the other).
+    Pass 1 — sequential label-switch (dominant speakers):
+      Two "substantial" speakers (≥ 5 % of total speech, multiple turns) whose
+      turn ranges are strictly sequential are merged (alignment chain broke at a
+      silent window boundary and the same voice got a fresh ID).
 
-    Algorithm:
-      - Only considers "substantial" speakers (≥ 5 % of total speech).
-      - Merges a pair when 75th-percentile start-time of the earlier speaker
-        is less than the 25th-percentile start-time of the later speaker
-        (strong sequentiality — they don't interleave).
-      - After merging, renumbers speakers by first-appearance order.
+    Pass 2 — false split of dominant (long 1-turn speakers):
+      A speaker with exactly 1 turn and duration > _SHORT_TURN_SEC is a
+      mis-labelled monologue segment of the dominant speaker.  Merge into the
+      speaker with the highest total duration.
+
+    Pass 3 — rare-speaker fragmentation (short 1-turn speakers):
+      The rare speaker (e.g. interviewer) appears several times in different
+      windows and gets a fresh ID each time because the alignment only threads
+      the *dominant* speaker.  Group all single-turn speakers with duration
+      ≤ _SHORT_TURN_SEC under one ID (first appearance).
     """
     from collections import defaultdict
 
-    if not turns or len({t["speaker"] for t in turns}) < 3:
+    _SHORT_TURN_SEC = 15.0   # turns shorter than this are rare-speaker fragments
+
+    if not turns or len({t["speaker"] for t in turns}) < 2:
         return turns
 
     dur:   dict = defaultdict(float)
     times: dict = defaultdict(list)
+    cnt:   dict = defaultdict(int)
     for t in sorted(turns, key=lambda x: x["start"]):
         s = t["speaker"]
-        dur[s]   += max(0.0, t["end"] - t["start"])
+        dur[s]  += max(0.0, t["end"] - t["start"])
         times[s].append(t["start"])
+        cnt[s]  += 1
 
     total_dur = sum(dur.values()) or 1.0
-    substantial = [s for s, d in dur.items() if d / total_dur >= 0.05]
-    if len(substantial) < 2:
-        return turns
-
-    # Sort substantial speakers by total duration desc
-    substantial.sort(key=lambda s: -dur[s])
-
     merge_map: dict = {}
-    merged:    set  = set()
 
-    for i, s1 in enumerate(substantial):
-        if s1 in merged:
-            continue
-        for s2 in substantial[i + 1:]:
-            if s2 in merged:
+    # ── Pass 1: sequential dominant label-switch ─────────────────────────────
+    substantial = sorted(
+        [s for s, d in dur.items() if d / total_dur >= 0.05 and cnt[s] > 1],
+        key=lambda s: -dur[s],
+    )
+    merged: set = set()
+    if len(substantial) >= 2:
+        q75 = lambda lst: lst[max(0, int(len(lst) * 0.75) - 1)]
+        q25 = lambda lst: lst[max(0, int(len(lst) * 0.25) - 1)]
+        for i, s1 in enumerate(substantial):
+            if s1 in merged:
                 continue
-            t1 = sorted(times[s1])
-            t2 = sorted(times[s2])
-            # 75th pct of earlier / 25th pct of later
-            q75 = lambda lst: lst[max(0, int(len(lst) * 0.75) - 1)]
-            q25 = lambda lst: lst[max(0, int(len(lst) * 0.25) - 1)]
-            early, late = (s1, s2) if (sum(t1) / len(t1)) < (sum(t2) / len(t2)) else (s2, s1)
-            if q75(sorted(times[early])) < q25(sorted(times[late])):
-                # Merge late into the higher-duration one
-                keep = s1  # s1 has higher duration (sorted desc)
-                merge_map[s2] = keep
-                merged.add(s2)
+            for s2 in substantial[i + 1:]:
+                if s2 in merged:
+                    continue
+                t1, t2 = sorted(times[s1]), sorted(times[s2])
+                early, late = (s1, s2) if sum(t1)/len(t1) < sum(t2)/len(t2) else (s2, s1)
+                if q75(sorted(times[early])) < q25(sorted(times[late])):
+                    merge_map[s2] = s1
+                    merged.add(s2)
+                    log.info(
+                        f"  [merge] sequential label-switch: "
+                        f"{s2} ({dur[s2]:.0f}s) → {s1} ({dur[s1]:.0f}s)"
+                    )
+
+    # ── Pass 2: long 1-turn false split into dominant ─────────────────────────
+    dominant = max(
+        (s for s in dur if s not in merge_map),
+        key=lambda s: dur[s],
+        default=None,
+    )
+    if dominant:
+        for s in list(dur):
+            if s == dominant or s in merge_map:
+                continue
+            if cnt[s] == 1 and dur[s] > _SHORT_TURN_SEC:
+                merge_map[s] = dominant
                 log.info(
-                    f"  Merging sequential label-switch: {s2} ({dur[s2]:.0f}s) "
-                    f"→ {keep} ({dur[keep]:.0f}s)"
+                    f"  [merge] long 1-turn false split: "
+                    f"{s} ({dur[s]:.0f}s, 1 turn) → {dominant}"
                 )
+
+    # ── Pass 3: short 1-turn rare-speaker fragments → one ID ─────────────────
+    fragments = sorted(
+        [s for s in dur
+         if s not in merge_map
+         and cnt[s] <= 2
+         and dur[s] <= _SHORT_TURN_SEC],
+        key=lambda s: min(times[s]),
+    )
+    if len(fragments) >= 2:
+        keep = fragments[0]
+        for frag in fragments[1:]:
+            merge_map[frag] = keep
+            log.info(
+                f"  [merge] rare-speaker fragment: "
+                f"{frag} ({dur[frag]:.1f}s) → {keep}"
+            )
 
     if not merge_map:
         return turns
 
+    # Apply (follow chains: A→B→C becomes A→C)
+    def resolve(s):
+        while s in merge_map:
+            s = merge_map[s]
+        return s
+
     for t in turns:
-        t["speaker"] = merge_map.get(t["speaker"], t["speaker"])
+        t["speaker"] = resolve(t["speaker"])
 
     # Re-number by first appearance
     order: dict = {}
