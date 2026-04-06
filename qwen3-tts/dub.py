@@ -364,19 +364,23 @@ Examples:
     custom_manager: Optional[SharedTTSManager] = None
     clone_broken_global = (args.qwen_mode != "clone")
     
+    # Only load clone model if we have clone refs and clone mode is enabled
     if not clone_broken_global and clone_refs:
         log.info("Loading shared clone TTS model...")
         clone_manager = SharedTTSManager(
             "clone", qwen_python, qwen_worker, device_id=device_ids[0]
         )
         clone_manager.start()
-    
-    # Always load custom model as fallback (or primary if not cloning)
-    log.info("Loading shared custom TTS model...")
-    custom_manager = SharedTTSManager(
-        "custom", qwen_python, qwen_worker, device_id=device_ids[0]
-    )
-    custom_manager.start()
+    elif clone_broken_global:
+        # Not in clone mode - load custom model upfront
+        log.info("Loading shared custom TTS model...")
+        custom_manager = SharedTTSManager(
+            "custom", qwen_python, qwen_worker, device_id=device_ids[0]
+        )
+        custom_manager.start()
+    else:
+        # No clone refs but in clone mode - will fallback to custom lazily
+        clone_broken_global = True
 
     def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
         slot = max(0.1, end - start)
@@ -401,6 +405,7 @@ Examples:
 
     def _run_worker(device_id: Optional[int]) -> None:
         """Worker thread: pulls segments from queue, uses shared TTS managers."""
+        nonlocal custom_manager, clone_broken_global
         clone_broken_local = clone_broken_global
         try:
             while True:
@@ -432,13 +437,24 @@ Examples:
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
 
-                    # Fallback to custom mode
-                    if not ok and custom_manager:
-                        voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
-                        log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
-                        ok = custom_manager.generate_custom(text, voice, qwen_language, raw_out)
-                        if not ok:
-                            log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
+                    # Fallback to custom mode - load model lazily if needed
+                    if not ok:
+                        # Load custom model on first fallback (thread-safe via lock)
+                        if custom_manager is None:
+                            with fit_lock:  # reuse fit_lock as general lock
+                                if custom_manager is None:
+                                    log.info("Loading shared custom TTS model (fallback)...")
+                                    custom_manager = SharedTTSManager(
+                                        "custom", qwen_python, qwen_worker, device_id=device_ids[0]
+                                    )
+                                    custom_manager.start()
+                        
+                        if custom_manager:
+                            voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
+                            log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
+                            ok = custom_manager.generate_custom(text, voice, qwen_language, raw_out)
+                            if not ok:
+                                log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
                 if ok and raw_out.exists():
                     fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end)
