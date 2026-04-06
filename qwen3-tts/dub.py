@@ -391,6 +391,7 @@ Examples:
                 text       = seg["text"]
                 start, end = seg["start"], seg["end"]
                 target_dur = max(0.1, _available.get(i, end - start))
+                log.info(f"   [{i:04d}] text={repr(text)}")
                 raw_out    = temp_dir / f"seg_{i:04d}.wav"
                 ok         = False
 
