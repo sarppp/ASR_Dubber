@@ -239,6 +239,8 @@ def main():
                    help="Whisper model for language detection (default: medium)")
     p.add_argument("--skip-nemo",      action="store_true",
                    help="Skip NeMo step (diarized SRT already exists)")
+    p.add_argument("--no-diarize",    action="store_true",
+                   help="Skip speaker diarization (transcribe only, no speaker labels)")
     p.add_argument("--translate-model", default="translategemma:4b",
                    help="Ollama model for translation (default: translategemma:4b). "
                         "Shorthand: '4b' or '12b' expands to translategemma:4b/12b.")
@@ -385,9 +387,11 @@ def main():
     else:
         nemo_cmd = _python(NEMO_PY, nemo_dir) + [
             str(NEMO_CODE_DIR / "nemo.py"), str(video),
-            "--language", source_lang, "--diarize",
+            "--language", source_lang,
             "--precision", args.precision,
         ]
+        if not args.no_diarize:
+            nemo_cmd.append("--diarize")
         if args.trim:
             nemo_cmd += ["--trim", str(args.trim)]
         if args.nemo_model:
