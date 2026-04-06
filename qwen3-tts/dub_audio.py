@@ -88,25 +88,33 @@ def extract_clone_refs(
     segments: List[Dict],
     audio_source: Path,   # vocals (demucs) or raw video audio (no-demucs)
     cast_dir: Path,
+    min_ref_dur: float = 3.0,  # target minimum duration for clone ref
 ) -> Dict[str, Path]:
     """
-    For each speaker, extract their longest segment from audio_source
-    as a reference WAV for Qwen clone mode.
+    For each speaker, extract audio from audio_source as a reference WAV
+    for Qwen clone mode. Uses the longest segment, or concatenates multiple
+    segments if the longest is too short.
     Returns {speaker: wav_path}
     """
     cast_dir.mkdir(parents=True, exist_ok=True)
 
-    # Longest segment per speaker
-    best: Dict[str, Tuple[float, float, float]] = {}
+    # Collect all segments per speaker, sorted by duration (longest first)
+    speaker_segs: Dict[str, List[Tuple[float, float, float]]] = {}
     for seg in segments:
         spk = seg["speaker"]
         dur = max(0.0, seg["end"] - seg["start"])
-        if dur > 0 and (spk not in best or dur > best[spk][0]):
-            best[spk] = (dur, seg["start"], seg["end"])
+        if dur > 0:
+            if spk not in speaker_segs:
+                speaker_segs[spk] = []
+            speaker_segs[spk].append((dur, seg["start"], seg["end"]))
+
+    # Sort each speaker's segments by duration descending
+    for spk in speaker_segs:
+        speaker_segs[spk].sort(reverse=True)
 
     refs: Dict[str, Path] = {}
     log.info("🎙️  Extracting clone reference WAVs…")
-    for spk, (dur, start, end) in best.items():
+    for spk, segs in speaker_segs.items():
         safe_name = re.sub(r"[^\w\-]", "_", spk)
         out_wav   = cast_dir / f"{safe_name}.wav"
 
@@ -115,17 +123,47 @@ def extract_clone_refs(
             refs[spk] = out_wav
             continue
 
-        if dur < 1.0:
-            log.warning(f"   ⚠️  {spk}: longest segment only {dur:.2f}s — too short for clone")
-            continue
+        best_dur, best_start, best_end = segs[0]
 
-        log.info(f"   → {spk}: {dur:.2f}s @ {start:.2f}–{end:.2f}s")
-        subprocess.run(
-            ["ffmpeg", "-ss", str(start), "-t", str(dur),
-             "-i", str(audio_source),
-             "-ac", "1", "-ar", "16000", "-y", str(out_wav), "-loglevel", "error"],
-            check=True,
-        )
+        # If longest segment is long enough, use it directly
+        if best_dur >= min_ref_dur:
+            log.info(f"   → {spk}: {best_dur:.2f}s @ {best_start:.2f}–{best_end:.2f}s")
+            subprocess.run(
+                ["ffmpeg", "-ss", str(best_start), "-t", str(best_dur),
+                 "-i", str(audio_source),
+                 "-ac", "1", "-ar", "16000", "-y", str(out_wav), "-loglevel", "error"],
+                check=True,
+            )
+        else:
+            # Concatenate multiple segments to reach minimum duration
+            total_dur = 0.0
+            selected = []
+            for dur, start, end in segs:
+                selected.append((dur, start, end))
+                total_dur += dur
+                if total_dur >= min_ref_dur:
+                    break
+
+            if total_dur < 1.0:
+                log.warning(f"   ⚠️  {spk}: total segments only {total_dur:.2f}s — too short for clone")
+                continue
+
+            # Create concat file for ffmpeg
+            concat_file = cast_dir / f"{safe_name}_concat.txt"
+            with open(concat_file, "w") as f:
+                for dur, start, end in selected:
+                    f.write(f"file '{audio_source}'\n")
+                    f.write(f"inpoint {start}\n")
+                    f.write(f"outpoint {end}\n")
+
+            log.info(f"   → {spk}: concatenating {len(selected)} segments ({total_dur:.2f}s total)")
+            subprocess.run(
+                ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                 "-ac", "1", "-ar", "16000", "-y", str(out_wav), "-loglevel", "error"],
+                check=True,
+            )
+            concat_file.unlink(missing_ok=True)
+
         if out_wav.exists() and out_wav.stat().st_size > 1000:
             refs[spk] = out_wav
 

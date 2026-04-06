@@ -167,7 +167,7 @@ def _run_diarization(audio_path: str, work_dir: Path) -> list:
         cfg["diarizer"]["vad"].setdefault("parameters", {
             "window_length_in_sec": 0.63, "shift_length_in_sec": 0.01,
             "smoothing": False, "overlap": 0.5,
-            "onset": 0.9, "offset": 0.5,
+            "onset": 0.5, "offset": 0.3,  # Lower thresholds to catch softer speech
             "pad_onset": 0.0, "pad_offset": 0.0,
             "min_duration_on": 0.0, "min_duration_off": 0.6,
             "filter_speech_first": True,

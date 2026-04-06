@@ -120,9 +120,9 @@ def _auto_tts_workers() -> tuple:
     2-3 workers saturate that benefit; beyond that, startup cost dominates.
 
     Rules (single GPU):
-      - ≤ 8 GB free  → 1 worker  (barely fits one 3.4 GB model)
-      - 9-19 GB      → 2 workers
-      - ≥ 20 GB      → 3 workers (sweet spot: GPU always busy, fast startup)
+      - < 16 GB free → 1 worker  (model needs ~6GB + inference buffers)
+      - 16-24 GB     → 2 workers
+      - ≥ 24 GB      → 3 workers
 
     Multi-GPU: 1 worker per GPU (each gets dedicated bandwidth).
     """
@@ -141,8 +141,9 @@ def _auto_tts_workers() -> tuple:
         return 1, "0"
 
     def _workers_for_gpu(free_gb: float) -> int:
-        if   free_gb >= 17: return 3
-        elif free_gb >= 12: return 2
+        # Each worker needs ~6GB for model weights + headroom for inference buffers
+        if   free_gb >= 24: return 3  # 3 * 6GB = 18GB + 6GB headroom
+        elif free_gb >= 16: return 2  # 2 * 6GB = 12GB + 4GB headroom
         else:               return 1
 
     if n_gpus > 1:

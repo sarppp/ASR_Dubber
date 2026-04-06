@@ -413,6 +413,10 @@ Examples:
                                 clone_w = None
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
+                            # Free clone model before loading custom (different model weights)
+                            if clone_w:
+                                clone_w.close()
+                                clone_w = None
 
                     if not ok:
                         voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
