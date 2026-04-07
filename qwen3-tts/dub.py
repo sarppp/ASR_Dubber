@@ -263,12 +263,11 @@ Examples:
     # VRAM isn't double-allocated during init.
     # Speed-fit (CPU/ffmpeg) runs in a shared thread pool alongside TTS.
     #
-    # Sizing guide:
-    #   Each worker holds one 1.7B bfloat16 model (~3.4 GB).
-    #   6 GB GPU  → 1 worker
-    #   16 GB GPU → 4 workers
-    #   48 GB GPU → 14 workers
-    #   Multi-GPU → set --tts-devices 0,1,2 --tts-workers 6 (2 per GPU)
+    # Sizing guide (with SharedTTSManager):
+    #   Shared model architecture: VRAM is constant (~6GB) regardless of worker count
+    #   Always use 2 workers for optimal CPU/GPU overlap
+    #   Works on any GPU with ~6GB+ VRAM (8GB, 12GB, 16GB+, etc.)
+    #   Multi-GPU: same logic, but each GPU gets its own model (not yet implemented)
     qwen_language = _qwen_lang(args.language)
     log.info(f"Qwen language: '{args.language}' → '{qwen_language}'")
     checkpoint_path = work_dir / "checkpoint.json"
