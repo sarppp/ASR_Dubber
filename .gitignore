@@ -85,3 +85,6 @@ whisper/*
 !whisper/.python-version
 !whisper/pyproject.toml
 !whisper/uv.lock
+
+# Tests
+!tests

@@ -20,46 +20,75 @@
 
 1. [What This Project Solves](#what-this-project-solves)
 2. [Pipeline at a Glance](#pipeline-at-a-glance)
-3. [Subsystems & Key Scripts](#subsystems--key-scripts)
-4. [Refactoring & Modular Architecture](#refactoring--modular-architecture)
-5. [NeMo](#nemo)
-6. [translate-gemma](#translate-gemma)
-7. [qwen3-tts](#qwen3-tts)
-8. [Usage](#usage)
+3. [Technical Highlights](#technical-highlights)
+4. [Subsystems & Key Scripts](#subsystems--key-scripts)
+5. [Refactoring & Modular Architecture](#refactoring--modular-architecture)
+6. [NeMo](#nemo)
+7. [translate-gemma](#translate-gemma)
+8. [qwen3-tts](#qwen3-tts)
+9. [Usage](#usage)
 
 ## Pipeline at a Glance
 
 ```text
 video.mp4 / audio.wav
-   │
-   ├─(whisper/detect_language.py)─── detects spoken language when unknown
-   │
-   ├─(nemo/nemo_diarize.py)──────────────┐
-   │                                       │
-   │ generates diarized SRT                │
-   ▼                                       │
-video.nemo.{src}.diarize.srt               │
-   │                                       │
-   ├─(translate-gemma/translate_diarize.py)───────┤
-   │                                       │
-   │ produces translated SRT               │
-   ▼                                       │
-video.nemo.{src}.diarize_{tgt}.srt         │
-   │                                       │
-   └─(qwen3-tts/dub.py)────────────────────┘
-          │
-          └─ demucs (optional) + Qwen clone/custom voices + ffmpeg stitching
-         
-Result → `nemo/end_product/<video>__<src>_to_<tgt>/final_dub.mp4`  (+ source video copy + clean SRTs)
+   |
+   |- (whisper/detect_language.py)--- detects spoken language when unknown
+   |
+   |- (nemo/nemo_diarize.py)--------------|
+   |                                      |  -> (nemo/srt_fill_gaps.py) -> filled SRT
+   | generates diarized SRT               |  (runs by default with 2s gap threshold)
+   |                                      |
+   v                                      |
+video.nemo.{src}.diarize.srt               |
+   |                                      |
+   |- (translate-gemma/translate_diarize.py)-----|
+   |                                      |
+   | produces translated SRT              |
+   v                                      |
+video.nemo.{src}.diarize_{tgt}.srt         |
+   |                                      |
+   - (qwen3-tts/dub.py)-------------------|
+          |
+   Final dubbed video with preserved timing
 ```
 
+## Technical Highlights
 
+This project showcases advanced engineering solutions for robust, production-grade dubbing:
 
-Everything can be fired via `run_pipeline.py`, which orchestrates the three stages, boots Ollama when needed, automatically reuses cached artifacts, and now finishes by cleaning SRTs plus gathering every run’s artifacts into `nemo/end_product/<video>__<src>_to_<tgt>`.
+### **Memory-Efficient Shared TTS Architecture**
+- **SharedTTSManager**: New design maintaining constant ~6GB VRAM regardless of worker count
+- **Optimal CPU/GPU Overlap**: 2 workers overlapping GPU synthesis with CPU speed fitting — while one worker waits for the shared synthesizer, the other processes speed fitting
+- **OOM Prevention**: Works reliably on 8GB GPUs with multiple workers via intelligent resource sharing
+- **Lazy Loading**: Additional ~6GB VRAM savings when voice cloning succeeds
 
-> **Audio-Only pipelines:** The pipeline natively supports `.wav` audio files via `--input-file your_audio.wav`. Pass `--run-mode transcribe` or `--run-mode translate` (or `--skip-dub`) — dubbing requires a video source to produce a final `.mp4`, so it is automatically skipped for `.wav` inputs. The transcription and translation stages work identically whether the source is a video or a `.wav`.
+### **Automatic Gap Filling with Speaker Attribution**
+- **Whisper Integration**: Detects and transcribes missed speech segments using configurable Whisper models
+- **TitaNet Speaker Embeddings**: Advanced speaker identification using cosine similarity matching
+- **Checkpoint System**: Resume capability after interruptions with progress persistence
+- **Fallback Strategies**: Robust error handling with proximity-based speaker attribution backup
 
+### **Enhanced Windowed Diarization**
+- **90-Second Windows**: Prevents minority speaker collapse in long audio files
+- **3-Pass Speaker Merging**: Sophisticated algorithm for speaker consolidation across windows
+- **Overlap Alignment**: 30-second overlap ensures speaker consistency across window boundaries
+- **Dynamic Batch Sizing**: Adaptive batch allocation (64/128/256) based on audio duration
 
+### **Voice Cloning Enhancements**
+- **Segment Concatenation**: Intelligently combines short reference segments for better cloning
+- **Quality Thresholds**: Minimum duration requirements with automatic fallback strategies
+- **Gender Detection**: Pitch-based speaker gender estimation for voice assignment
+
+### **Production-Grade Robustness**
+- **Subprocess Isolation**: Whisper execution in separate virtual environment prevents Python conflicts
+- **File Metadata Preservation**: Maintains SRT file attributes through processing pipeline
+- **Comprehensive Testing**: IPC testing utilities, quality assurance tools, and debugging frameworks
+- **Error Recovery**: Graceful degradation strategies for model failures and resource constraints
+
+Everything can be fired via `run_pipeline.py`, which orchestrates the three stages, boots Ollama when needed, automatically reuses cached artifacts, and now finishes by cleaning SRTs plus gathering every run's artifacts into `nemo/end_product/<video>__<src>_to_<tgt>`.
+
+**Audio-Only pipelines:** The pipeline natively supports `.wav` audio files via `--input-file your_audio.wav`. Pass `--run-mode transcribe` or `--run-mode translate` (or `--skip-dub`) — dubbing requires a video source to produce a final `.mp4`, so it is automatically skipped for `.wav` inputs. The transcription and translation stages work identically whether the source is a video or a `.wav`.
 
 
 
@@ -74,7 +103,7 @@ Everything can be fired via `run_pipeline.py`, which orchestrates the three stag
 | Folder | Purpose | Highlights |
 | --- | --- | --- |
 | `run_pipeline.py` | Single entry point | Auto-detects source language, spins up Ollama, supports `--skip-*` flags, enforces logging banners so you can show progress shots. Per-video workdir isolation so checkpoints never bleed between videos; SRT lookup checks both `nemo/` and `nemo/end_product/` for seamless resume after archiving; `--input-dir` / `--output-dir` for custom folder layouts. |
-| `nemo/` | Diarization + transcription | **Refactored into modular components**: `nemo_diarize.py` (main orchestration), `nemo_audio.py` (audio processing), `nemo_model.py` (model loading & transcription), plus helper modules. Canary/Parakeet auto-selection, VRAM-adaptive chunking, diarization via `ClusteringDiarizer`, custom patches in `canary_patch.py` to bypass canary EOS assertions and force correct manifest langs. |
+| `nemo/` | Diarization + transcription + gap filling | **Refactored into modular components**: `nemo_diarize.py` (main orchestration), `nemo_audio.py` (audio processing), `nemo_model.py` (model loading & transcription), `srt_fill_gaps.py` (automatic gap filling), plus helper modules. Canary/Parakeet auto-selection, VRAM-adaptive chunking, windowed diarization (90s windows), 3-pass speaker merging, automatic gap detection with Whisper transcription, TitaNet speaker embedding matching, and checkpoint-based resume capability. |
 | `translate-gemma/` | Translation (Gemma via Ollama) | **Refactored into modular components**: `translate_diarize.py` (main translation logic), `translate.py` (standalone SRT translation), `clean_subs.py` (subtitle cleaning). Chunked SRT translation with strict `[idx]` preservation, Docker-friendly Ollama client, low-temperature prompts for subtitle-safe formatting. |
 | `qwen3-tts/` | Dubbing | **Refactored into modular components**: `dub.py` (main orchestration), `dub_audio.py` (audio processing), `dub_srt.py` (SRT parsing & voice assignment), `qwen_tts_worker.py` (TTS worker). Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. Per-video workdir isolation keeps checkpoints segregated. |
 | `whisper/` | Language detection | `detect_language.py` (30s Whisper probe when no diarized SRT exists yet; called automatically from `run_pipeline.py`). |
@@ -336,20 +365,19 @@ Ensuring the dubbed audio matches the on-screen action is handled through automa
 
 * **Frame-Accurate Stitching:** Automatically generates `anullsrc` silence gaps between clips to ensure every line starts at the exact millisecond defined in the source SRT.
 
-
-
-### ⚙️ Scalable Workflow & Robustness
-
+### TTS Architecture & Worker Management
 * **Checkpointed Progress:** The pipeline saves a `checkpoint.json` after every successfully synthesized segment. If the process is interrupted or the GPU crashes, it resumes exactly where it left off.
 
 * **Isolated Worker Execution:** TTS synthesis is decoupled into a dedicated `qwen_tts_worker.py`. This allows the main script to manage the heavy FFmpeg/Demucs logic while the worker handles specialized `torch` environments and `bfloat16` model loading.
 
-* **Parallel TTS Workers:** The pipeline automatically spawns multiple `qwen_tts_worker.py` processes in parallel — one per available GPU (or as configured by `TTS_WORKERS` / `TTS_DEVICES`). VRAM per device is measured at startup to determine the safe worker count: ≥17 GB → 3 workers, ≥12 GB → 2 workers, <12 GB → 1 worker.
+* **Dubbed SRT Output:** In addition to the final `final_dub.mp4`, the dubbing stage now also saves a clean `final_dub.srt` alongside it in the `end_product` directory - useful for adding subtitles to the dubbed video in a media player.
 
-* **Dubbed SRT Output:** In addition to the final `final_dub.mp4`, the dubbing stage now also saves a clean `final_dub.srt` alongside it in the `end_product` directory — useful for adding subtitles to the dubbed video in a media player.
+### Workspace Management
+* **Checkpoint Resilience:** The checkpoint system automatically handles reprocessing scenarios. If you rerun with different trim/target language, segment indices will change and old checkpoints won't interfere - the system only counts segments whose audio files actually exist and match current indices.
 
-* **Clean stale workdirs when reprocessing edits:** If you rerun the same video with a different trim or target language, delete `qwen3-tts/output/dub/<video_base>` before launching the pipeline (if pipeline is running in `full` mode) so new segments don’t reuse mismatched checkpoints from the earlier cut. Again, this only matters for Step 3 (Qwen dub); NeMo + translate already key their outputs by file name/trim, so they resume safely without manual cleanup. I have not changed it because I don't think it's needed. Quite rare case but simple to fix but also simple to delete that folder, just run `rm -rf qwen3-tts/output/dub/<video_base>` in Linux.
 
+
+### ⚙️ Scalable Workflow & Robustness
 * **Automatic Video Trimming:** To ensure a clean finish, the script automatically trims the final video output to match the end of the last subtitle segment.
 
 
@@ -418,6 +446,10 @@ cp your_video.mp4 data/input/
 # 2. Run the pipeline container using Docker Compose
 docker compose run pipeline --target-lang fr
 
+# 2. Or run the pipeline without docker
+uv run python run_pipeline.py --target-lang fr --precision fp16 --translate-model 12b --fill-gaps-model turbo
+
+
 # 3. Running with Runtime Overrides (Environment Variables)
 NEMO_MODEL_MULTI=qwen3-asr TRANSLATE_MODEL=translategemma:12b docker compose run pipeline --target-lang fr
 ```
@@ -432,7 +464,7 @@ The Docker container accepts all the same CLI arguments as the local script. You
 | `TRANSLATE_MODEL` | Translation model to run via Ollama (default: `translategemma:12b` for Docker). |
 | `PRECISION` | GPU precision for NeMo (default: `fp16`). |
 | `CHUNK_SIZE` | Subtitle lines to pass per Ollama translation call (default: `40`). |
-| `TTS_WORKERS` | Number of parallel TTS synthesis workers (default: auto-detected from VRAM). |
+| `TTS_WORKERS` | Number of parallel TTS synthesis workers (default: 2 for optimal CPU/GPU overlap with SharedTTSManager). |
 | `TTS_DEVICES` | Comma-separated CUDA device indices for TTS workers, e.g. `0,1` (default: all visible GPUs). |
 
 > **Note:** For configuring the target language, always use the `--target-lang` CLI flag as it is the most reliable method. Environment variable overrides via YAML or inline runtime are best used for hardware or model tuning.
@@ -497,6 +529,10 @@ python run_pipeline.py --target-lang fr --language de --run-mode translate
 | `--merge-gap SEC` |  | `1.0` | Merge consecutive same-speaker segments with gap ≤ N seconds for more natural TTS flow (set `0` to disable). |
 | `--merge-max-dur SEC` |  | `10.0` | Hard cap on the duration of a merged segment. Prevents runaway merges from creating overly long TTS chunks that drift out of sync. |
 | `--no-demucs` |  | `False` | Skip background music separation for faster dubbing. |
+| `--fill-gaps` |  | `False` | Enable automatic gap filling in SRT files using Whisper transcription (default 2s threshold). |
+| `--fill-gaps-model MODEL` |  | `base` | Whisper model for gap filling (`base`, `large-v3`, `turbo`). |
+| `--no-embeddings` |  | `False` | Disable speaker embedding matching, use proximity-based speaker attribution instead. |
+| `--embedding-threshold N` |  | `0.7` | Similarity threshold for speaker embedding matching (0.0-1.0). |
 | `--precision {fp32,fp16,bf16}` |  | `bf16` | ASR precision passed straight through to `nemo.py`. Use `fp16` on older GPUs or `fp32` for max accuracy. |
 | `--nemo-model MODEL` |  | auto | Force a specific NeMo checkpoint (e.g., `nvidia/parakeet-tdt-1.1b`). |
 | `--chunk-override SEC` |  | auto | Lock NeMo chunk size if VRAM auto-detect over/underestimates (auto sizing caps at 600 s — e.g., pass `120` for fixed 2‑minute chunks). |
