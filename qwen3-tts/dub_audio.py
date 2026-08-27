@@ -574,6 +574,123 @@ class SharedTTSManager:
 
 
 # ---------------------------------------------------------------------------
+# Rhythm plan — derive real speech/pause structure from the ORIGINAL audio
+# ---------------------------------------------------------------------------
+
+def _parse_srt_min(path: Path) -> List[Dict]:
+    """Minimal SRT parse → [{start,end,text}] with the [Speaker N] tag stripped."""
+    out: List[Dict] = []
+    txt = Path(path).read_text(encoding="utf-8")
+    for block in re.split(r"\n\s*\n", txt.strip()):
+        lines = [l for l in block.splitlines() if l.strip()]
+        if len(lines) < 2:
+            continue
+        rest = lines[1:] if re.match(r"^\d+$", lines[0]) else lines
+        m = re.match(r"([\d:,.]+)\s*-->\s*([\d:,.]+)", rest[0])
+        if not m:
+            continue
+
+        def _t(s: str) -> float:
+            s = s.strip().replace(",", ".")
+            h, mm, ss = s.split(":")
+            return int(h) * 3600 + int(mm) * 60 + float(ss)
+
+        body = re.sub(r"\[[^\]]+\]", "", " ".join(rest[1:])).strip()
+        if body:
+            out.append(dict(index=len(out) + 1, start=_t(m.group(1)),
+                            end=_t(m.group(2)), text=body))
+    return out
+
+
+def build_dub_plan(
+    fr_segments: List[Dict],
+    orig_media: Path,
+    orig_srt: Path,
+    device: str = "auto",
+) -> Dict[int, Dict]:
+    """
+    Forced-align the ORIGINAL audio to its transcript, then for each (merged)
+    translated segment report where that content actually sits in the original:
+
+        orig_start / orig_end : first/last original word for this content
+        orig_dur              : voiced + micro-pause seconds the speaker spent
+        pause_before          : real pause between this segment and the previous
+
+    This is the rhythm reference the placement/fit stages use instead of the
+    loose NeMo subtitle grid.  Returns {} (→ caller keeps SRT timing) if the
+    original SRT is missing or alignment is unavailable.
+    """
+    try:
+        from forced_align import align_segments
+    except Exception as exc:
+        log.warning(f"forced alignment unavailable ({exc}); using SRT timing")
+        return {}
+
+    orig_srt = Path(orig_srt)
+    if not orig_srt.exists():
+        log.warning(f"original SRT not found at {orig_srt}; using SRT timing")
+        return {}
+    en_segs = _parse_srt_min(orig_srt)
+    if not en_segs:
+        return {}
+
+    log.info(f"🎯 Forced-aligning original audio → transcript ({orig_srt.name})…")
+    fa = align_segments(Path(orig_media), en_segs, device=device)
+    if not fa.ok:
+        log.warning(f"forced alignment failed ({fa.note}); using SRT timing")
+        return {}
+    log.info(f"   {fa.note}")
+
+    words = sorted((w.start, w.end) for w in fa.words if w.end > w.start)
+    if not words:
+        return {}
+
+    # Assign every original word to exactly one translated segment (nearest by
+    # midpoint) so segment spans never overlap and the pauses between them fall
+    # out cleanly.
+    bounds = [(seg["start"], seg["end"], si) for si, seg in enumerate(fr_segments)]
+    buckets: List[List[Tuple[float, float]]] = [[] for _ in fr_segments]
+    for a, b in words:
+        mid = (a + b) / 2
+        inside = [si for s, e, si in bounds if s <= mid <= e]
+        if inside:
+            si = inside[0]
+        else:
+            si = min(range(len(bounds)),
+                     key=lambda k: min(abs(mid - bounds[k][0]), abs(mid - bounds[k][1])))
+        buckets[si].append((a, b))
+
+    plan: Dict[int, Dict] = {}
+    prev_end = 0.0
+    for si, seg in enumerate(fr_segments):
+        win = buckets[si]
+        if not win:
+            s, e = seg["start"], seg["end"]
+            plan[seg["index"]] = dict(orig_start=s, orig_end=e, orig_dur=e - s,
+                                      pause_before=round(max(0.0, s - prev_end), 3),
+                                      aligned=False)
+            prev_end = e
+            continue
+        dur, pe = 0.0, win[0][0]
+        for a, b in win:
+            gap = a - pe
+            if 0 < gap < 0.6:          # keep the speaker's own micro-pauses
+                dur += gap
+            dur += max(0.0, b - a)
+            pe = b
+        plan[seg["index"]] = dict(orig_start=round(win[0][0], 3),
+                                  orig_end=round(win[-1][1], 3),
+                                  orig_dur=round(dur, 3),
+                                  pause_before=round(max(0.0, win[0][0] - prev_end), 3),
+                                  aligned=True)
+        prev_end = win[-1][1]
+
+    n_al = sum(1 for p in plan.values() if p["aligned"])
+    log.info(f"   rhythm plan: {n_al}/{len(plan)} segments aligned to the original")
+    return plan
+
+
+# ---------------------------------------------------------------------------
 # Speed-fit audio clip to a target duration
 # ---------------------------------------------------------------------------
 
@@ -761,6 +878,99 @@ def speed_fit(audio_path: Path, target_dur: float,
     return out if out.exists() else audio_path
 
 
+def _speech_chunks(audio_path: Path, noise_db: float = -35.0,
+                   min_sil: float = 0.16) -> List[Tuple[float, float]]:
+    """Return [(start,end)] of the voiced runs in a clip (splits on inter-phrase
+    silences)."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-i", str(audio_path), "-af",
+             f"silencedetect=noise={noise_db}dB:d={min_sil}", "-f", "null", "-"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return []
+    total = _audio_duration(audio_path)
+    sil: List[Tuple[float, float]] = []
+    cur = None
+    for line in r.stderr.splitlines():
+        a = re.search(r"silence_start:\s*(-?[\d.]+)", line)
+        b = re.search(r"silence_end:\s*(-?[\d.]+)", line)
+        if a:
+            cur = float(a.group(1))
+        elif b and cur is not None:
+            sil.append((max(0.0, cur), float(b.group(1))))
+            cur = None
+    chunks, pos = [], 0.0
+    for s0, s1 in sil:
+        if s0 > pos + 0.05:
+            chunks.append((pos, s0))
+        pos = max(pos, s1)
+    if total - pos > 0.05:
+        chunks.append((pos, total))
+    return chunks or [(0.0, total)]
+
+
+def redistribute_to_duration(audio_path: Path, target_dur: float,
+                             max_pause: float = 2.2) -> Path:
+    """
+    Stretch a clip to ~target_dur by inserting silence at its inter-phrase
+    boundaries — NOT by slowing the speech.  Mimics how a speaker fills a longer
+    slot: same words, longer pauses between phrases.
+
+    Falls back to the original clip if it has no internal boundaries to space
+    (single phrase) or already fills the target.
+    """
+    cur = _audio_duration(audio_path)
+    if cur <= 0 or target_dur <= cur + 0.3:
+        return audio_path
+    chunks = _speech_chunks(audio_path)
+    if len(chunks) < 2:
+        return audio_path
+
+    speech = sum(e - s for s, e in chunks)
+    n_gaps = len(chunks) - 1
+    budget = min(target_dur, speech + n_gaps * max_pause) - speech
+    if budget <= 0.3:
+        return audio_path
+    per_gap = budget / n_gaps
+
+    out = audio_path.with_name(audio_path.stem + "_rd.wav")
+    parts_dir = audio_path.parent
+    concat = parts_dir / f"{audio_path.stem}_rd.txt"
+    sr_probe = 24000
+    try:
+        with open(concat, "w") as f:
+            for k, (s, e) in enumerate(chunks):
+                seg = parts_dir / f"{audio_path.stem}_rd{k:02d}.wav"
+                subprocess.run(
+                    ["ffmpeg", "-ss", f"{s:.4f}", "-to", f"{e:.4f}", "-i", str(audio_path),
+                     "-c", "copy", "-y", str(seg), "-loglevel", "error"],
+                    check=True,
+                )
+                f.write(f"file '{seg.resolve()}'\n")
+                if k < n_gaps:
+                    sil = parts_dir / f"{audio_path.stem}_rdsil{k:02d}.wav"
+                    subprocess.run(
+                        f'ffmpeg -f lavfi -i anullsrc=r={sr_probe}:cl=mono '
+                        f'-t {per_gap:.4f} "{sil}" -y -loglevel error',
+                        shell=True, check=True,
+                    )
+                    f.write(f"file '{sil.resolve()}'\n")
+        subprocess.run(
+            f'ffmpeg -f concat -safe 0 -i "{concat}" -c copy "{out}" -y -loglevel error',
+            shell=True, check=True,
+        )
+    except Exception as exc:
+        log.warning(f"redistribute_to_duration failed ({exc}); keeping natural clip")
+        return audio_path
+    finally:
+        for p in parts_dir.glob(f"{audio_path.stem}_rd*"):
+            if p != out:
+                p.unlink(missing_ok=True)
+    return out if out.exists() and out.stat().st_size > 500 else audio_path
+
+
 # ---------------------------------------------------------------------------
 # Proportional TTS split across original sub-segment timings
 # ---------------------------------------------------------------------------
@@ -829,6 +1039,7 @@ def stitch_and_mix(
     temp_dir: Path,
     background: Optional[Path] = None,   # None when --no-demucs
     trim_to: Optional[float] = None,     # trim video to this many seconds (from SRT end)
+    placements: Optional[Dict[int, float]] = None,  # seg index → forced start (rhythm)
 ) -> Tuple[Path, List[Tuple[float, float, float, float]]]:
     """
     Concatenate dubbed clips with silence gaps → dub track.
@@ -845,16 +1056,30 @@ def stitch_and_mix(
     concat_list = temp_dir / "concat.txt"
     actual_cur = 0.0    # tracks actual position in the dubbed audio timeline
     actual_positions: List[Tuple[float, float, float, float]] = []
+    placements = placements or {}
+
+    def _seg_idx(p: Path) -> int:
+        try:
+            return int(p.stem.split("_")[1])
+        except (IndexError, ValueError):
+            return -1
+
+    # Rhythm placement may reorder clips relative to their SRT start.
+    ordered = sorted(
+        final_files,
+        key=lambda t: placements.get(_seg_idx(t[0]), t[1]),
+    )
 
     with open(concat_list, "w") as f:
-        for clip_path, start, end in final_files:
+        for clip_path, start, end in ordered:
             if not clip_path.exists():
                 log.warning(f"Missing clip, skipping: {clip_path}")
                 continue
-            # Absolute positioning: place each clip at its original start time.
+            # Place at the rhythm position if we have one, else the SRT start.
             # The gap is computed from actual_cur (real position) so cumulative
             # drift from previous clips is corrected each iteration.
-            gap = start - actual_cur
+            place_at = placements.get(_seg_idx(clip_path), start)
+            gap = place_at - actual_cur
             if gap > 0.001:
                 sil = temp_dir / f"sil_{actual_cur:.3f}.wav"
                 subprocess.run(

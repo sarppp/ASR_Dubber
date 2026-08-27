@@ -48,6 +48,8 @@ from dub_audio import (
     separate_audio,
     extract_clone_refs,
     detect_speaker_genders,
+    build_dub_plan,
+    redistribute_to_duration,
     _qwen_python,
     _qwen_worker,
     resolve_tts_engine,
@@ -134,6 +136,16 @@ Examples:
                              "slow). Short translations are left as natural speech "
                              "followed by a real pause. Set e.g. 0.65 to re-enable "
                              "the old 'stretch + pad to fill the slot' behaviour.")
+    parser.add_argument("--original-srt", default=None,
+                        help="Original-language diarized SRT (for rhythm alignment). "
+                             "Auto-discovered by stripping the target-lang suffix from "
+                             "the translated SRT name if omitted.")
+    parser.add_argument("--no-align", action="store_true",
+                        help="Skip forced-alignment rhythm planning; place segments "
+                             "on the raw subtitle grid (old behaviour).")
+    parser.add_argument("--pause-cap", type=float, default=4.0,
+                        help="Longest silence (s) the dub will hold at an original "
+                             "pause, even if the original paused longer (default: 4).")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
@@ -242,6 +254,19 @@ Examples:
 
     # Compute SRT duration early — used for trimming audio AND final video
     srt_end = max(s["end"] for s in segments)
+
+    # ── 1b. Rhythm plan (forced-align the ORIGINAL to its transcript) ─────────
+    dub_plan: Dict[int, Dict] = {}
+    if not args.no_align:
+        if args.original_srt:
+            orig_srt = Path(args.original_srt).resolve()
+        else:
+            # translated:  <stem>.nemo.<srclang>.diarize_<tgtlang>.srt
+            # original:    <stem>.nemo.<srclang>.diarize.srt
+            cand = re.sub(r"(\.diarize)_[a-z]{2,3}(\.srt)$", r"\1\2", srt_path.name)
+            orig_srt = srt_path.with_name(cand)
+        dub_plan = build_dub_plan(segments, video_path, orig_srt,
+                                  device="auto")
 
     # ── 2. Audio separation or raw extract ───────────────────────────────────
     # Pass srt_end as trim so demucs/ffmpeg only processes the audio we actually need.
@@ -360,16 +385,34 @@ Examples:
         # No clone refs but in clone mode - will fallback to custom lazily
         clone_broken_global = True
 
-    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
+    def _do_fit(raw_out: Path, i: int, available_dur: float,
+                start: float, end: float) -> None:
         slot = max(0.1, end - start)
         raw_dur = _audio_duration(raw_out)
-        # Target = the clip's natural length, but never past the available window
-        # (slot + gap to the next speaker).  speed_fit only compresses when the
-        # clip overruns that window; a clip that fits keeps its natural pace and
-        # the leftover time becomes a real pause.  No stretching, no padding.
-        window = max(slot, available_dur)
-        target_dur = min(window, max(raw_dur, slot))
-        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
+        p = dub_plan.get(i)
+        if p and p.get("aligned") and p["orig_dur"] > 0.4:
+            # Match the time the ORIGINAL speaker spent on this content.  Only
+            # compress (never drawl — a short translation just ends early and the
+            # pause starts), and cap compression at --max-speed.
+            target_dur = max(raw_dur / args.max_speed, p["orig_dur"])
+        else:
+            # Fallback: natural length, capped at the slot + gap to next speaker.
+            window = max(slot, available_dur)
+            target_dur = min(window, max(raw_dur, slot))
+        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed,
+                           min_speed=args.min_speed)
+
+        # If the original lingered much longer on this line, fill the extra time
+        # with inter-phrase pauses (like a speaker would) rather than a gap or a
+        # drawl.  Target the original's first-word→last-word span; cap the extra
+        # so a one-word line can't sprout huge silences.
+        if p and p.get("aligned") and not args.no_align:
+            fit_dur = _audio_duration(fitted)
+            span = p["orig_end"] - p["orig_start"]
+            want = min(span, fit_dur + 5.0)
+            if want > fit_dur * 1.3 + 0.3:
+                fitted = redistribute_to_duration(fitted, want)
+
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
@@ -438,7 +481,7 @@ Examples:
                                 log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
                 if ok and raw_out.exists():
-                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end)
+                    fut = fit_pool.submit(_do_fit, raw_out, i, target_dur, start, end)
                     with fit_lock:
                         fit_futures.append(fut)
 
@@ -490,14 +533,65 @@ Examples:
         log.error("No audio was generated. Check Qwen TTS errors above.")
         return 1
 
+    # ── 5b. Rhythm placement ─────────────────────────────────────────────────
+    # Compute where each clip lands on the timeline from the ORIGINAL's real
+    # speech/pause structure instead of the loose subtitle grid:
+    #   • within a breath group (original pause < RESYNC) clips play back-to-back
+    #     — no dead air mid-sentence
+    #   • at a real pause the dub re-syncs to the original's own timeline, so its
+    #     silences line up with the original's (and with the video's B-roll)
+    # `placements` maps segment index → forced start; stitch_and_mix uses it and
+    # keeps reporting SRT timings so the dubbed-SRT writer still matches.
+    placements: Dict[int, float] = {}
+    if dub_plan and any(p.get("aligned") for p in dub_plan.values()):
+        RESYNC = 1.3
+        MIN_GAP = 0.12
+        MAX_HOLD = max(2.0, args.pause_cap)   # cap silence held at a re-sync point
+        out_cur = 0.0
+        ahead = 0
+        for clip, s_start, s_end in sorted(final_files, key=lambda x: x[1]):
+            try:
+                idx = int(Path(clip).stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            p = dub_plan.get(idx)
+            clip_dur = _audio_duration(clip)
+            if p and p.get("aligned"):
+                pb = p["pause_before"]
+                if pb >= RESYNC:
+                    # real pause in the original → re-sync toward its timeline so
+                    # the dub's silences line up with the original's (and the
+                    # B-roll).  When the translation ran short and re-syncing
+                    # would open a big hole, cap the hold and let the dub sit a
+                    # little ahead — it re-converges at the next pause.
+                    ideal = p["orig_start"] - 0.25
+                    out_start = max(out_cur + MIN_GAP, min(ideal, out_cur + MAX_HOLD))
+                else:
+                    out_start = out_cur + max(MIN_GAP, pb)
+            else:
+                out_start = max(out_cur + MIN_GAP, s_start)
+            placements[idx] = round(out_start, 3)
+            out_cur = out_start + clip_dur
+            if p and p.get("aligned") and p["orig_start"] - out_start > 3.0:
+                ahead += 1
+        log.info(f"🎼 Rhythm placement: {len(placements)} clips, "
+                 f"track ends ~{out_cur:.1f}s (SRT end {srt_end:.1f}s)"
+                 + (f", {ahead} clip(s) running >3s ahead of the original "
+                    f"(translation shorter)" if ahead else ""))
+
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
     # srt_end already computed above (reused for audio trim + video trim)
     t_stitch_start = time.perf_counter()
     log.info("🎬 Stitching and mixing…")
+    # Rhythm placement can push the last clip a little past the SRT end; keep the
+    # video long enough to hold all of it.
+    last_place = max((placements[i] for i in placements), default=0.0)
+    track_end = max(srt_end, last_place + 12.0)
     final, actual_positions = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
         background=background,   # None when --no-demucs
-        trim_to=srt_end,
+        trim_to=max(srt_end, track_end),
+        placements=placements or None,
     )
 
     # ── 7. Write dubbed SRT with actual audio timestamps ─────────────────
