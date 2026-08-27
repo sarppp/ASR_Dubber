@@ -118,17 +118,27 @@ cosy_image = _with_pipeline(
         # torch first, pinned to the CosyVoice-tested version
         "bash -lc 'source /opt/conda/etc/profile.d/conda.sh && conda activate cosyvoice"
         " && pip install torch==2.3.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121'",
+        # build deps: openai-whisper==20231117's setup.py imports pkg_resources, which
+        # setuptools>=81 (pip's default isolated build env) no longer ships.
+        "bash -lc 'source /opt/conda/etc/profile.d/conda.sh && conda activate cosyvoice"
+        " && pip install \"setuptools<81\" wheel packaging Cython numpy==1.26.4'",
+        "bash -lc 'source /opt/conda/etc/profile.d/conda.sh && conda activate cosyvoice"
+        " && pip install --no-build-isolation openai-whisper==20231117'",
         # the rest of CosyVoice deps, minus tensorrt / deepspeed (inference-only, load_trt=False)
         "bash -lc 'source /opt/conda/etc/profile.d/conda.sh && conda activate cosyvoice && pip install "
         "conformer==0.3.2 diffusers==0.29.0 hydra-core==1.3.2 HyperPyYAML==1.2.3 inflect==7.3.1 "
-        "librosa==0.10.2 lightning==2.2.4 modelscope==1.20.0 networkx==3.1 numpy==1.26.4 omegaconf==2.3.0 "
-        "onnx==1.16.0 onnxruntime-gpu==1.18.0 openai-whisper==20231117 protobuf==4.25 pyarrow==18.1.0 "
-        "pydantic==2.7.0 pyworld==0.3.4 rich==13.7.1 soundfile==0.12.1 transformers==4.51.3 "
-        "x-transformers==2.11.24 wetext==0.0.4 gdown==5.1.0 wget==3.2 huggingface_hub'",
+        "librosa==0.10.2 lightning==2.2.4 matplotlib==3.7.5 modelscope==1.20.0 networkx==3.1 "
+        "numpy==1.26.4 omegaconf==2.3.0 onnx==1.16.0 onnxruntime-gpu==1.18.0 protobuf==4.25 "
+        "pyarrow==18.1.0 pydantic==2.7.0 pyworld==0.3.4 rich==13.7.1 soundfile==0.12.1 "
+        "tensorboard==2.14.0 transformers==4.51.3 x-transformers==2.11.24 wetext==0.0.4 "
+        "gdown==5.1.0 wget==3.2 huggingface_hub'",
         f"mkdir -p {COSY_VENV_PATH}/.venv/bin",
         f"ln -sf /opt/conda/envs/cosyvoice/bin/python {COSY_VENV_PATH}/.venv/bin/python",
     )
     .env({"COSYVOICE_REPO_DIR": COSY_REPO_DIR, "COSYVOICE_MODEL_DIR": COSY_MODEL_DIR})
+    # huggingface_hub must be importable by the Modal function runtime (not the
+    # conda envs) for the one-time weight download in dub_cosyvoice().
+    .pip_install("huggingface_hub")
 )
 
 app = modal.App(APP_NAME)

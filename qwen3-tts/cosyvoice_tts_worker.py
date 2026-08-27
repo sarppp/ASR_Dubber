@@ -62,9 +62,9 @@ def _load_model(device: str):
 
     try:
         from cosyvoice.cli.cosyvoice import AutoModel
-        print(f"[cosy-worker] AutoModel.from {model_dir}", file=sys.stderr, flush=True)
+        print(f"[cosy-worker] AutoModel from {model_dir}", file=sys.stderr, flush=True)
         model = AutoModel(model_dir=model_dir)
-    except Exception:
+    except ImportError:
         # Older CosyVoice checkouts expose CosyVoice2 instead of AutoModel
         from cosyvoice.cli.cosyvoice import CosyVoice2
         print(f"[cosy-worker] CosyVoice2 from {model_dir}", file=sys.stderr, flush=True)
@@ -104,18 +104,18 @@ def _synthesise(model, req: dict, mode: str) -> str | None:
             return "custom mode needs COSY_FALLBACK_PROMPT (no reference wav available)"
 
     try:
-        prompt_16k = model._load_wav(prompt_wav_path, 16000)
-
+        # CosyVoice's frontend calls load_wav(prompt_wav, 16000) itself, so the
+        # prompt must be passed as a FILE PATH, not a preloaded tensor.
         chunks = []
         if ref_text:
             # We know what the reference says → zero-shot keeps timbre + prosody best
             gen = model.inference_zero_shot(
-                text, _SYS_PROMPT + ref_text, prompt_16k, stream=False
+                text, _SYS_PROMPT + ref_text, prompt_wav_path, stream=False
             )
         else:
             # No transcript of the reference → cross-lingual clone (EN ref → FR out)
             gen = model.inference_cross_lingual(
-                _SYS_PROMPT + text, prompt_16k, stream=False
+                _SYS_PROMPT + text, prompt_wav_path, stream=False
             )
         for out in gen:
             chunks.append(out["tts_speech"])
