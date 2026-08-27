@@ -66,6 +66,7 @@ qwen3-tts/*
 !qwen3-tts/dub_srt.py
 !qwen3-tts/dub_audio.py
 !qwen3-tts/dub_qa.py
+!qwen3-tts/dub_pace_debug.py
 !qwen3-tts/show_segments.py
 !qwen3-tts/test_ipc_mock.py
 !qwen3-tts/.python-version
