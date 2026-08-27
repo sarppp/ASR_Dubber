@@ -450,33 +450,52 @@ def _regroup(blocks: List[Dict], merged: List[Dict]) -> List[Tuple[Dict, float, 
     return out
 
 
-def check_C(dub_media: Path, dub_srt: Path, merged: List[Dict], R: dict) -> Optional[dict]:
-    blocks = parse_srt(dub_srt)
-    if not blocks:
-        return None
+def check_C(dub_media: Path, dub_srt: Path, merged: List[Dict], R: dict,
+           fa=None) -> Optional[dict]:
     print("\n" + "═" * 74)
     print("C  DELIVERED DUB PACE  (measured segment-by-segment from the dub audio)")
     print("═" * 74)
-    spans = silence_intervals(dub_media, R["noise_db"], R["min_sil"])
     dur = ffprobe_dur(dub_media)
-    groups = _regroup(blocks, merged)
     rows = []
-    for seg, s0, s1 in groups:
-        span = max(0.05, s1 - s0)
-        v = voiced_seconds(spans, s0, s1)
-        # leading / trailing dead air inside the segment span
-        lead = next((min(e, s1) - s0 for st_, e in spans if st_ <= s0 + 0.02 and e > s0), 0.0)
-        tail = next((s1 - max(st_, s0) for st_, e in spans
-                     if e >= s1 - 0.02 and st_ < s1), 0.0)
-        lead, tail = max(0.0, lead), max(0.0, tail)
-        if v < 0.3:
-            continue
-        sy = n_syll(seg["text"])
-        rows.append(dict(i=seg["index"], start=s0, span=span, voiced=v,
-                         lead=lead, tail=tail, fill=v / span,
-                         art=sy / v,                 # articulation rate (speech only)
-                         eff=sy / span,              # as-experienced rate (incl. pauses)
-                         cps=n_chars(seg["text"]) / v, text=seg["text"]))
+
+    if fa and fa.ok:
+        print("  source: forced alignment (word-level)")
+        far = {r["index"]: r for r in fa.segments}
+        for seg in merged:
+            r = far.get(seg["index"])
+            if not r or r["voiced"] < 0.3 or r["w_start"] is None:
+                continue
+            sy = n_syll(seg["text"])
+            span = max(0.05, r["span"])
+            v = r["voiced"]
+            rows.append(dict(i=seg["index"], start=r["w_start"], span=span, voiced=v,
+                             lead=0.0, tail=0.0, fill=min(1.0, v / span),
+                             art=sy / v, eff=sy / span,
+                             cps=n_chars(seg["text"]) / v, text=seg["text"]))
+        spans = None
+        speech_frac = sum(r["voiced"] for r in rows) / dur if dur else 0.0
+    else:
+        blocks = parse_srt(dub_srt)
+        if not blocks:
+            return None
+        spans = silence_intervals(dub_media, R["noise_db"], R["min_sil"])
+        for seg, s0, s1 in _regroup(blocks, merged):
+            span = max(0.05, s1 - s0)
+            v = voiced_seconds(spans, s0, s1)
+            lead = next((min(e, s1) - s0 for st_, e in spans
+                         if st_ <= s0 + 0.02 and e > s0), 0.0)
+            tail = next((s1 - max(st_, s0) for st_, e in spans
+                         if e >= s1 - 0.02 and st_ < s1), 0.0)
+            lead, tail = max(0.0, lead), max(0.0, tail)
+            if v < 0.3:
+                continue
+            sy = n_syll(seg["text"])
+            rows.append(dict(i=seg["index"], start=s0, span=span, voiced=v,
+                             lead=lead, tail=tail, fill=v / span,
+                             art=sy / v, eff=sy / span,
+                             cps=n_chars(seg["text"]) / v, text=seg["text"]))
+        speech_frac = voiced_seconds(spans, 0, dur) / dur if dur else 0.0
+
     if not rows:
         print("  could not align dub SRT to segments — skipped")
         return None
@@ -489,7 +508,6 @@ def check_C(dub_media: Path, dub_srt: Path, merged: List[Dict], R: dict) -> Opti
     slow = [r for r in rows if r["art"] < R["art_slow"]]
     padded = [r for r in rows if r["fill"] < R["fill_warn"] and r["span"] > 2.0]
     tailpad = [r for r in rows if r["tail"] > R["tail_pad"]]
-    speech_frac = voiced_seconds(spans, 0, dur) / dur if dur else 0.0
 
     print(f"  segments measured: {len(rows)}   dub speech fills {100*speech_frac:.0f}% of the runtime")
     print(f"  articulation rate (syll / voiced sec) : median {st.median(art):4.1f}   "
@@ -545,6 +563,7 @@ def check_C(dub_media: Path, dub_srt: Path, merged: List[Dict], R: dict) -> Opti
           f"({100*pad_total/max(1,dur):.0f}% of runtime)")
 
     return dict(n=len(rows), art_median=st.median(art), art_cv=cv(art),
+                fa_backed=bool(fa and fa.ok),
                 art_max=max(art), art_min=min(art), eff_cv=cv(eff),
                 fast=len(fast), slow=len(slow), padded=len(padded),
                 tailpad=len(tailpad), padded_frac=len(padded) / len(rows),
@@ -568,48 +587,62 @@ def _hms(s: float) -> str:
 #  CHECK D — original speaker pace (the natural-pace baseline)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def check_D(orig_media: Path, orig_srt: Path, R: dict) -> Optional[dict]:
+def check_D(orig_media: Path, orig_srt: Path, R: dict, fa=None) -> Optional[dict]:
     segs = parse_srt(orig_srt)
     if not segs:
         return None
     print("\n" + "═" * 74)
     print("D  ORIGINAL SPEAKER PACE  (how fast the real person actually talks)")
     print("═" * 74)
-    spans = silence_intervals(orig_media, R["noise_db"], R["min_sil"])
     dur = ffprobe_dur(orig_media) or (segs[-1]["end"])
-    ac_speech = voiced_seconds(spans, 0, dur) / dur if dur else 0.0
 
-    # NeMo's diarized SRT is a VAD: segment spans = speech, gaps = the speaker
-    # not talking.  Original videos usually have a music/ambience bed, so an
-    # acoustic silence test on the original is unreliable — detect that and fall
-    # back to the SRT as the speech/pause reference.
-    srt_speech = sum(s["end"] - s["start"] for s in segs)
-    srt_gap = max(0.0, (segs[-1]["end"] - segs[0]["start"]) - srt_speech)
-    bedded = ac_speech > 0.90 and srt_gap / max(1.0, dur) > 0.03
-    ref = "SRT (music/ambience bed on original — acoustic silence unusable)" if bedded \
-        else "acoustic (voiced audio)"
+    if fa and fa.ok:
+        # word-level forced alignment: exact speech timing, immune to music bed
+        ref = "forced alignment (word-level, music-immune)"
+        far = {r["index"]: r for r in fa.segments}
+        rows = []
+        for s in segs:
+            r = far.get(s["index"])
+            if not r or r["voiced"] < 0.2:
+                continue
+            v = r["voiced"]
+            rows.append(dict(start=r["w_start"], end=r["w_end"], voiced=v,
+                             sps=n_syll(s["text"]) / v, cps=n_chars(s["text"]) / v,
+                             text=s["text"]))
+        gaps = list(fa.pauses)
+        srt_speech = sum(r["voiced"] for r in fa.segments)
+        srt_gap = sum(b - a for a, b in gaps)
+        bedded = False
+        speech_frac = srt_speech / dur if dur else 0.0
+    else:
+        spans = silence_intervals(orig_media, R["noise_db"], R["min_sil"])
+        ac_speech = voiced_seconds(spans, 0, dur) / dur if dur else 0.0
+        # NeMo's diarized SRT is a VAD: spans = speech, gaps = silence.  Original
+        # videos usually have a music/ambience bed, so acoustic silence on the
+        # original is unreliable — detect that and fall back to the SRT.
+        srt_speech = sum(s["end"] - s["start"] for s in segs)
+        srt_gap = max(0.0, (segs[-1]["end"] - segs[0]["start"]) - srt_speech)
+        bedded = ac_speech > 0.90 and srt_gap / max(1.0, dur) > 0.03
+        ref = ("SRT (music/ambience bed on original — pass --align for word-level "
+               "timing)" if bedded else "acoustic (voiced audio)")
+        gaps = [(a["end"], b["start"]) for a, b in zip(segs, segs[1:])
+                if b["start"] - a["end"] > 0.5]
+        rows = []
+        for s in segs:
+            span = max(0.1, s["end"] - s["start"])
+            v = span if bedded else voiced_seconds(spans, s["start"], s["end"])
+            if v < 0.25:
+                continue
+            rows.append(dict(start=s["start"], end=s["end"], voiced=v,
+                             sps=n_syll(s["text"]) / v, cps=n_chars(s["text"]) / v,
+                             text=s["text"]))
+        speech_frac = srt_speech / dur if (bedded and dur) else ac_speech
 
-    gaps = []
-    for a, b in zip(segs, segs[1:]):
-        g = b["start"] - a["end"]
-        if g > 0.5:
-            gaps.append((a["end"], b["start"]))
-
-    rows = []
-    for s in segs:
-        span = max(0.1, s["end"] - s["start"])
-        v = span if bedded else voiced_seconds(spans, s["start"], s["end"])
-        if v < 0.25:
-            continue
-        rows.append(dict(start=s["start"], end=s["end"], voiced=v,
-                         sps=n_syll(s["text"]) / v, cps=n_chars(s["text"]) / v,
-                         text=s["text"]))
     sps = [r["sps"] for r in rows]
     cps = [r["cps"] for r in rows]
-    speech_frac = srt_speech / dur if (bedded and dur) else ac_speech
     print(f"  segments: {len(rows)}   speech reference: {ref}")
     print(f"  speaker talks {100*speech_frac:.0f}% of the runtime  "
-          f"({len(gaps)} pauses > 0.5s, {srt_gap:.0f}s total)")
+          f"({len(gaps)} pauses, {srt_gap:.0f}s total)")
     print(f"  {'chars' } /sec : median {st.median(cps):4.1f}   range {min(cps):.1f}–{max(cps):.1f}")
     print(f"  syll/sec  : median {st.median(sps):4.1f}   range {min(sps):.1f}–{max(sps):.1f}"
           f"   CV {cv(sps):.2f}  <-- the natural variation to compare against")
@@ -645,8 +678,12 @@ def check_E(merged: List[Dict], D: dict, B: Optional[dict], C: Optional[dict],
                 den += hi - lo
         return num / den if den else 0.0
 
-    dub_seg = (B or {}).get("per_seg") or (C or {}).get("per_seg") or {}
-    dub_src = "speed_fit target (B)" if B and B.get("per_seg") else "measured dub audio (C)"
+    if C and C.get("fa_backed"):
+        dub_seg = C["per_seg"]; dub_src = "forced-aligned dub audio (C)"
+    elif B and B.get("per_seg"):
+        dub_seg = B["per_seg"]; dub_src = "speed_fit target (B)"
+    else:
+        dub_seg = (C or {}).get("per_seg") or {}; dub_src = "measured dub audio (C)"
     if dub_seg:
         print(f"  dub per-segment pace source: {dub_src}")
     pairs = []  # (orig_sps, dub_sps, seg)
@@ -1007,6 +1044,12 @@ def main() -> int:
     ap.add_argument("--merge-gap", type=float, default=1.0)
     ap.add_argument("--merge-max-dur", type=float, default=10.0)
     ap.add_argument("--noise-db", type=float, default=DEF["noise_db"])
+    ap.add_argument("--align", dest="align", action="store_true", default=None,
+                    help="force word-level forced alignment (torchaudio MMS_FA) as "
+                         "the speech-timing reference — music-immune. Default: auto "
+                         "(on when torchaudio + an SRT + media are available).")
+    ap.add_argument("--no-align", dest="align", action="store_false")
+    ap.add_argument("--align-device", default="auto", help="cuda | cpu | auto")
     ap.add_argument("--json", help="write a scorecard JSON here (for tracking across videos)")
     for k, v in DEF.items():
         if k in ("noise_db",):
@@ -1050,13 +1093,41 @@ def main() -> int:
     print(f"\n  parsed {len(src)} SRT segments → {len(merged)} after merge "
           f"(gap≤{args.merge_gap}s, max {args.merge_max_dur}s)")
 
+    # ── optional: word-level forced alignment as the speech-timing reference ──
+    fa_orig = fa_dub = None
+    want_align = args.align
+    if want_align is None:  # auto
+        want_align = bool(args.original_media and Path(args.original_media).exists())
+    if want_align:
+        try:
+            import forced_align as _fa
+        except Exception as exc:
+            print(f"\n(forced alignment unavailable: {exc})")
+            _fa = None
+        if _fa:
+            if args.original_media and args.original_srt and \
+               Path(args.original_media).exists() and Path(args.original_srt).exists():
+                print("\n⏳ forced-aligning ORIGINAL audio to its transcript "
+                      f"(device={args.align_device})…")
+                fa_orig = _fa.align_segments(Path(args.original_media),
+                                             parse_srt(Path(args.original_srt)),
+                                             device=args.align_device)
+                print(f"   {fa_orig.note}")
+            if args.dub_media and Path(args.dub_media).exists():
+                print("⏳ forced-aligning DUB audio to the translated transcript…")
+                fa_dub = _fa.align_segments(Path(args.dub_media), merged,
+                                            device=args.align_device)
+                print(f"   {fa_dub.note}")
+
     A = check_A(merged, R)
     B = (check_B(merged, Path(args.temp_dir), R, args.max_speed, args.min_speed)
          if args.temp_dir and Path(args.temp_dir).is_dir() else None)
-    C = (check_C(Path(args.dub_media), Path(args.dub_srt), merged, R)
+    C = (check_C(Path(args.dub_media), Path(args.dub_srt), merged, R,
+                 fa=fa_dub if (fa_dub and fa_dub.ok) else None)
          if args.dub_media and args.dub_srt
          and Path(args.dub_media).exists() and Path(args.dub_srt).exists() else None)
-    D = (check_D(Path(args.original_media), Path(args.original_srt), R)
+    D = (check_D(Path(args.original_media), Path(args.original_srt), R,
+                 fa=fa_orig if (fa_orig and fa_orig.ok) else None)
          if args.original_media and args.original_srt
          and Path(args.original_media).exists() and Path(args.original_srt).exists() else None)
     E = check_E(merged, D, B, C, R) if D else None
