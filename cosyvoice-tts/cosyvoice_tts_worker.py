@@ -38,10 +38,15 @@ _SYS_PROMPT = "You are a helpful assistant.<|endofprompt|>"
 
 
 def _setup_paths() -> Path:
-    repo = os.environ.get("COSYVOICE_REPO_DIR", "/opt/CosyVoice")
+    # Default: the CosyVoice git submodule bundled next to this script.
+    default_repo = Path(__file__).resolve().parent / "CosyVoice"
+    repo = os.environ.get("COSYVOICE_REPO_DIR") or str(default_repo)
     repo_path = Path(repo)
-    if not repo_path.exists():
-        raise RuntimeError(f"COSYVOICE_REPO_DIR not found: {repo_path}")
+    if not repo_path.exists() or not (repo_path / "cosyvoice").is_dir():
+        raise RuntimeError(
+            f"CosyVoice repo not found at {repo_path}. Run: "
+            "git submodule update --init --recursive"
+        )
     # CosyVoice expects to be run from its repo root with Matcha-TTS on the path
     os.chdir(repo_path)
     sys.path.insert(0, str(repo_path))

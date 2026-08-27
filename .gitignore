@@ -36,8 +36,10 @@ data/**/*.opus
 data/**/*.srt
 !/nemo/
 !/qwen3-tts/
+!/cosyvoice-tts/
 !/translate-gemma/
 !/whisper/
+!/.gitmodules
 
 # Inside nemo/: ignore everything, then unignore the exact files
 nemo/*
@@ -58,7 +60,6 @@ nemo/*
 qwen3-tts/*
 !qwen3-tts/dub.py
 !qwen3-tts/qwen_tts_worker.py
-!qwen3-tts/cosyvoice_tts_worker.py
 !qwen3-tts/dubber_modal.py
 !qwen3-tts/dub_modal.py
 !qwen3-tts/dub_compare_modal.py
@@ -70,6 +71,16 @@ qwen3-tts/*
 !qwen3-tts/.python-version
 !qwen3-tts/pyproject.toml
 !qwen3-tts/uv.lock
+
+# Inside cosyvoice-tts/  (CosyVoice/ is a git submodule — tracked via .gitmodules)
+cosyvoice-tts/*
+!cosyvoice-tts/CosyVoice
+!cosyvoice-tts/cosyvoice_tts_worker.py
+!cosyvoice-tts/dub_modal.py
+!cosyvoice-tts/README.md
+!cosyvoice-tts/.python-version
+!cosyvoice-tts/pyproject.toml
+!cosyvoice-tts/uv.lock
 
 # Repeat for translate-gemma/
 translate-gemma/*

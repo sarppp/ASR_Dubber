@@ -18,10 +18,12 @@ NEMO_CODE_DIR = ROOT / "nemo"                                         # code —
 NEMO_DIR      = Path(os.getenv("INPUT_DIR",  str(NEMO_CODE_DIR)))    # data  — /data/input in Docker
 TRANSLATE_DIR = ROOT / "translate-gemma"
 QWEN_DIR      = ROOT / "qwen3-tts"
+COSYVOICE_DIR = ROOT / "cosyvoice-tts"
 WHISPER_DIR   = ROOT / "whisper"
 
 NEMO_PY       = NEMO_CODE_DIR / ".venv" / "bin" / "python"
 QWEN_PY       = QWEN_DIR           / ".venv" / "bin" / "python"
+COSYVOICE_PY  = COSYVOICE_DIR      / ".venv" / "bin" / "python"
 WHISPER_PY    = WHISPER_DIR        / ".venv" / "bin" / "python"
 TRANSLATE_PY  = TRANSLATE_DIR      / ".venv" / "bin" / "python"
 

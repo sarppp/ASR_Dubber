@@ -50,7 +50,7 @@ from dub_audio import (
     detect_speaker_genders,
     _qwen_python,
     _qwen_worker,
-    _engine_worker,
+    resolve_tts_engine,
     PersistentTTSWorker,
     SharedTTSManager,
     speed_fit,
@@ -121,6 +121,12 @@ Examples:
                         help="Working directory for intermediate files (default: output/dub)")
     parser.add_argument("--qwen-dir",   default=".",
                         help="Path to the qwen3-tts uv project (default: current folder)")
+    parser.add_argument("--tts-python", default=None,
+                        help="Explicit python executable for the TTS worker "
+                             "(overrides engine venv auto-detection; used by Modal)")
+    parser.add_argument("--tts-worker", default=None,
+                        help="Explicit path to the TTS worker script (overrides "
+                             "engine default; used by Modal)")
     parser.add_argument("--max-speed",  type=float, default=1.35,
                         help="Max TTS speed-up before capping (default: 1.35)")
     parser.add_argument("--min-speed",  type=float, default=0.65,
@@ -201,8 +207,16 @@ Examples:
         d.mkdir(parents=True, exist_ok=True)
 
     script_dir  = Path(__file__).resolve().parent
-    qwen_python = _qwen_python(qwen_dir)
-    qwen_worker = _engine_worker(script_dir, args.tts_engine)
+    # Back-compat: an explicit non-default --qwen-dir still points the qwen
+    # engine at that project's venv when --tts-python isn't given.
+    python_override = args.tts_python
+    if python_override is None and args.tts_engine == "qwen" and args.qwen_dir != ".":
+        cand = qwen_dir / ".venv" / "bin" / "python"
+        python_override = str(cand) if cand.exists() else None
+    qwen_python, qwen_worker = resolve_tts_engine(
+        args.tts_engine, script_dir,
+        python_override=python_override, worker_override=args.tts_worker,
+    )
 
     t_start = time.perf_counter()
 

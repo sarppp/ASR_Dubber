@@ -223,6 +223,10 @@ def main():
                    help="Process only first N seconds of video (default: full)")
     p.add_argument("--qwen-mode",      default="clone", choices=["clone", "custom"],
                    help="Voice mode: clone (default) or custom")
+    p.add_argument("--tts-engine",     default="qwen", choices=["qwen", "cosyvoice"],
+                   help="TTS backend for dubbing: qwen (Qwen3-TTS, default) or "
+                        "cosyvoice (Fun-CosyVoice3-0.5B). cosyvoice needs "
+                        "`uv sync --project cosyvoice-tts` + submodule init.")
     p.add_argument("--no-demucs",      action="store_true",
                    help="Skip demucs — faster, no background music preserved")
     p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
@@ -523,9 +527,10 @@ def main():
             str(QWEN_DIR / "dub.py"),
             str(video),          # explicit video — no auto-discovery
             str(dub_srt),        # explicit SRT   — no auto-discovery
-            "--language",  args.target_lang,
-            "--qwen-mode", args.qwen_mode,
-            "--workdir",   str(dub_workdir),
+            "--language",   args.target_lang,
+            "--qwen-mode",  args.qwen_mode,
+            "--tts-engine", args.tts_engine,
+            "--workdir",    str(dub_workdir),
         ]
         if args.no_demucs:
             dub_cmd.append("--no-demucs")
@@ -545,7 +550,8 @@ def main():
         dub_cmd.extend(["--tts-workers", str(tts_workers),
                         "--tts-devices", tts_devices])
 
-        _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS",
+        _engine_label = {"qwen": "Qwen TTS", "cosyvoice": "CosyVoice3"}[args.tts_engine]
+        _run(dub_cmd, cwd=QWEN_DIR, label=f"Step 3/3 — Dubbing with {_engine_label}",
              log_file=log_dub)
     else:
         print("⏭️  Skipping dub (--skip-dub)")

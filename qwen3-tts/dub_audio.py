@@ -223,25 +223,52 @@ def _qwen_worker(script_dir: Path) -> str:
 
 # Each worker speaks the same stdin/stdout JSON protocol, so the TTS engine is
 # swappable by pointing SharedTTSManager at a different worker script + python.
-TTS_WORKER_SCRIPTS = {
-    "qwen": "qwen_tts_worker.py",
-    "cosyvoice": "cosyvoice_tts_worker.py",
+# Layout: <root>/qwen3-tts/{dub.py,qwen_tts_worker.py}
+#         <root>/cosyvoice-tts/cosyvoice_tts_worker.py  (+ its own .venv)
+TTS_ENGINES = {
+    "qwen":      {"project": "qwen3-tts",      "worker": "qwen_tts_worker.py"},
+    "cosyvoice": {"project": "cosyvoice-tts",  "worker": "cosyvoice_tts_worker.py"},
 }
 
 
-def _engine_worker(script_dir: Path, engine: str) -> str:
-    name = TTS_WORKER_SCRIPTS.get(engine)
-    if name is None:
+def resolve_tts_engine(
+    engine: str,
+    script_dir: Path,
+    python_override: Optional[str] = None,
+    worker_override: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Return (python_executable, worker_script_path) for a TTS engine.
+
+    ``script_dir`` is the folder holding dub.py (``<root>/qwen3-tts``).
+    Sibling engine projects live at ``<root>/<project>`` with their own
+    ``.venv``.  Explicit overrides win (used by the Modal images).
+    """
+    spec = TTS_ENGINES.get(engine)
+    if spec is None:
         raise ValueError(
-            f"Unknown --tts-engine {engine!r}. Choose one of: "
-            f"{sorted(TTS_WORKER_SCRIPTS)}"
+            f"Unknown --tts-engine {engine!r}. Choose one of: {sorted(TTS_ENGINES)}"
         )
-    worker = script_dir / name
-    if worker.exists():
-        return str(worker)
-    raise FileNotFoundError(
-        f"{name} not found at {script_dir}. It should sit next to dub.py."
-    )
+
+    root = script_dir.parent
+    project_dir = script_dir if spec["project"] == script_dir.name else root / spec["project"]
+
+    worker = Path(worker_override) if worker_override else project_dir / spec["worker"]
+    if not worker.exists():
+        raise FileNotFoundError(
+            f"{spec['worker']} not found at {worker}. "
+            + ("Run: git submodule update --init --recursive && "
+               "uv sync --project cosyvoice-tts" if engine == "cosyvoice" else "")
+        )
+
+    if python_override:
+        python = python_override
+    else:
+        venv_py = project_dir / ".venv" / "bin" / "python"
+        python = str(venv_py) if venv_py.exists() else "python"
+        if python == "python":
+            log.warning(f"{spec['project']} .venv not found at {venv_py}; using 'python'")
+
+    return python, str(worker)
 
 
 class PersistentTTSWorker:

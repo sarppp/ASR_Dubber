@@ -47,8 +47,11 @@ COSY_VENV_PATH = "/opt/cosyvoice-venv"     # ditto for the cosyvoice worker
 COSY_REPO_DIR = "/opt/CosyVoice"
 COSY_MODEL_DIR = "/app/dubber/models/Fun-CosyVoice3-0.5B"
 
-PIPELINE_FILES = ("dub.py", "dub_srt.py", "dub_audio.py",
-                  "qwen_tts_worker.py", "cosyvoice_tts_worker.py")
+# dub.py + helpers + qwen worker live in qwen3-tts/ (the `modal run` cwd);
+# the cosyvoice worker now lives in the sibling cosyvoice-tts/ project.
+QWEN_DIR_FILES = ("dub.py", "dub_srt.py", "dub_audio.py", "qwen_tts_worker.py")
+COSY_WORKER_SRC = "../cosyvoice-tts/cosyvoice_tts_worker.py"
+PIPELINE_FILES = QWEN_DIR_FILES + ("cosyvoice_tts_worker.py",)
 
 # ---------------------------------------------------------------------------
 # Shared base: conda + nemo-env (runs dub.py: demucs, ffmpeg, pysrt, tqdm)
@@ -83,8 +86,9 @@ def _base_image() -> modal.Image:
 
 
 def _with_pipeline(img: modal.Image) -> modal.Image:
-    for f in PIPELINE_FILES:
+    for f in QWEN_DIR_FILES:
         img = img.add_local_file(f, remote_path=f"/root/{f}")
+    img = img.add_local_file(COSY_WORKER_SRC, remote_path="/root/cosyvoice_tts_worker.py")
     return img
 
 
@@ -148,7 +152,10 @@ app = modal.App(APP_NAME)
 # Shared dub runner
 # ---------------------------------------------------------------------------
 
-def _run_dub(engine: str, tts_python: str,
+_ENGINE_WORKER = {"qwen": "qwen_tts_worker.py", "cosyvoice": "cosyvoice_tts_worker.py"}
+
+
+def _run_dub(engine: str, venv_root: str,
              video_filename: str, video_data: bytes,
              srt_filename: str, srt_data: bytes,
              target_lang: str, no_demucs: bool) -> dict:
@@ -182,7 +189,8 @@ def _run_dub(engine: str, tts_python: str,
         "--language", target_lang,
         "--tts-engine", engine,
         "--qwen-mode", "clone",
-        "--qwen-dir", tts_python,
+        "--tts-python", f"{venv_root}/.venv/bin/python",
+        "--tts-worker", str(code_dir / _ENGINE_WORKER[engine]),
         "--workdir", str(work_dir),
         "--tts-workers", "2",
     ]
