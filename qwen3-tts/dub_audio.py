@@ -221,6 +221,29 @@ def _qwen_worker(script_dir: Path) -> str:
     )
 
 
+# Each worker speaks the same stdin/stdout JSON protocol, so the TTS engine is
+# swappable by pointing SharedTTSManager at a different worker script + python.
+TTS_WORKER_SCRIPTS = {
+    "qwen": "qwen_tts_worker.py",
+    "cosyvoice": "cosyvoice_tts_worker.py",
+}
+
+
+def _engine_worker(script_dir: Path, engine: str) -> str:
+    name = TTS_WORKER_SCRIPTS.get(engine)
+    if name is None:
+        raise ValueError(
+            f"Unknown --tts-engine {engine!r}. Choose one of: "
+            f"{sorted(TTS_WORKER_SCRIPTS)}"
+        )
+    worker = script_dir / name
+    if worker.exists():
+        return str(worker)
+    raise FileNotFoundError(
+        f"{name} not found at {script_dir}. It should sit next to dub.py."
+    )
+
+
 class PersistentTTSWorker:
     """Keeps a qwen_tts_worker.py subprocess alive for the lifetime of the TTS loop.
 

@@ -7,6 +7,7 @@
 !/run_pipeline.py
 !/pipeline_paths.py
 !/pipeline_utils.py
+!/bilingual_subtitles.py
 !/Dockerfile
 !/docker-compose.yml
 !/.dockerignore
@@ -57,7 +58,10 @@ nemo/*
 qwen3-tts/*
 !qwen3-tts/dub.py
 !qwen3-tts/qwen_tts_worker.py
+!qwen3-tts/cosyvoice_tts_worker.py
 !qwen3-tts/dubber_modal.py
+!qwen3-tts/dub_modal.py
+!qwen3-tts/dub_compare_modal.py
 !qwen3-tts/dub_srt.py
 !qwen3-tts/dub_audio.py
 !qwen3-tts/dub_qa.py

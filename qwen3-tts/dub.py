@@ -50,6 +50,7 @@ from dub_audio import (
     detect_speaker_genders,
     _qwen_python,
     _qwen_worker,
+    _engine_worker,
     PersistentTTSWorker,
     SharedTTSManager,
     speed_fit,
@@ -109,6 +110,9 @@ Examples:
                         help="Target language to pass to Qwen TTS (default: fr)")
     parser.add_argument("--qwen-mode",  default="clone", choices=["custom", "clone"],
                         help="'custom' = fixed voice | 'clone' = voice cloned from speaker (default: clone)")
+    parser.add_argument("--tts-engine", default="qwen", choices=["qwen", "cosyvoice"],
+                        help="TTS backend: 'qwen' (Qwen3-TTS) or 'cosyvoice' "
+                             "(Fun-CosyVoice3-0.5B). Both use the same worker protocol.")
     parser.add_argument("--no-demucs",  action="store_true",
                         help="Skip vocal separation — faster but loses background music")
     parser.add_argument("--search-dir", default="../nemo",
@@ -198,7 +202,7 @@ Examples:
 
     script_dir  = Path(__file__).resolve().parent
     qwen_python = _qwen_python(qwen_dir)
-    qwen_worker = _qwen_worker(script_dir)
+    qwen_worker = _engine_worker(script_dir, args.tts_engine)
 
     t_start = time.perf_counter()
 
@@ -206,6 +210,7 @@ Examples:
     log.info(f"Video        : {video_path.name}")
     log.info(f"SRT          : {srt_path.name}")
     log.info(f"Language     : {args.language}")
+    log.info(f"TTS engine   : {args.tts_engine}")
     log.info(f"Qwen mode    : {args.qwen_mode}")
     log.info(f"Demucs       : {'disabled' if args.no_demucs else 'enabled'}")
     log.info(f"Qwen python  : {qwen_python}")
