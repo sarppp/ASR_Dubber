@@ -345,19 +345,28 @@ def check_B(merged: List[Dict], temp: Path, R: dict, max_speed: float,
             continue
         slot = max(0.1, seg["end"] - seg["start"])
         av = max(0.1, avail.get(i, slot))
-        target = av if raw > slot * max_speed else slot        # dub.py _do_fit
-        ratio = raw / target
-        if ratio < min_speed:
-            applied, branch = min_speed, "PAD (slowed to floor)"
-        elif ratio <= max_speed:
-            applied, branch = ratio, "stretch/squeeze"
-        else:
-            applied, branch = max_speed, "CAP+trim (words cut)"
         fitp = raws[i].with_name(raws[i].stem + "_fit.wav")
+        fit = ffprobe_dur(fitp) if fitp.exists() else 0.0
+        if fit <= 0:
+            continue
+        # MEASURED raw→fit ratio — robust to whatever _do_fit/speed_fit does.
+        # `raw` still carries the TTS edge silence that speed_fit trims, so a
+        # ratio a little over 1.0 is just trimming, not speed.  Classify
+        # conservatively; check C (delivered audio) is the authority on pace.
+        applied = raw / fit
+        if applied > max_speed + 0.15:
+            branch = "CAP+trim (words cut)"          # >1.5×: words were cut
+        elif applied > 1.15 and fit < slot:
+            branch = "compressed"
+        elif applied < 0.90:
+            branch = "PAD/slow (stretched or padded to fill)"
+        else:
+            branch = "natural"
+        tempo = 1.0 if branch == "natural" else applied
         rows.append(dict(i=i, start=seg["start"], slot=slot, avail=av, raw=raw,
-                         target=target, ratio=ratio, applied=applied, branch=branch,
-                         fit=ffprobe_dur(fitp) if fitp.exists() else 0.0,
-                         sps_out=n_syll(seg["text"]) / target, text=seg["text"]))
+                         target=fit, ratio=applied, applied=tempo, raw_fit=applied,
+                         branch=branch, fit=fit,
+                         sps_out=n_syll(seg["text"]) / fit, text=seg["text"]))
     if not rows:
         print("  no raw/fit pairs matched the SRT — skipped")
         return None
@@ -368,7 +377,8 @@ def check_B(merged: List[Dict], temp: Path, R: dict, max_speed: float,
     jumps = [abs(b["applied"] - a["applied"]) for a, b in zip(rs, rs[1:])]
     big = [j for j in jumps if j >= R["jump"]]
     branches = {b: sum(1 for r in rows if r["branch"] == b) for b in
-                ("stretch/squeeze", "CAP+trim (words cut)", "PAD (slowed to floor)")}
+                ("natural", "compressed", "CAP+trim (words cut)",
+                 "PAD/slow (stretched or padded to fill)")}
 
     print(f"  segments with audio: {len(rows)}")
     print(f"  applied tempo   : min {min(ap):.2f}  median {st.median(ap):.2f}  "
@@ -401,7 +411,7 @@ def check_B(merged: List[Dict], temp: Path, R: dict, max_speed: float,
                 outside_frac=len(outside) / len(rows),
                 jump_frac=len(big) / len(jumps), jump_max=max(jumps),
                 branch_cap=branches["CAP+trim (words cut)"],
-                branch_pad=branches["PAD (slowed to floor)"],
+                branch_pad=branches["PAD/slow (stretched or padded to fill)"],
                 sps_out_max=max(r["sps_out"] for r in rows),
                 sps_out_over=sum(1 for r in rows if r["sps_out"] > R["sps_warn"]),
                 per_seg={r["i"]: dict(start=r["start"], target=r["target"],

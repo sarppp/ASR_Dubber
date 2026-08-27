@@ -129,10 +129,11 @@ Examples:
                              "engine default; used by Modal)")
     parser.add_argument("--max-speed",  type=float, default=1.35,
                         help="Max TTS speed-up before capping (default: 1.35)")
-    parser.add_argument("--min-speed",  type=float, default=0.65,
-                        help="Min TTS slow-down for short clips (default: 0.65). "
-                             "Clips shorter than this ratio are slowed to 0.65x speed "
-                             "to fill the slot, matching academic lecture pace.")
+    parser.add_argument("--min-speed",  type=float, default=1.0,
+                        help="Slow-down floor for short clips (default: 1.0 = never "
+                             "slow). Short translations are left as natural speech "
+                             "followed by a real pause. Set e.g. 0.65 to re-enable "
+                             "the old 'stretch + pad to fill the slot' behaviour.")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
@@ -362,9 +363,12 @@ Examples:
     def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
         slot = max(0.1, end - start)
         raw_dur = _audio_duration(raw_out)
-        # Use overflow window only when TTS is too long for the original slot.
-        # Short/fitting clips use the slot so they aren't slowed unnecessarily.
-        target_dur = available_dur if raw_dur > slot * args.max_speed else slot
+        # Target = the clip's natural length, but never past the available window
+        # (slot + gap to the next speaker).  speed_fit only compresses when the
+        # clip overruns that window; a clip that fits keeps its natural pace and
+        # the leftover time becomes a real pause.  No stretching, no padding.
+        window = max(slot, available_dur)
+        target_dur = min(window, max(raw_dur, slot))
         fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
         with final_files_lock:
             final_files.append((fitted, start, end))
