@@ -8,8 +8,11 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control doctor
 ./modal-control serve                 # http://localhost:8091
 ./modal-control watch                 # cloud inventory every 30 seconds
-./modal-control run parakeet_int8
-./modal-control run qwen_asr_06b --background
+./modal-control --catalog /path/to/reviewed-jobs.json plan JOB
+./modal-control inspect-plan PLAN_ID
+# Agent runs this ONLY after the user explicitly says "release it":
+./modal-control execute PLAN_ID --confirm-plan-id PLAN_ID --approval-message "release it"
+./modal-control mcp                  # plan/inspect-only stdio server
 ./modal-control status
 ./modal-control logs RUN_ID --follow
 ./modal-control stop RUN_ID
@@ -18,21 +21,57 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control backup /tmp/modal-control-backup.tar.gz
 ```
 
-## Agent model selection
+## Mandatory plan and release workflow
 
-For an authorized controller task, the agent may choose the model and runtime
-settings. Before launch, report the choice and reason, version/precision, Modal
-CPU or T4, input range, expected tradeoffs, and evidence-backed runtime/cost
-estimates (or mark them unknown). Save the choice in the run configuration and
-report actual results afterward. Explicit user choices take precedence.
-Supertonic 3 M1 on Modal CPU is the preferred dubbing option; GPU runs are T4-only.
+All agent Modal operations use this controller. Direct `run` and `batch` are
+blocked, including the old background path. Agents may propose models/settings,
+but must prepare and explain the exact plan and wait for the user's go. The user
+says **"release it"** in chat; the agent executes that plan and records the actual
+approval message. The user need not run a terminal command. General permission
+to do a task does not approve a newly prepared plan.
 
-This delegation does not authorize extra runs, model sweeps, silent fallback
-retries, or optional processing such as bilingual subtitle creation. See the
-repository [AGENTS.md](../../AGENTS.md) for the full execution and approval rules.
-The controller executes configured jobs; it does not autonomously select models
-or enforce conversational approval. Existing disabled catalogs stay disabled
-until a new run is authorized.
+Plans expire after 30 minutes (maximum one hour), hash their complete payload,
+and bind the catalog, worker/helper/input hashes, controller implementation,
+model/settings, hardware, output expectations and smoke/full limits. Execution
+rejects altered, stale, expired or consumed plans. An atomic single-use receipt
+prevents concurrent release/retries. A failed attempt needs a new plan and go.
+Catalogs marked submissions-disabled remain blocked; do not restore archived
+benchmark sweeps. Prepare a separate small catalog for a newly requested task.
+
+Each job requires `review` fields: `purpose`, `model`, `revision`, `precision`,
+`reason`, `input`, `input_seconds`, `outputs`, `quality_tradeoffs`, `cost_estimate`,
+`hardware` (`CPU` or `T4`), `max_containers` (1), and `max_total_seconds`.
+Cost may be explicitly unknown; it is not a billing cap. Job `max_seconds` is a
+per-stage deadline, so the reviewed total must cover smoke plus full execution.
+Commands must directly invoke `python -m modal run worker.py`, without detach or
+shell wrappers. Pin worker code, imported local helpers and inputs/configuration
+in `source_files`. Function decorators must use literal CPU/T4 allocation,
+`max_containers=1`, `retries=0`, and a timeout within the stage deadline. Dynamic
+GPU selectors and fallback lists are rejected. T4 workers must include observed
+`gpu` in the `worker_ready` event. These checks fail closed on legacy jobs: adapt
+them explicitly before proposing a new plan, never bypass the gate.
+
+## MCP agent interface
+
+Install `modal_control/requirements.txt` into the controller Python environment.
+Launch the stdio server with the absolute path to `nemo/modal-control mcp`.
+MCP tools: `get_status`, `prepare_run_plan`, `get_run_plan`, `get_run`, and
+`get_run_events`. There is no execute/approve tool. The CLI and MCP share the
+same planning/inspection implementation. Register the server in your agent
+client to expose these tools; creating this server does not automatically
+connect an already-running client session.
+
+This follows prod-control's immutable plan/inspect pattern, with the user's
+explicitly requested chat-release workflow: the agent may execute through the
+CLI only AFTER the user approves. See [AGENTS.md](../../AGENTS.md).
+
+**Enforcement boundary:** the controller blocks unsupported paths through its
+public API/CLI, but is not an OS sandbox. An agent with arbitrary shell access,
+mutable source and Modal credentials can technically bypass it; the agent
+contract forbids doing so. Approval text is an audit record, not independent
+human authentication. Static worker checks cannot prove arbitrary imported
+Python code will behave honestly. Credential isolation or an external approval
+service would be needed for a security boundary against a noncompliant agent.
 
 ## What it records
 

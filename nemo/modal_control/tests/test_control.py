@@ -6,7 +6,7 @@ from modal_control.core import (
     clean,
     load_catalog,
     verify_files,
-    run_job,
+    _run_approved_job as run_job,
     recover,
 )
 

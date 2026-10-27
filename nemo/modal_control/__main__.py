@@ -212,6 +212,15 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("status", "doctor", "snapshot", "watch", "recover"):
         sub.add_parser(name)
+    r = sub.add_parser("plan")
+    r.add_argument("job")
+    r = sub.add_parser("inspect-plan")
+    r.add_argument("plan_id")
+    r = sub.add_parser("execute")
+    r.add_argument("plan_id")
+    r.add_argument("--confirm-plan-id", required=True)
+    r.add_argument("--approval-message", required=True, help="Exact user go for this plan; never fabricate")
+    sub.add_parser("mcp")
     r = sub.add_parser("run")
     r.add_argument("job")
     r.add_argument("--background", action="store_true")
@@ -254,40 +263,24 @@ def main():
                 indent=2,
             )
         )
-    elif a.cmd == "run":
-        if a.background:
-            log = s.root / "supervisor.log"
-            f = log.open("a")
-            proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "modal_control",
-                    "--state",
-                    str(s.root),
-                    "--catalog",
-                    str(Path(a.catalog).resolve()),
-                    "run",
-                    a.job,
-                ],
-                stdout=f,
-                stderr=f,
-                start_new_session=True,
-            )
-            print(json.dumps({"supervisor_pid": proc.pid, "log": str(log)}))
-        else:
-            _, rc = run_job(s, a.catalog, a.job)
-            return rc
-    elif a.cmd == "batch":
-        failed = []
-        for job in a.jobs:
-            _, rc = run_job(s, a.catalog, job)
-            if rc:
-                failed.append(job)
-                if not a.continue_on_failure:
-                    break
-        print(json.dumps({"failed": failed}))
-        return bool(failed)
+    elif a.cmd == "plan":
+        from .plans import prepare_plan
+        print(json.dumps(prepare_plan(s, a.catalog, a.job), indent=2))
+    elif a.cmd == "inspect-plan":
+        from .plans import show_plan
+        print(json.dumps(show_plan(s, a.plan_id), indent=2))
+    elif a.cmd == "execute":
+        from .plans import show_plan
+        plan = show_plan(s, a.plan_id)
+        payload = plan["payload"]
+        _, rc = run_job(s, payload["catalog_path"], payload["job"],
+                        plan_id=a.plan_id, confirmation=a.confirm_plan_id, approval_message=a.approval_message)
+        return rc
+    elif a.cmd == "mcp":
+        from .mcp_server import create_server
+        create_server(s, a.catalog).run()
+    elif a.cmd in ("run", "batch"):
+        raise ValueError("Direct run/batch is disabled. Use plan, inspect-plan, then execute only after the user explicitly says go.")
     elif a.cmd == "show":
         print(json.dumps(s.get(a.run_id), indent=2))
     elif a.cmd == "logs":

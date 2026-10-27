@@ -359,6 +359,10 @@ def stage(store, rid, job, smoke, env, modal_command):
                             if e.get("kind") not in ("cloud_stats", "submitted"):
                                 last_worker = time.monotonic()
                             if e.get("kind") == "worker_ready":
+                                if job.get("_approved_hardware") == "T4" and not re.search(r"\bT4\b", str(e.get("gpu", ""))):
+                                    stopping = "hardware_mismatch"
+                                    store.alert(rid, stopping, "Worker did not attest approved T4 hardware")
+                                    continue
                                 ready = True
                                 store.state(rid, "running", stage=name)
                         except json.JSONDecodeError:
@@ -407,14 +411,34 @@ def stage(store, rid, job, smoke, env, modal_command):
     return verified
 
 
-def run_job(store, catalog_path, name):
+def run_job(store, catalog_path, name, *, plan_id=None, confirmation=None, approval_message=None):
+    if not plan_id:
+        raise ValueError("Direct runs are disabled. Prepare a plan and have the human release it.")
+    from .plans import release_plan
+    plan = release_plan(store, plan_id, confirmation, approval_message)
+    payload = plan["payload"]
+    if str(Path(catalog_path).resolve()) != payload["catalog_path"] or name != payload["job"]:
+        raise ValueError("Run does not match released plan")
+    plan["approval_message"] = approval_message
+    return _run_approved_job(store, catalog_path, name, plan=plan)
+
+
+def _run_approved_job(store, catalog_path, name, plan=None):
     catalog = load_catalog(catalog_path)
     job = catalog["jobs"][name]
+    if plan:
+        if digest(catalog_path) != plan["payload"]["catalog_sha256"] or job != plan["payload"]["configuration"]:
+            raise ValueError("Catalog changed after release")
+        for item in plan["payload"]["sources"]:
+            if digest(item["path"]) != item["sha256"]:
+                raise ValueError("Source changed after release")
+        job = dict(job, _approved_hardware=job["review"]["hardware"])
     source = []
     for filename in job.get("source_files", []):
         p = Path(job["cwd"]) / filename
         source.append({"path": str(p), "sha256": digest(p)})
     manifest = {
+        "release_plan": plan,
         "job": name,
         "catalog_path": str(Path(catalog_path).resolve()),
         "catalog_sha256": digest(catalog_path),
@@ -463,6 +487,12 @@ def run_job(store, catalog_path, name):
                 if str(exc) == "cancelled":
                     raise
                 raise RuntimeError("preflight_failed") from exc
+            if plan:
+                if digest(catalog_path) != plan["payload"]["catalog_sha256"]:
+                    raise RuntimeError("Catalog changed after approval")
+                for item in plan["payload"]["controller_sources"]:
+                    if digest(item["path"]) != item["sha256"]:
+                        raise RuntimeError("Controller changed after approval")
             # Recheck exact source before promotion from smoke to the full workload.
             for item in source:
                 if digest(item["path"]) != item["sha256"]:

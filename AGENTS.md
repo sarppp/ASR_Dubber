@@ -3,30 +3,40 @@
 These instructions apply to this repository and all subdirectories, including
 `nemo`, `qwen3-tts`, and the translation pipeline.
 
-## Model selection and Modal controller delegation
+## Mandatory Modal controller and human release gate
 
-- For an authorized task executed through `nemo/modal_control`, the agent may
-  choose the model, version, precision/quantization, and runtime settings. This
-  is delegated selection: a separate model-choice question is not required.
-- Before launching, tell the user what was chosen and why: model/version,
-  settings, Modal CPU or T4, input/time range, expected speed/quality tradeoffs,
-  and cost/runtime estimate when supported by evidence. State unknowns rather
-  than inventing numbers. Record the choice with the run configuration.
-- Respect any model, hardware, budget, or scope the user explicitly specifies.
-  Supertonic 3 with preset M1 on Modal CPU remains the preferred dubbing option;
-  Qwen 1.7B is an alternative when the task warrants it. Explain departures from
-  the preferred option. GPU work remains T4-only.
-- Delegated selection does not authorize new tasks, broad model sweeps, extra
-  comparisons, unbounded retries, or spending outside the approved scope. A
-  status question or permission to choose a model is not permission to launch
-  a new job. Report failures; do not silently switch models and rerun.
-- After the run, tell the user what actually ran, measured timing, available
-  quality results and their limits, outputs, and observed usage/cost if available.
-- Outside the Modal controller workflow, present relevant model options and
-  wait for the user's choice, unless they already selected one for the current
-  task. This does not override the requirement to run inference on Modal.
-- Optional processing tools still require the user's choice under the next
-  section; delegated model selection does not authorize those extra steps.
+- ALL agent work with Modal must go through `nemo/modal_control` and its
+  `nemo/modal-control` CLI or plan/inspect MCP. Start with controller status.
+  Never bypass it with direct `modal run`, Python SDK calls, shell wrappers,
+  ad hoc scripts, or a separate deployment path. Do not weaken this gate.
+- Agents may research and propose the model/version, precision, CPU/T4 hardware,
+  and runtime settings. Model selection is preparation, NOT permission to launch.
+  Supertonic 3 M1 on Modal CPU remains the preferred dubbing option.
+- Prepare an exact expiring plan with the controller, then explain its plan ID,
+  purpose, model/revision, settings, input/time range, outputs, CPU or T4,
+  smoke and full stages, container/time limits, expected speed/quality, and
+  evidence-backed cost estimate (or explicitly unknown cost). Disclose all
+  optional processing steps. Wait for the user's explicit go for this plan.
+- The user can simply say **"release it"** in chat. The agent then executes
+  that exact reviewed plan through the controller CLI, with its exact ID and
+  the user's actual approval message. The user does NOT have to run a terminal
+  command. Never fabricate approval or treat silence, a default, general task
+  intent, or a status question as approval of a newly prepared plan.
+- MCP is plan/inspect-only. Calling the controller execute CLI after the user's
+  explicit go is permitted; calling it before that go is forbidden.
+- Any change to model, hardware, code, input, catalog, or limits invalidates the
+  approval: prepare a new plan and obtain a new go. Expired or consumed plans
+  also need a new plan and approval; there are no automatic fallback retries.
+- GPU allocation is T4-only, with no environment-selected hardware or GPU
+  fallback. CPU allocations are allowed. Worker declarations must explicitly
+  bound timeout, max_containers=1, and retries=0. Do not work around validation
+  by hiding allocations in helpers or dynamic code. Include all execution code,
+  imported local helpers, configuration and inputs in source_files.
+- Report the actual result, timing, quality evidence and limitations, artifacts,
+  errors and observed usage/cost afterward. Preserve the approval and run logs.
+- This is an operational gate, not an OS sandbox: an agent with shell access
+  and Modal credentials must still obey this contract. Never claim the MCP or
+  plan receipt cryptographically proves a chat message came from the human.
 
 ## Optional processing tools also require user selection
 

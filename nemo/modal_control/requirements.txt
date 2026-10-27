@@ -1,0 +1,3 @@
+# MCP API matches the existing prod-control integration.
+mcp>=2,<3
+python-dotenv>=1,<2
