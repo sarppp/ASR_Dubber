@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "jobs": {},
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "authorization": "Produce requested Qwen1.7B German video on T4 only. Reuse existing Supertonic CPU video. No other models.",
+  "completed_at": "2026-10-27T15:12:59.279813+00:00"
+}

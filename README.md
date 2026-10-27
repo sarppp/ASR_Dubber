@@ -526,6 +526,38 @@ python run_pipeline.py --target-lang fr --trim 60 --run-mode transcribe
 python run_pipeline.py --target-lang fr --language de --run-mode translate
 ```
 
+### Stacked bilingual subtitles
+
+`bilingual_subtitles.py` supports one-file and two-file workflows. Use
+`--input` to shorten the long cues in one SRT while preserving its overall
+timing:
+
+```bash
+python3 bilingual_subtitles.py \
+  --input nemo/movie.nemo.de.srt \
+  --output nemo/movie.nemo.de.chunked.srt
+```
+
+Use `--top` plus `--bottom` to combine two independently timed SRT files into
+one cinema-style track. The first language is displayed above the second. It
+rebuilds short sentence fragments and pairs them by timestamp overlap rather
+than subtitle number, preventing flashes from slightly different boundaries.
+
+```bash
+python3 bilingual_subtitles.py \
+  --top nemo/movie.nemo.de.srt \
+  --bottom nemo/movie.nemo.fr.srt \
+  --output nemo/movie.nemo.de-fr.bilingual.srt
+```
+
+Use `--top-label DE --bottom-label FR` to add visible language labels. By
+default, intervals present in only one source track are retained so dialogue is
+not lost; pass `--drop-unpaired` if both languages must always be visible. Use
+`--exact-boundaries` only when every original timing boundary must be retained.
+Long sentence pairs are divided at punctuation and natural connectors, with a
+soft limit of 42 characters per language and 1.3 seconds per cue. Override
+these using `--max-chars` and `--min-duration-ms`.
+
 
 
 ### Argument Reference & Flag Mapping
@@ -626,4 +658,3 @@ Because `run_pipeline.py` invokes `nemo_diarize.py` under the hood, you can twea
    ```bash
    uv run --project qwen3-tts python dub.py video.mp4 video.nemo.de.diarize_fr.srt --language fr --qwen-mode clone
    ```
-

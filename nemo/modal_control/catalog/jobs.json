@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "jobs": {},
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "submissions_disabled": {
+    "at": "2026-10-27T14:05:01.101909+00:00",
+    "reason": "User: finish current run only. No new tests or retries."
+  }
+}

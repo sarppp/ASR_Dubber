@@ -1,0 +1,1315 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "jobs": {
+    "canary_current": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "canary_current"
+      },
+      "success_files": [
+        "runs/canary_current/asr/metrics.json",
+        "runs/canary_current/translation/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/canary_current/asr/metrics.json",
+        "smoke_runs/canary_current/translation/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/canary_current"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "d455706339a6b32e1aa40f82c713a482a0c938e2",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "parakeet_current": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "parakeet_current"
+      },
+      "success_files": [
+        "runs/parakeet_current/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/parakeet_current/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/parakeet_current"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "parakeet_int8": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "parakeet_int8"
+      },
+      "success_files": [
+        "runs/parakeet_int8/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/parakeet_int8/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/parakeet_int8"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision"
+      ],
+      "startup_timeout_seconds": 240,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "cpu",
+      "model_revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
+    },
+    "qwen_asr_06b": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_asr_06b"
+      },
+      "success_files": [
+        "runs/qwen_asr_06b/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_asr_06b/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_asr_06b"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "qwen_asr_17b": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_asr_17b"
+      },
+      "success_files": [
+        "runs/qwen_asr_17b/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_asr_17b/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_asr_17b"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "qwen_asr_gguf_q8": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_asr_gguf_q8"
+      },
+      "success_files": [
+        "runs/qwen_asr_gguf_q8/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_asr_gguf_q8/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_asr_gguf_q8"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision"
+      ],
+      "startup_timeout_seconds": 240,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "cpu",
+      "model_revision": "7e7c69a577fa2725dfedbe34b5e999336e30a19b"
+    },
+    "whistle": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "whistle"
+      },
+      "success_files": [
+        "runs/whistle/asr/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/whistle/asr/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/whistle"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision"
+      ],
+      "startup_timeout_seconds": 240,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "cpu",
+      "model_revision": "741118687e1f008f06d1351a402a731274789790"
+    },
+    "granite_5": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "granite_5"
+      },
+      "success_files": [
+        "runs/granite_5/asr/metrics.json",
+        "runs/granite_5/translation/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/granite_5/asr/metrics.json",
+        "smoke_runs/granite_5/translation/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/granite_5"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "c684620bb54fc89d14ba27256b23bbc9e09ba764",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "canary_180m_flash": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "canary_180m_flash"
+      },
+      "success_files": [
+        "runs/canary_180m_flash/asr/metrics.json",
+        "runs/canary_180m_flash/translation/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/canary_180m_flash/asr/metrics.json",
+        "smoke_runs/canary_180m_flash/translation/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/canary_180m_flash"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "b12ab418510d093e83890178fd0e8b0d0f7918a6",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "canary_1b_flash": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "canary_1b_flash"
+      },
+      "success_files": [
+        "runs/canary_1b_flash/asr/metrics.json",
+        "runs/canary_1b_flash/translation/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/canary_1b_flash/asr/metrics.json",
+        "smoke_runs/canary_1b_flash/translation/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/canary_1b_flash"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "2b6e4d2dacb11cc1b1724de31bb48fe68c26c12e",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "supertonic_3": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "supertonic_3"
+      },
+      "success_files": [
+        "runs/supertonic_3/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/supertonic_3/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/supertonic_3"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision"
+      ],
+      "startup_timeout_seconds": 240,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "cpu",
+      "model_revision": "3cadd1ee6394adea1bd021217a0e650ede09a323"
+    },
+    "qwen_tts_06b": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4_fp32.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4_fp32.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_tts_06b"
+      },
+      "success_files": [
+        "runs/qwen_tts_06b/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_tts_06b/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_tts_06b"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json",
+        "code/modal_bench_t4_fp32.py",
+        "code/adapters_t4_fp32.py",
+        "code/tts_adapters_t4_fp32.py"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "5d83992436eae1d760afd27aff78a71d676296fc",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "qwen_tts_gguf_q8": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_tts_gguf_q8"
+      },
+      "success_files": [
+        "runs/qwen_tts_gguf_q8/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_tts_gguf_q8/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_tts_gguf_q8"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_cpp_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "qwen_tts_gguf_q4": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "qwen_tts_gguf_q4"
+      },
+      "success_files": [
+        "runs/qwen_tts_gguf_q4/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/qwen_tts_gguf_q4/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/qwen_tts_gguf_q4"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_cpp_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "b7ee2e8c7459c3bea99da23e3d178125a7d1713c",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "ming_05b": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "ming_05b"
+      },
+      "success_files": [
+        "runs/ming_05b/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/ming_05b/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/ming_05b"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "7247f4c94a5b2e987404ed28a5cfec41b1a4ca61",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "voxcpm2": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "voxcpm2"
+      },
+      "success_files": [
+        "runs/voxcpm2/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/voxcpm2/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/voxcpm2"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "32279effe8c19989596f05d353d1447f51d9e915",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "voxcpm2_gguf": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "voxcpm2_gguf"
+      },
+      "success_files": [
+        "runs/voxcpm2_gguf/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/voxcpm2_gguf/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/voxcpm2_gguf"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_cpp_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "169f64d8b98bbaab1761e4ca3a83e6af653456cc",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "omnivoice": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "omnivoice"
+      },
+      "success_files": [
+        "runs/omnivoice/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/omnivoice/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/omnivoice"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "c5fdb5ccb189668d56333f77ba2629f4cd7535f4",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "kartoffelbox_turbo": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "kartoffelbox_turbo"
+      },
+      "success_files": [
+        "runs/kartoffelbox_turbo/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/kartoffelbox_turbo/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/kartoffelbox_turbo"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "e152a3827715405e7f0862ab85c05cdfcd94567e",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "chatterbox_multilingual": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "chatterbox_multilingual"
+      },
+      "success_files": [
+        "runs/chatterbox_multilingual/tts/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/chatterbox_multilingual/tts/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/chatterbox_multilingual"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "seamless_m4t_v2": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "code/modal_bench_t4.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "code/launch.py",
+        "--smoke",
+        "code/modal_bench_t4.py"
+      ],
+      "env": {
+        "BENCH_MODEL": "seamless_m4t_v2"
+      },
+      "success_files": [
+        "runs/seamless_m4t_v2/translation/metrics.json",
+        "runs/seamless_m4t_v2/speech_translation/metrics.json"
+      ],
+      "smoke_success_files": [
+        "smoke_runs/seamless_m4t_v2/translation/metrics.json",
+        "smoke_runs/seamless_m4t_v2/speech_translation/metrics.json"
+      ],
+      "artifact_roots": [
+        "runs/seamless_m4t_v2"
+      ],
+      "source_files": [
+        "code/tts_adapters.py",
+        "code/modal_probe.py",
+        "code/seamless_adapter.py",
+        "code/telemetry.py",
+        "code/modal_bench.py",
+        "code/adapters.py",
+        "code/launch.py",
+        "code/organize_results.py",
+        "code/evaluate_tts.py",
+        "code/prepare.py",
+        "01_protocol/models.json",
+        "00_inputs/manifest.json",
+        "00_inputs/german_script.json",
+        "01_protocol/runtime_docs/voxcpm_cpp.revision",
+        "01_protocol/runtime_docs/qwentts_cpp.revision",
+        "01_protocol/runtime_docs/asr_cpp.revision",
+        "01_protocol/runtime_docs/voxcpm_cpp_compatible.revision",
+        "code/modal_bench_fallback.py",
+        "code/modal_bench_t4.py",
+        "00_inputs/voice_reference.wav",
+        "00_inputs/voice_reference.txt",
+        "00_inputs/voice_reference_provenance.json",
+        "01_protocol/hardware_constraint.json"
+      ],
+      "startup_timeout_seconds": 600,
+      "build_timeout_seconds": 1800,
+      "idle_timeout_seconds": 120,
+      "max_seconds": 5400,
+      "hardware": "gpu",
+      "model_revision": "5f8cc790b19fc3f67a61c105133b20b34e3dcb76",
+      "gpu_constraint": "T4 only; no fallback"
+    },
+    "evaluate_ming_05b": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "/home/sarpk/uv_tests/ASR/nemo/modal_control/evaluate_audio.py",
+        "--key",
+        "ming_05b"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "/home/sarpk/uv_tests/ASR/nemo/modal_control/evaluate_audio.py",
+        "--key",
+        "ming_05b",
+        "--smoke"
+      ],
+      "success_files": [
+        "speech_model_benchmark_2026-10-27/runs/ming_05b/tts/quality_proxy.json"
+      ],
+      "smoke_success_files": [
+        "speech_model_benchmark_2026-10-27/runs/ming_05b/tts/quality_smoke.json"
+      ],
+      "source_files": [
+        "modal_control/evaluate_audio.py"
+      ],
+      "startup_timeout_seconds": 240,
+      "max_seconds": 1800
+    },
+    "evaluate_supertonic_3": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "/home/sarpk/uv_tests/ASR/nemo/modal_control/evaluate_audio.py",
+        "--key",
+        "supertonic_3"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "/home/sarpk/uv_tests/ASR/nemo/modal_control/evaluate_audio.py",
+        "--key",
+        "supertonic_3",
+        "--smoke"
+      ],
+      "success_files": [
+        "speech_model_benchmark_2026-10-27/runs/supertonic_3/tts/quality_proxy.json"
+      ],
+      "smoke_success_files": [
+        "speech_model_benchmark_2026-10-27/runs/supertonic_3/tts/quality_smoke.json"
+      ],
+      "source_files": [
+        "modal_control/evaluate_audio.py"
+      ],
+      "startup_timeout_seconds": 240,
+      "max_seconds": 1800
+    },
+    "gpu_health": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "modal_control/gpu_probe.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "modal_control/gpu_probe.py",
+        "--smoke"
+      ],
+      "success_files": [
+        "modal_control/.state/gpu_probe_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/.state/gpu_probe_smoke.json"
+      ],
+      "source_files": [
+        "modal_control/gpu_probe.py"
+      ],
+      "startup_timeout_seconds": 120,
+      "max_seconds": 300
+    }
+  },
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  }
+}

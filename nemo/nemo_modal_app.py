@@ -123,7 +123,7 @@ import subprocess
 REMOTE_IO_PATH = Path("/app/nemo_asr")
 NEMO_CONDA_ENV = "nemo-env"
 CONDA_PYTHON = f"/opt/conda/envs/{NEMO_CONDA_ENV}/bin/python"
-GPU_TYPE = "A10G"  # Change to "A10G" for long videos
+GPU_TYPE = "T4"  # T4 only: no environment override or GPU fallback.
 
 # Friendly shortname → full NeMo model ID (mirrors nemo_audio.ASR_MODELS)
 ASR_MODELS = {

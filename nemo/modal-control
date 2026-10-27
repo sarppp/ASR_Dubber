@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+control_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$control_root"
+exec "$control_root/speech_model_benchmark_2026-10-27/.runner/bin/python" -m modal_control "$@"

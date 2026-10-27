@@ -1,0 +1,13 @@
+# Keep the batch runner under version control despite the parent allowlist.
+!.gitignore
+!batch_subtitles.py
+!local_subtitles.py
+!local-asr-requirements.txt
+!BATCH_SUBTITLES.md
+!test_local_subtitles.py
+!organize_subtitles.py
+!modal-control
+!modal_control/
+!modal_control/**
+modal_control/.state/
+modal_control/**/__pycache__/

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "jobs": {},
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "authorization": "User explicitly requested Qwen word error on saved audio; CPU evaluation only. No synthesis or other benchmark jobs.",
+  "completed_at": "2026-10-27T14:51:53.817668+00:00"
+}

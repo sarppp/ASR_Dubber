@@ -90,3 +90,8 @@ whisper/*
 # Tests
 !tests
 !/AGENTS.md
+
+# Generated Python and test caches
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
