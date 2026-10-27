@@ -3,20 +3,30 @@
 These instructions apply to this repository and all subdirectories, including
 `nemo`, `qwen3-tts`, and the translation pipeline.
 
-## Model selection belongs to the user
+## Model selection and Modal controller delegation
 
-- Before each new model-based task or run, present the relevant model options and
-  wait for the user to choose. Include the current model and realistic alternatives,
-  their purpose, available speed/quality evidence, and expected hardware and cost
-  when known. Clearly distinguish measured results from estimates.
-- The user makes the selection. Do not silently select, substitute, upgrade, or
-  benchmark models. A configured default is a recommendation, not permission to run.
-- Supertonic 3 with preset M1 on CPU is the current preferred dubbing option.
-  Qwen 1.7B remains an explicit alternative. Still ask for the user's choice for
-  each new task unless the user has already explicitly selected it for that task.
-- An explicit selection in the current task satisfies this requirement; do not
-  ask repeatedly for the same choice. A change of model or added comparison needs
-  a new user choice. Do not interpret a status question as permission for more runs.
+- For an authorized task executed through `nemo/modal_control`, the agent may
+  choose the model, version, precision/quantization, and runtime settings. This
+  is delegated selection: a separate model-choice question is not required.
+- Before launching, tell the user what was chosen and why: model/version,
+  settings, Modal CPU or T4, input/time range, expected speed/quality tradeoffs,
+  and cost/runtime estimate when supported by evidence. State unknowns rather
+  than inventing numbers. Record the choice with the run configuration.
+- Respect any model, hardware, budget, or scope the user explicitly specifies.
+  Supertonic 3 with preset M1 on Modal CPU remains the preferred dubbing option;
+  Qwen 1.7B is an alternative when the task warrants it. Explain departures from
+  the preferred option. GPU work remains T4-only.
+- Delegated selection does not authorize new tasks, broad model sweeps, extra
+  comparisons, unbounded retries, or spending outside the approved scope. A
+  status question or permission to choose a model is not permission to launch
+  a new job. Report failures; do not silently switch models and rerun.
+- After the run, tell the user what actually ran, measured timing, available
+  quality results and their limits, outputs, and observed usage/cost if available.
+- Outside the Modal controller workflow, present relevant model options and
+  wait for the user's choice, unless they already selected one for the current
+  task. This does not override the requirement to run inference on Modal.
+- Optional processing tools still require the user's choice under the next
+  section; delegated model selection does not authorize those extra steps.
 
 ## Optional processing tools also require user selection
 

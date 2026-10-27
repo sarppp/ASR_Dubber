@@ -18,6 +18,22 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control backup /tmp/modal-control-backup.tar.gz
 ```
 
+## Agent model selection
+
+For an authorized controller task, the agent may choose the model and runtime
+settings. Before launch, report the choice and reason, version/precision, Modal
+CPU or T4, input range, expected tradeoffs, and evidence-backed runtime/cost
+estimates (or mark them unknown). Save the choice in the run configuration and
+report actual results afterward. Explicit user choices take precedence.
+Supertonic 3 M1 on Modal CPU is the preferred dubbing option; GPU runs are T4-only.
+
+This delegation does not authorize extra runs, model sweeps, silent fallback
+retries, or optional processing such as bilingual subtitle creation. See the
+repository [AGENTS.md](../../AGENTS.md) for the full execution and approval rules.
+The controller executes configured jobs; it does not autonomously select models
+or enforce conversational approval. Existing disabled catalogs stay disabled
+until a new run is authorized.
+
 ## What it records
 
 - SQLite run/event/alert history, plus timestamped stdout and stderr and JSONL events per attempt.
