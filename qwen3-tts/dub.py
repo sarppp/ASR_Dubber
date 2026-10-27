@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dub.py — Video dubbing pipeline (NeMo SRT + Qwen TTS)
+dub.py — Video dubbing pipeline (NeMo SRT + Supertonic CPU (Qwen optional))
 ======================================================
 
 Full workflow:
@@ -16,10 +16,10 @@ Usage:
   uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --no-demucs
 
   # Voice cloning mode:
-  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --qwen-mode clone
+  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --tts-engine qwen --qwen-mode clone
 
   # Clone but skip demucs (use original video audio for voice refs):
-  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --qwen-mode clone --no-demucs
+  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --tts-engine qwen --qwen-mode clone --no-demucs
 """
 
 import argparse
@@ -87,7 +87,7 @@ def _auto_workers(device_ids: List[int]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Dub a video from a pre-translated diarized SRT using Qwen TTS",
+        description="Dub a video from a pre-translated diarized SRT using Supertonic CPU or Qwen TTS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Full pipeline:
@@ -97,7 +97,7 @@ Full pipeline:
 
 Examples:
   uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --language fr
-  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --language fr --qwen-mode clone
+  uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --language fr --tts-engine qwen --qwen-mode clone
   uv run python dub.py video.mp4 video.nemo.de.diarize_fr.srt --language fr --no-demucs
         """,
     )
@@ -105,8 +105,13 @@ Examples:
                         help="Input video file (auto-discovered in --search-dir if omitted)")
     parser.add_argument("srt",   nargs="?", default=None,
                         help="Pre-translated diarized SRT (auto-discovered if omitted)")
+    parser.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen"],
+                        help="TTS backend (default: supertonic on CPU)")
+    parser.add_argument("--supertonic-voice", default="M1",
+                        choices=[f"{gender}{i}" for gender in ("M", "F") for i in range(1, 6)],
+                        help="Supertonic preset voice (default: M1, same as the comparison)")
     parser.add_argument("--language",   default="fr",
-                        help="Target language to pass to Qwen TTS (default: fr)")
+                        help="Target language for speech synthesis (default: fr)")
     parser.add_argument("--qwen-mode",  default="clone", choices=["custom", "clone"],
                         help="'custom' = fixed voice | 'clone' = voice cloned from speaker (default: clone)")
     parser.add_argument("--no-demucs",  action="store_true",
@@ -136,6 +141,14 @@ Examples:
                         help="Comma-separated GPU IDs for workers, e.g. '0,1,2' "
                              "(default: '0'). Workers round-robin across devices.")
     args = parser.parse_args()
+
+    if args.tts_engine == "supertonic":
+        from supertonic_tts_worker import language_code
+        try:
+            language_code(args.language)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.qwen_mode = "custom"  # Supertonic uses preset voices, no clone extraction.
 
     search_dir = Path(args.search_dir).resolve()
     VIDEO_EXT  = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
@@ -189,7 +202,14 @@ Examples:
 
     qwen_dir   = Path(args.qwen_dir).resolve()
     work_dir   = Path(args.workdir).resolve()
-    temp_dir   = work_dir / "temp"
+    import hashlib
+    cache_key = hashlib.sha256(srt_path.read_bytes() + repr((
+        args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
+        args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
+        str(video_path), video_path.stat().st_mtime_ns,
+    )).encode()).hexdigest()[:16]
+    cache_dir = work_dir / "cache" / args.tts_engine / cache_key
+    temp_dir   = cache_dir / "temp"
     output_dir = work_dir / "output"
     cast_dir   = work_dir / "cast_samples"
 
@@ -198,7 +218,8 @@ Examples:
 
     script_dir  = Path(__file__).resolve().parent
     qwen_python = _qwen_python(qwen_dir)
-    qwen_worker = _qwen_worker(script_dir)
+    qwen_worker = (str(script_dir / "supertonic_tts_worker.py")
+                   if args.tts_engine == "supertonic" else _qwen_worker(script_dir))
 
     t_start = time.perf_counter()
 
@@ -206,7 +227,8 @@ Examples:
     log.info(f"Video        : {video_path.name}")
     log.info(f"SRT          : {srt_path.name}")
     log.info(f"Language     : {args.language}")
-    log.info(f"Qwen mode    : {args.qwen_mode}")
+    log.info(f"TTS engine   : {args.tts_engine}")
+    log.info(f"Voice mode   : {args.supertonic_voice if args.tts_engine == 'supertonic' else args.qwen_mode}")
     log.info(f"Demucs       : {'disabled' if args.no_demucs else 'enabled'}")
     log.info(f"Qwen python  : {qwen_python}")
     log.info("=" * 60)
@@ -246,7 +268,9 @@ Examples:
     # ── 4. Voice map ─────────────────────────────────────────────────────────
     # Always build as fallback, but only log if we're actually in custom mode
     gender_hints = detect_speaker_genders(clone_refs) if clone_refs else {}
-    voice_map = build_voice_map(segments, gender_hints=gender_hints)
+    voice_map = ({seg["speaker"]: args.supertonic_voice for seg in segments}
+                 if args.tts_engine == "supertonic"
+                 else build_voice_map(segments, gender_hints=gender_hints))
     if args.qwen_mode == "custom":
         log.info("🎤 Voice assignments (custom mode):")
         for spk, voice in voice_map.items():
@@ -268,9 +292,10 @@ Examples:
     #   Always use 2 workers for optimal CPU/GPU overlap
     #   Works on any GPU with ~6GB+ VRAM (8GB, 12GB, 16GB+, etc.)
     #   Multi-GPU: same logic, but each GPU gets its own model (not yet implemented)
-    qwen_language = _qwen_lang(args.language)
+    qwen_language = (args.language if args.tts_engine == "supertonic"
+                     else _qwen_lang(args.language))
     log.info(f"Qwen language: '{args.language}' → '{qwen_language}'")
-    checkpoint_path = work_dir / "checkpoint.json"
+    checkpoint_path = cache_dir / "checkpoint.json"
     final_files: List[Tuple[Path, float, float]] = _load_checkpoint(checkpoint_path)
     done_indices = {int(Path(c).stem.split("_")[1]) for c, _, _ in final_files}
 
@@ -292,7 +317,8 @@ Examples:
             gap_end = seg["end"]
         _available[seg["index"]] = min(gap_end - seg["start"], slot + 5.0)
 
-    device_ids = [int(x.strip()) for x in args.tts_devices.split(",")]
+    device_ids = ([None] if args.tts_engine == "supertonic"
+                  else [int(x.strip()) for x in args.tts_devices.split(",")])
     n_workers  = (_auto_workers(device_ids)
                   if args.tts_workers == "auto"
                   else int(args.tts_workers))
@@ -464,7 +490,7 @@ Examples:
     final_files.sort(key=lambda x: x[1])
 
     if not final_files:
-        log.error("No audio was generated. Check Qwen TTS errors above.")
+        log.error("No audio was generated. Check TTS errors above.")
         return 1
 
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
@@ -503,6 +529,9 @@ Examples:
     import json as _json, datetime as _dt
     timing_path = output_dir / f"{video_path.stem}_timing_dub.json"
     timing_path.write_text(_json.dumps({
+        "tts_engine": args.tts_engine,
+        "tts_device": "cpu" if args.tts_engine == "supertonic" else args.tts_devices,
+        "voice": args.supertonic_voice if args.tts_engine == "supertonic" else args.qwen_mode,
         "video":    video_path.name,
         "srt":      srt_path.name,
         "date":     _dt.datetime.now().isoformat(timespec="seconds"),

@@ -258,7 +258,8 @@ class PersistentTTSWorker:
             self._start_inner()
 
     def _start_inner(self) -> None:
-        dev = f"cuda:{self._device_id}" if self._device_id is not None else "cuda"
+        dev = ("cpu" if Path(self._qwen_worker_path).name == "supertonic_tts_worker.py"
+               else f"cuda:{self._device_id}" if self._device_id is not None else "cuda")
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if self._device_id is not None:

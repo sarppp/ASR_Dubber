@@ -56,6 +56,7 @@ nemo/*
 # Inside qwen3-tts/
 qwen3-tts/*
 !qwen3-tts/dub.py
+!qwen3-tts/supertonic_tts_worker.py
 !qwen3-tts/qwen_tts_worker.py
 !qwen3-tts/dubber_modal.py
 !qwen3-tts/dub_srt.py
@@ -88,3 +89,4 @@ whisper/*
 
 # Tests
 !tests
+!/AGENTS.md

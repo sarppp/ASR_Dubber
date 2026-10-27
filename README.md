@@ -1,5 +1,26 @@
 # ASR Dubber — End-to-End Local Dubbing Stack
 
+## Default dubbing engine
+
+Dubbing now defaults to **Supertonic 3 on CPU**, using preset **M1**, the voice
+used in the German comparison. Both `run_pipeline.py` and `qwen3-tts/dub.py`
+select it automatically. No voice-cloning reference extraction is needed.
+Target language and background-music preservation remain explicit pipeline settings.
+
+```bash
+uv run python run_pipeline.py --target-lang de
+# Optional: previous Qwen 1.7B voice cloning backend
+uv run python run_pipeline.py --target-lang de --tts-engine qwen --qwen-mode clone
+```
+
+Use `--supertonic-voice M1` (or M2–M5 / F1–F5) to choose a preset.
+Run `uv sync --project qwen3-tts` after updating to install the pinned CPU dependency.
+Model assets download on first synthesis. Cached segments/checkpoints are separated
+by backend, input and synthesis settings; timing JSON records the selected backend.
+The old `dubber_modal.py` wrapper references a retired `fish_qwen_copy.py` entrypoint;
+use the pipeline above. This default change does not deploy or launch Modal jobs.
+
+
 ## What This Project Solves
 
 - **Full-stack dubbing**: diarize + translate + TTS + audio mixing, all locally.

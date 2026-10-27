@@ -27,9 +27,9 @@ uv run python run_pipeline.py --target-lang fr --skip-nemo
 uv run python run_pipeline.py --target-lang fr --skip-translate
 uv run python run_pipeline.py --target-lang fr --skip-dub
 
-# Voice mode (default is clone)
-uv run python run_pipeline.py --target-lang fr --qwen-mode clone       # clones original speakers
-uv run python run_pipeline.py --target-lang fr --qwen-mode custom      # uses fixed Qwen voices
+# TTS defaults to Supertonic CPU, M1. Qwen voice cloning is opt-in.
+uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode clone       # clones original speakers
+uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode custom      # uses fixed Qwen voices
 
 # Fill gaps in SRT (detects missing speech, transcribes with Whisper)
 uv run python run_pipeline.py --target-lang fr --fill-gaps 2           # fill gaps >= 2s
@@ -212,7 +212,7 @@ def _append_timing_summary(run_dir: Path, pipeline_log: Path) -> None:
 
 def main():
     p = argparse.ArgumentParser(
-        description="ASR dubbing pipeline: NeMo → Gemma translate → Qwen TTS",
+        description="ASR dubbing pipeline: NeMo → Gemma translate → Supertonic CPU (Qwen optional)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--target-lang",    default=None,
@@ -221,8 +221,12 @@ def main():
                    help="Source language code (auto-detected from SRT if omitted)")
     p.add_argument("--trim",           type=int, default=0, metavar="SEC",
                    help="Process only first N seconds of video (default: full)")
+    p.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen"],
+                   help="TTS backend (default: supertonic on CPU)")
+    p.add_argument("--supertonic-voice", default="M1",
+                   choices=[f"{g}{i}" for g in ("M", "F") for i in range(1, 6)])
     p.add_argument("--qwen-mode",      default="clone", choices=["clone", "custom"],
-                   help="Voice mode: clone (default) or custom")
+                   help="Qwen-only voice mode: clone (default) or custom")
     p.add_argument("--no-demucs",      action="store_true",
                    help="Skip demucs — faster, no background music preserved")
     p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
@@ -524,6 +528,8 @@ def main():
             str(video),          # explicit video — no auto-discovery
             str(dub_srt),        # explicit SRT   — no auto-discovery
             "--language",  args.target_lang,
+            "--tts-engine", args.tts_engine,
+            "--supertonic-voice", args.supertonic_voice,
             "--qwen-mode", args.qwen_mode,
             "--workdir",   str(dub_workdir),
         ]
@@ -540,12 +546,12 @@ def main():
         # Auto-detect GPU count and set workers/devices if user didn't override
         tts_workers = args.tts_workers
         tts_devices = args.tts_devices
-        if tts_workers == 1 and tts_devices == "0":
+        if args.tts_engine == "qwen" and tts_workers == 1 and tts_devices == "0":
             tts_workers, tts_devices = _auto_tts_workers()
         dub_cmd.extend(["--tts-workers", str(tts_workers),
                         "--tts-devices", tts_devices])
 
-        _run(dub_cmd, cwd=QWEN_DIR, label="Step 3/3 — Dubbing with Qwen TTS",
+        _run(dub_cmd, cwd=QWEN_DIR, label=f"Step 3/3 — Dubbing with {args.tts_engine}",
              log_file=log_dub)
     else:
         print("⏭️  Skipping dub (--skip-dub)")
