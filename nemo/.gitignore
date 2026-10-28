@@ -11,3 +11,9 @@
 !modal_control/**
 modal_control/.state/
 modal_control/**/__pycache__/
+# Local inputs and generated outputs remain on disk, outside version control.
+modal_control/*_input_manifest.json
+modal_control/**/*.log
+modal_control/**/*.mp4
+modal_control/**/*.wav
+modal_control/**/*.srt
