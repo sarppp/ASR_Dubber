@@ -1,0 +1,755 @@
+#!/usr/bin/env python3
+"""Shorten subtitles or stack language tracks, with optional compact ASS styling.
+
+Input [EN], [DE], and [FR] prefixes are removed automatically. Language labels
+are only added when explicitly requested. Use --tracks for two or more tracks
+in display order; it preserves source timings. Output .ass to control font size
+(default 24 at 1280x720); SRT font size is controlled by the player.
+
+    python3 bilingual_subtitles.py --tracks movie.en.srt movie.de.srt movie.fr.srt \
+        --output movie.en-de-fr.ass --font-size 36
+
+
+The ``--top`` track is written above the ``--bottom`` track. Cue numbers do not
+need to match. By default, line fragments are rebuilt into short sentence
+groups and paired by timestamp overlap, avoiding flashes caused by slightly
+different boundaries in independently generated translations.
+
+Example:
+    python3 bilingual_subtitles.py \
+        --input movie.nemo.de.srt \
+        --output movie.nemo.de.chunked.srt
+
+    python3 bilingual_subtitles.py \
+        --top movie.nemo.de.srt \
+        --bottom movie.nemo.fr.srt \
+        --output movie.nemo.de-fr.bilingual.srt
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+_TIMESTAMP_RE = re.compile(
+    r"^\s*(\d+):([0-5]\d):([0-5]\d)[,.](\d{3})\s*-->\s*"
+    r"(\d+):([0-5]\d):([0-5]\d)[,.](\d{3})(?:\s+.*)?$"
+)
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"'»”’\)\]]*$")
+_NUMBER_RE = re.compile(r"^\d+(?:[.,]\d+)?$")
+_CONNECTORS = {
+    "and", "but", "or", "so", "because",
+    "und", "aber", "oder", "denn", "weil",
+    "et", "mais", "ou", "donc", "car", "parce",
+}
+_UNSAFE_LINE_ENDS = {
+    "a", "an", "the", "to", "of", "in", "on", "at", "for", "from", "with",
+    "ein", "eine", "einen", "einem", "einer", "der", "die", "das", "den", "dem",
+    "des", "zu", "von", "im", "im", "am", "mit", "für", "als",
+    "un", "une", "le", "la", "les", "des", "du", "de", "à", "au", "aux", "en",
+    "pour", "avec", "dans", "sur",
+}
+_UNIT_WORDS = {
+    "g", "kg", "gram", "grams", "gramm", "gramme", "grammes",
+    "inch", "inches", "zoll", "pouce", "pouces", "cm", "mm", "%",
+}
+_RANGE_CONNECTORS = {"bis", "to", "à"}
+_QUANTITY_LEADS = {"nur", "only", "seulement"}
+
+
+@dataclass(frozen=True)
+class Cue:
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+def _parts_to_ms(parts: Sequence[str]) -> int:
+    hours, minutes, seconds, milliseconds = (int(value) for value in parts)
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds
+
+
+def _format_timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
+def _flatten_text(lines: Iterable[str]) -> str:
+    """Keep each language on one display line while preserving inline markup."""
+    return " ".join(
+        part for line in lines
+        if (part := re.sub(r"^\s*(?:\[(?:EN|DE|FR)\]\s*)+", "", line, flags=re.I).strip())
+    )
+
+
+def parse_srt(path: Path) -> list[Cue]:
+    """Parse a standard SRT file and fail loudly on malformed non-empty blocks."""
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise ValueError(f"Could not read {path}: {exc}") from exc
+
+    normalized = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        raise ValueError(f"SRT is empty: {path}")
+
+    cues: list[Cue] = []
+    for block_number, block in enumerate(re.split(r"\n\s*\n", normalized), start=1):
+        lines = block.splitlines()
+        timestamp_index = next(
+            (index for index, line in enumerate(lines) if _TIMESTAMP_RE.match(line)),
+            None,
+        )
+        if timestamp_index is None:
+            raise ValueError(
+                f"Malformed SRT block {block_number} in {path}: missing timestamp"
+            )
+
+        match = _TIMESTAMP_RE.match(lines[timestamp_index])
+        assert match is not None
+        start_ms = _parts_to_ms(match.groups()[:4])
+        end_ms = _parts_to_ms(match.groups()[4:])
+        if end_ms <= start_ms:
+            raise ValueError(
+                f"Malformed SRT block {block_number} in {path}: "
+                f"end time must be after start time"
+            )
+
+        text = _flatten_text(lines[timestamp_index + 1 :])
+        if not text:
+            raise ValueError(
+                f"Malformed SRT block {block_number} in {path}: missing subtitle text"
+            )
+        cues.append(Cue(start_ms=start_ms, end_ms=end_ms, text=text))
+
+    return sorted(cues, key=lambda cue: (cue.start_ms, cue.end_ms))
+
+
+def _active_text(cues: Sequence[Cue], start_ms: int, end_ms: int) -> str:
+    active = [
+        cue.text
+        for cue in cues
+        if cue.start_ms < end_ms and cue.end_ms > start_ms
+    ]
+    # Overlaps inside a source track are unusual but legal. Preserve their
+    # order without printing the same text twice.
+    return " ".join(dict.fromkeys(active))
+
+
+def _plain_word(word: str) -> str:
+    return re.sub(r"(^[^\wÀ-ÿ%]+|[^\wÀ-ÿ%]+$)", "", word).lower()
+
+
+def _boundary_penalty(words: Sequence[str], index: int) -> float:
+    """Score a possible break before ``words[index]``; lower is better."""
+    if index <= 0 or index >= len(words):
+        return 0.0
+    previous = words[index - 1]
+    previous_plain = _plain_word(previous)
+    next_plain = _plain_word(words[index])
+
+    penalty = 0.0
+    if re.search(r"[.!?…][\"'»”’\)\]]*$", previous):
+        penalty -= 650.0
+    elif re.search(r"[,;:][\"'»”’\)\]]*$", previous):
+        penalty -= 420.0
+    if next_plain in _CONNECTORS:
+        penalty -= 160.0
+
+    # Avoid dangling articles/prepositions and number-unit pairs.
+    if previous_plain in _UNSAFE_LINE_ENDS:
+        penalty += 900.0
+    if next_plain in _UNIT_WORDS and (
+        _NUMBER_RE.match(previous_plain) or any(char.isdigit() for char in previous_plain)
+    ):
+        penalty += 1_200.0
+    if (
+        (_NUMBER_RE.match(previous_plain) and next_plain in _RANGE_CONNECTORS)
+        or (previous_plain in _RANGE_CONNECTORS and _NUMBER_RE.match(next_plain))
+        or previous_plain in _QUANTITY_LEADS
+        or (previous_plain in _UNIT_WORDS and next_plain in {"lang", "long"})
+    ):
+        penalty += 1_200.0
+    if next_plain in _QUANTITY_LEADS:
+        penalty -= 140.0
+    if previous.endswith(("-", "–", "—")):
+        penalty += 1_200.0
+    return penalty
+
+
+def split_text_naturally(text: str, parts: int, *, max_chars: int = 42) -> list[str]:
+    """Split text into exactly ``parts`` balanced phrases using natural breaks."""
+    words = text.split()
+    if not words:
+        return []
+    parts = max(1, min(parts, len(words)))
+    if parts == 1:
+        return [text]
+
+    target = max(1.0, (len(text) - (parts - 1)) / parts)
+    word_count = len(words)
+    # dp[part_count][word_count_used] = (cost, previous_word_count)
+    dp: list[dict[int, tuple[float, int]]] = [dict() for _ in range(parts + 1)]
+    dp[0][0] = (0.0, -1)
+
+    for part_count in range(1, parts + 1):
+        min_end = part_count
+        max_end = word_count - (parts - part_count)
+        for end in range(min_end, max_end + 1):
+            best: tuple[float, int] | None = None
+            for start, (previous_cost, _) in dp[part_count - 1].items():
+                if start >= end:
+                    continue
+                phrase_length = len(" ".join(words[start:end]))
+                balance_cost = (phrase_length - target) ** 2
+                overflow = max(0, phrase_length - max_chars)
+                # ``max_chars`` is deliberately soft: a few extra characters
+                # are preferable to cutting an article away from its noun or
+                # ignoring a strong punctuation boundary.
+                soft_overflow = min(overflow, 6)
+                hard_overflow = max(0, overflow - 6)
+                overflow_cost = (
+                    40.0 * soft_overflow
+                    + 5.0 * soft_overflow**2
+                    + 500.0 * hard_overflow
+                    + 40.0 * hard_overflow**2
+                )
+                break_cost = _boundary_penalty(words, end) if end < word_count else 0.0
+                cost = previous_cost + balance_cost + overflow_cost + break_cost
+                if best is None or cost < best[0]:
+                    best = (cost, start)
+            if best is not None:
+                dp[part_count][end] = best
+
+    if word_count not in dp[parts]:
+        return [text]
+
+    ranges: list[tuple[int, int]] = []
+    end = word_count
+    for part_count in range(parts, 0, -1):
+        start = dp[part_count][end][1]
+        ranges.append((start, end))
+        end = start
+    return [" ".join(words[start:end]) for start, end in reversed(ranges)]
+
+
+def _allocate_chunk_times(
+    start_ms: int,
+    end_ms: int,
+    weights: Sequence[int],
+    *,
+    min_duration_ms: int,
+) -> list[tuple[int, int]]:
+    """Allocate time proportionally while guaranteeing a readable minimum."""
+    if len(weights) == 1:
+        return [(start_ms, end_ms)]
+    duration_ms = end_ms - start_ms
+    guaranteed_ms = min(min_duration_ms, duration_ms // len(weights))
+    remaining_ms = duration_ms - guaranteed_ms * len(weights)
+    total_weight = max(1, sum(weights))
+
+    boundaries = [start_ms]
+    cumulative_weight = 0
+    for index, weight in enumerate(weights[:-1], start=1):
+        cumulative_weight += weight
+        offset = index * guaranteed_ms + round(
+            remaining_ms * cumulative_weight / total_weight
+        )
+        boundaries.append(start_ms + offset)
+    boundaries.append(end_ms)
+    return list(zip(boundaries, boundaries[1:]))
+
+
+def split_bilingual_cue(
+    cue: Cue,
+    *,
+    top_label: str = "",
+    bottom_label: str = "",
+    max_chars: int = 42,
+    min_duration_ms: int = 1_300,
+) -> list[Cue]:
+    """Turn a long paired cue into short, equally counted bilingual chunks."""
+    lines = cue.text.split("\n", 1)
+    top_text = lines[0]
+    bottom_text = lines[1] if len(lines) == 2 else ""
+    raw_lengths = [len(text) for text in (top_text, bottom_text) if text]
+    desired_parts = max(1, math.ceil(max(raw_lengths, default=1) / max_chars))
+    duration_ms = cue.end_ms - cue.start_ms
+    duration_limit = max(1, duration_ms // min_duration_ms)
+    word_limit = min(len(text.split()) for text in (top_text, bottom_text) if text)
+    max_parts = max(1, min(duration_limit, word_limit))
+    parts = max(1, min(desired_parts, max_parts))
+
+    while True:
+        top_parts = split_text_naturally(top_text, parts, max_chars=max_chars)
+        bottom_parts = (
+            split_text_naturally(bottom_text, parts, max_chars=max_chars)
+            if bottom_text
+            else [""] * parts
+        )
+        longest_part = max(
+            len(part) for part in (*top_parts, *bottom_parts) if part
+        )
+        if longest_part <= max_chars + 2 or parts >= max_parts:
+            break
+        parts += 1
+    weights = [
+        max(len(top_part), len(bottom_part), 1)
+        for top_part, bottom_part in zip(top_parts, bottom_parts)
+    ]
+    timings = _allocate_chunk_times(
+        cue.start_ms,
+        cue.end_ms,
+        weights,
+        min_duration_ms=min_duration_ms,
+    )
+
+    result: list[Cue] = []
+    for (start_ms, end_ms), top_part, bottom_part in zip(
+        timings, top_parts, bottom_parts
+    ):
+        output_lines = []
+        if top_part:
+            output_lines.append(f"[{top_label}] {top_part}" if top_label else top_part)
+        if bottom_part:
+            output_lines.append(
+                f"[{bottom_label}] {bottom_part}" if bottom_label else bottom_part
+            )
+        result.append(Cue(start_ms, end_ms, "\n".join(output_lines)))
+    return result
+
+
+def split_single_track(
+    cues: Sequence[Cue],
+    *,
+    max_chars: int = 42,
+    min_duration_ms: int = 1_300,
+    max_group_gap_ms: int = 750,
+    max_group_duration_ms: int = 12_000,
+) -> list[Cue]:
+    """Apply the same natural phrase and timing rules to one subtitle track."""
+    if not cues:
+        raise ValueError("Subtitle track has no cues")
+    grouped = group_sentence_cues(
+        cues,
+        max_gap_ms=max_group_gap_ms,
+        max_duration_ms=max_group_duration_ms,
+    )
+    result: list[Cue] = []
+    for cue in grouped:
+        result.extend(
+            split_bilingual_cue(
+                cue,
+                max_chars=max_chars,
+                min_duration_ms=min_duration_ms,
+            )
+        )
+    return result
+
+
+def combine_tracks_exact(
+    top_cues: Sequence[Cue],
+    bottom_cues: Sequence[Cue],
+    *,
+    top_label: str = "",
+    bottom_label: str = "",
+    keep_unpaired: bool = True,
+) -> list[Cue]:
+    """Split at every source boundary, preserving both timelines exactly."""
+    if not top_cues:
+        raise ValueError("Top subtitle track has no cues")
+    if not bottom_cues:
+        raise ValueError("Bottom subtitle track has no cues")
+
+    boundaries = sorted(
+        {value for cue in (*top_cues, *bottom_cues) for value in (cue.start_ms, cue.end_ms)}
+    )
+    combined: list[Cue] = []
+
+    for start_ms, end_ms in zip(boundaries, boundaries[1:]):
+        if end_ms <= start_ms:
+            continue
+
+        top_text = _active_text(top_cues, start_ms, end_ms)
+        bottom_text = _active_text(bottom_cues, start_ms, end_ms)
+        if not top_text and not bottom_text:
+            continue
+        if not keep_unpaired and (not top_text or not bottom_text):
+            continue
+
+        lines: list[str] = []
+        if top_text:
+            lines.append(f"[{top_label}] {top_text}" if top_label else top_text)
+        if bottom_text:
+            lines.append(
+                f"[{bottom_label}] {bottom_text}" if bottom_label else bottom_text
+            )
+        text = "\n".join(lines)
+
+        # A boundary from an overlapping cue can leave the visible state
+        # unchanged. Coalesce those adjacent intervals to avoid needless flicker.
+        if combined and combined[-1].end_ms == start_ms and combined[-1].text == text:
+            previous = combined[-1]
+            combined[-1] = Cue(previous.start_ms, end_ms, text)
+        else:
+            combined.append(Cue(start_ms, end_ms, text))
+
+    return combined
+
+
+def group_sentence_cues(
+    cues: Sequence[Cue],
+    *,
+    max_gap_ms: int = 750,
+    max_duration_ms: int = 12_000,
+    max_chars: int = 220,
+) -> list[Cue]:
+    """Join adjacent line fragments without creating oversized subtitle cues."""
+    if max_gap_ms < 0 or max_duration_ms <= 0 or max_chars <= 0:
+        raise ValueError("Grouping limits must be positive")
+    if not cues:
+        return []
+
+    grouped: list[Cue] = []
+    current = cues[0]
+    for cue in cues[1:]:
+        gap_ms = cue.start_ms - current.end_ms
+        joined_text = f"{current.text} {cue.text}"
+        can_join = (
+            gap_ms <= max_gap_ms
+            and not _SENTENCE_END_RE.search(current.text)
+            and cue.end_ms - current.start_ms <= max_duration_ms
+            and len(joined_text) <= max_chars
+        )
+        if can_join:
+            current = Cue(current.start_ms, max(current.end_ms, cue.end_ms), joined_text)
+        else:
+            grouped.append(current)
+            current = cue
+    grouped.append(current)
+    return grouped
+
+
+def _overlap_components(
+    top_cues: Sequence[Cue], bottom_cues: Sequence[Cue]
+) -> list[tuple[list[Cue], list[Cue]]]:
+    """Return connected components whose cross-language intervals overlap."""
+    top_count = len(top_cues)
+    total = top_count + len(bottom_cues)
+    parents = list(range(total))
+
+    def find(node: int) -> int:
+        while parents[node] != node:
+            parents[node] = parents[parents[node]]
+            node = parents[node]
+        return node
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    top_index = 0
+    bottom_index = 0
+    while top_index < len(top_cues) and bottom_index < len(bottom_cues):
+        top = top_cues[top_index]
+        bottom = bottom_cues[bottom_index]
+        if max(top.start_ms, bottom.start_ms) < min(top.end_ms, bottom.end_ms):
+            union(top_index, top_count + bottom_index)
+
+        if top.end_ms <= bottom.end_ms:
+            top_index += 1
+        else:
+            bottom_index += 1
+
+    members: dict[int, tuple[list[Cue], list[Cue]]] = {}
+    for index, cue in enumerate(top_cues):
+        members.setdefault(find(index), ([], []))[0].append(cue)
+    for index, cue in enumerate(bottom_cues):
+        members.setdefault(find(top_count + index), ([], []))[1].append(cue)
+    return list(members.values())
+
+
+def combine_tracks(
+    top_cues: Sequence[Cue],
+    bottom_cues: Sequence[Cue],
+    *,
+    top_label: str = "",
+    bottom_label: str = "",
+    keep_unpaired: bool = True,
+    max_group_gap_ms: int = 750,
+    max_group_duration_ms: int = 12_000,
+    max_chars: int = 42,
+    min_duration_ms: int = 1_300,
+) -> list[Cue]:
+    """Build cinema-style bilingual cues from overlapping sentence groups."""
+    if not top_cues:
+        raise ValueError("Top subtitle track has no cues")
+    if not bottom_cues:
+        raise ValueError("Bottom subtitle track has no cues")
+
+    top_groups = group_sentence_cues(
+        top_cues,
+        max_gap_ms=max_group_gap_ms,
+        max_duration_ms=max_group_duration_ms,
+    )
+    bottom_groups = group_sentence_cues(
+        bottom_cues,
+        max_gap_ms=max_group_gap_ms,
+        max_duration_ms=max_group_duration_ms,
+    )
+    combined: list[Cue] = []
+
+    for top_component, bottom_component in _overlap_components(top_groups, bottom_groups):
+        if not keep_unpaired and (not top_component or not bottom_component):
+            continue
+        component = [*top_component, *bottom_component]
+        lines: list[str] = []
+        if top_component:
+            top_text = " ".join(dict.fromkeys(cue.text for cue in top_component))
+            lines.append(top_text)
+        if bottom_component:
+            bottom_text = " ".join(dict.fromkeys(cue.text for cue in bottom_component))
+            lines.append(bottom_text)
+        grouped_cue = Cue(
+            start_ms=min(cue.start_ms for cue in component),
+            end_ms=max(cue.end_ms for cue in component),
+            text="\n".join(lines),
+        )
+        combined.extend(
+            split_bilingual_cue(
+                grouped_cue,
+                top_label=top_label,
+                bottom_label=bottom_label,
+                max_chars=max_chars,
+                min_duration_ms=min_duration_ms,
+            )
+        )
+
+    return sorted(combined, key=lambda cue: (cue.start_ms, cue.end_ms))
+
+
+def write_srt(path: Path, cues: Sequence[Cue]) -> None:
+    if not cues:
+        raise ValueError("Combined subtitle track has no cues")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blocks = []
+    for index, cue in enumerate(cues, start=1):
+        blocks.append(
+            f"{index}\n{_format_timestamp(cue.start_ms)} --> "
+            f"{_format_timestamp(cue.end_ms)}\n{cue.text}"
+        )
+    path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+
+
+def combine_multiple_tracks(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
+    """Stack all active languages in input order without changing their timings."""
+    if len(tracks) < 2 or any(not track for track in tracks):
+        raise ValueError("Provide at least two non-empty subtitle tracks")
+    boundaries = sorted({t for track in tracks for cue in track
+                         for t in (cue.start_ms, cue.end_ms)})
+    result: list[Cue] = []
+    for start, end in zip(boundaries, boundaries[1:]):
+        lines = [" ".join(c.text for c in track
+                          if c.start_ms < end and c.end_ms > start)
+                 for track in tracks]
+        text = "\n".join(line for line in lines if line)
+        if not text:
+            continue
+        if result and result[-1].end_ms == start and result[-1].text == text:
+            result[-1] = Cue(result[-1].start_ms, end, text)
+        else:
+            result.append(Cue(start, end, text))
+    return result
+
+
+def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 24) -> None:
+    """Write bottom-aligned styled subtitles; font size is relative to 720p.
+
+    This is a fixed font size, not a block-height cap: long lines can wrap.
+    """
+    if not cues or not 1 <= font_size <= 100:
+        raise ValueError("Need non-empty subtitles and font size from 1 to 100")
+
+    def timestamp(ms: int) -> str:
+        cs = round(ms / 10)
+        hours, cs = divmod(cs, 360000)
+        minutes, cs = divmod(cs, 6000)
+        seconds, cs = divmod(cs, 100)
+        return f"{hours}:{minutes:02}:{seconds:02}.{cs:02}"
+
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,1.5,0.5,2,40,40,22,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+    for cue in cues:
+        # Literal source text cannot inject ASS style overrides.
+        text = cue.text.replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}")
+        text = text.replace("\n", r"\N")
+        start, end = timestamp(cue.start_ms), timestamp(cue.end_ms)
+        if start == end:
+            end = timestamp(cue.start_ms + 10)
+        events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+
+
+def write_subtitles(path: Path, cues: Sequence[Cue], *, font_size: int = 24) -> None:
+    if path.suffix.lower() == ".ass":
+        write_ass(path, cues, font_size=font_size)
+    else:
+        write_srt(path, cues)
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Naturally shorten one SRT or stack two timestamp-aligned SRTs."
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        help="Single SRT to shorten naturally (cannot be combined with --top/--bottom)",
+    )
+    parser.add_argument("--tracks", nargs="+", type=Path,
+                        help="Two or more tracks in display order; preserve source timings")
+    parser.add_argument("--font-size", type=int, default=24,
+                        help="ASS font size at 720p (default 24); no effect on SRT")
+    parser.add_argument("--top", type=Path, help="Bilingual mode: SRT shown on top")
+    parser.add_argument(
+        "--bottom", type=Path, help="Bilingual mode: SRT shown underneath"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        help="Output SRT (default: .chunked.srt or .bilingual.srt)",
+    )
+    parser.add_argument(
+        "--top-label", default="", help="Optional label such as DE (default: none)"
+    )
+    parser.add_argument(
+        "--bottom-label", default="", help="Optional label such as FR (default: none)"
+    )
+    parser.add_argument(
+        "--drop-unpaired",
+        action="store_true",
+        help="Hide intervals where only one language has an active cue",
+    )
+    parser.add_argument(
+        "--exact-boundaries",
+        action="store_true",
+        help="Preserve every input boundary instead of grouping sentence fragments",
+    )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=42,
+        help="Soft maximum characters per language and cue (default: 42)",
+    )
+    parser.add_argument(
+        "--min-duration-ms",
+        type=int,
+        default=1300,
+        help="Minimum duration for generated chunks in milliseconds (default: 1300)",
+    )
+    args = parser.parse_args(argv)
+    if not 1 <= args.font_size <= 100:
+        parser.error("--font-size must be between 1 and 100")
+    if args.tracks:
+        if len(args.tracks) < 2 or args.input or args.top or args.bottom:
+            parser.error("--tracks needs at least two files and cannot use --input/--top/--bottom")
+        if args.top_label or args.bottom_label or args.drop_unpaired:
+            parser.error("labels and --drop-unpaired require --top/--bottom")
+    elif args.input:
+        if args.top or args.bottom:
+            parser.error("--input cannot be combined with --top or --bottom")
+        if args.drop_unpaired or args.exact_boundaries:
+            parser.error("--drop-unpaired/--exact-boundaries require --top and --bottom")
+    elif not (args.top and args.bottom):
+        parser.error("provide --input, or provide both --top and --bottom")
+    return args
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if args.tracks:
+        output = args.output or args.tracks[0].with_suffix(".multilingual.srt")
+    elif args.input:
+        output = args.output or args.input.with_name(f"{args.input.stem}.chunked.srt")
+    else:
+        output = args.output or args.top.with_name(f"{args.top.stem}.bilingual.srt")
+    try:
+        if args.tracks:
+            combined = combine_multiple_tracks([parse_srt(path) for path in args.tracks])
+            write_subtitles(output, combined, font_size=args.font_size)
+            print(f"Created {output} ({len(combined)} cues)")
+            return 0
+        if args.input:
+            source_cues = parse_srt(args.input)
+            chunked = split_single_track(
+                source_cues,
+                max_chars=args.max_chars,
+                min_duration_ms=args.min_duration_ms,
+            )
+            write_subtitles(output, chunked, font_size=args.font_size)
+            print(f"Created {output}")
+            print(f"Input cues: {len(source_cues)} | Output cues: {len(chunked)}")
+            return 0
+
+        assert args.top is not None and args.bottom is not None
+        top_cues = parse_srt(args.top)
+        bottom_cues = parse_srt(args.bottom)
+        if args.exact_boundaries:
+            combined = combine_tracks_exact(
+                top_cues,
+                bottom_cues,
+                top_label=args.top_label,
+                bottom_label=args.bottom_label,
+                keep_unpaired=not args.drop_unpaired,
+            )
+        else:
+            combined = combine_tracks(
+                top_cues,
+                bottom_cues,
+                top_label=args.top_label,
+                bottom_label=args.bottom_label,
+                keep_unpaired=not args.drop_unpaired,
+                max_chars=args.max_chars,
+                min_duration_ms=args.min_duration_ms,
+            )
+        write_subtitles(output, combined, font_size=args.font_size)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    bilingual = sum(1 for cue in combined if "\n" in cue.text)
+    print(f"Created {output}")
+    print(
+        f"Top cues: {len(top_cues)} | Bottom cues: {len(bottom_cues)} | "
+        f"Output cues: {len(combined)} | Bilingual intervals: {bilingual}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -249,3 +249,47 @@ def test_cli_creates_output(tmp_path):
     assert main(["--top", str(top), "--bottom", str(bottom), "-o", str(output)]) == 0
     assert output.exists()
     assert "Deutsch\nFrançais" in output.read_text(encoding="utf-8")
+
+
+def test_input_language_labels_are_removed_without_removing_speaker_notes(tmp_path):
+    source = _write(tmp_path / 'labels.srt',
+                    '1\n00:00:00,000 --> 00:00:02,000\n'
+                    '[EN] Hello\n[de] Hallo\n[FR] Bonjour\n[laughs]')
+    assert parse_srt(source)[0].text == 'Hello Hallo Bonjour [laughs]'
+
+
+def test_three_tracks_preserve_gaps_order_and_endpoints():
+    from bilingual_subtitles import combine_multiple_tracks
+    tracks = [[Cue(0, 2000, 'Hello')], [Cue(500, 2500, 'Hallo')],
+              [Cue(1000, 3000, 'Bonjour')]]
+    assert combine_multiple_tracks(tracks) == [
+        Cue(0, 500, 'Hello'), Cue(500, 1000, 'Hello\nHallo'),
+        Cue(1000, 2000, 'Hello\nHallo\nBonjour'),
+        Cue(2000, 2500, 'Hallo\nBonjour'), Cue(2500, 3000, 'Bonjour')]
+
+
+def test_multitrack_cli_writes_compact_styled_ass(tmp_path):
+    paths = [_write(tmp_path / f'{lang}.srt',
+                    f'1\n00:00:01,000 --> 00:00:03,000\n[{lang}] {text}')
+             for lang, text in [('EN', 'Hello'), ('DE', 'Hallo'), ('FR', 'Bonjour')]]
+    output = tmp_path / 'combined.ass'
+    assert main(['--tracks', *map(str, paths), '--output', str(output),
+                 '--font-size', '36']) == 0
+    text = output.read_text()
+    assert 'PlayResY: 720' in text
+    assert 'Style: Default,DejaVu Sans,36,' in text
+    assert r'Hello\NHallo\NBonjour' in text
+    assert '[EN]' not in text and '[DE]' not in text and '[FR]' not in text
+    assert '0:00:01.00,0:00:03.00' in text
+
+
+def test_ass_escapes_source_style_overrides(tmp_path):
+    from bilingual_subtitles import write_ass
+    output = tmp_path / 'escaped.ass'
+    write_ass(output, [Cue(0, 1000, r'{\fs100}Hello')])
+    assert r'\{\\fs100\}Hello' in output.read_text()
+
+
+def test_multitrack_cli_rejects_conflicting_inputs(tmp_path):
+    with pytest.raises(SystemExit):
+        main(['--tracks', 'en.srt', 'de.srt', '--input', 'fr.srt'])
