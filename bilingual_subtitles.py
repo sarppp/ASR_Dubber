@@ -3,12 +3,13 @@
 
 Input [EN], [DE], and [FR] prefixes are removed automatically. Language labels
 are only added when explicitly requested. Use --tracks for two or more tracks
-in display order; languages advance together in shared phrase groups. Use
---exact-boundaries to preserve independent source timings instead. Every CLI
-output includes a styled ASS file with one consistent font size, chosen up to
-38px to fit every cue within 20% of the 720p frame height. libass is required
-to measure the actual rendered text. SRT outputs
-also get an ASS companion, because SRT cannot enforce layout or font size.
+in display order. Already aligned tracks keep their exact text and timings.
+Independent tracks require --allow-approximate-alignment; shared timestamps or
+similar text lengths cannot establish semantic correspondence across languages.
+SRT is the default deliverable. libass measures its plain text at a fixed size
+and rejects overflow instead of shrinking a companion file. Use --ass-preview
+only to save the measuring surface for inspection. SRT player settings control
+the actual display font and size.
 All subtitle outputs use UTF-8 with BOM for reliable player encoding detection.
 
     python3 bilingual_subtitles.py --tracks movie.en.srt movie.de.srt movie.fr.srt \
@@ -34,6 +35,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import html
 import ctypes
 import ctypes.util
 import math
@@ -585,7 +587,7 @@ def combine_multiple_tracks_exact(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
 
 def _split_multilingual_cue(cue: Cue, *, max_chars: int,
                             min_duration_ms: int) -> list[Cue]:
-    """Split every language into the same number of phrases on one timeline."""
+    """Approximate phrase splitting; equal counts do not prove matching meaning."""
     lines = cue.text.split("\n")
     present = [line for line in lines if line]
     limit = max(1, min((cue.end_ms - cue.start_ms) // min_duration_ms,
@@ -842,14 +844,60 @@ def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
     path.write_text(header + "\n".join(events) + "\n", encoding="utf-8-sig")
 
 
+def plain_srt_text(text: str) -> str:
+    """Remove source styling that could resize individual SRT captions."""
+    text = html.unescape(text)
+    text = re.sub(r"</?(?:font|span|b|i|u|s)\b[^>]*>", "", text, flags=re.I)
+    text = re.sub(r"\{\\[^}]*\}", "", text)
+    return text
+
+
+def validate_srt_layout(cues: Sequence[Cue], *, font_size: int = 38,
+                        max_height_percent: float = 20) -> list[Cue]:
+    """Check plain SRT at a fixed reference size; never shrink to hide overflow.
+
+    ASS is only the measuring surface. Disabling automatic wrapping reveals
+    long lines that some players otherwise shrink or clip. Player settings
+    still determine the actual display font and size for SRT.
+    """
+    if not cues or not 1 <= font_size <= 100 or not 1 <= max_height_percent <= 100:
+        raise ValueError("Need subtitles and font size/height percent from 1 to 100")
+    clean = [Cue(c.start_ms, c.end_ms, plain_srt_text(c.text)) for c in cues]
+    header = _ass_header(font_size, max_height_percent).replace("WrapStyle: 0", "WrapStyle: 2")
+    measured = set()
+    with AssMeasurer(header) as renderer:
+        previous_end = 0
+        for index, cue in enumerate(clean, 1):
+            if cue.start_ms < previous_end or cue.end_ms <= cue.start_ms:
+                raise ValueError(f"SRT cue {index} has overlapping or invalid timing")
+            previous_end = cue.end_ms
+            if not cue.text.strip() or any(not line.strip() for line in cue.text.split("\n")):
+                raise ValueError(f"SRT cue {index} contains an empty subtitle line")
+            if cue.text in measured:
+                continue
+            left, top, right, bottom = renderer.bounds(cue.text, font_size)
+            if left < 40 or right > 1240 or bottom - top > int(720 * max_height_percent / 100):
+                raise ValueError(
+                    f"SRT cue {index} does not fit at reference size {font_size}; "
+                    "shorten its aligned text or supply shorter source cues. "
+                    "Shrinking an ASS companion cannot fix SRT overflow."
+                )
+            measured.add(cue.text)
+    return clean
+
+
 def write_subtitles(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
-                    max_height_percent: float = 20) -> None:
-    ass_path = path if path.suffix.lower() == ".ass" else path.with_suffix(".ass")
-    # Validate and render the styled output before writing an SRT companion.
-    write_ass(ass_path, cues, font_size=font_size, max_height_percent=max_height_percent)
-    if path.suffix.lower() != ".ass":
-        write_srt(path, cues)
-        print(f"Created styled companion {ass_path} (maximum height {max_height_percent:g}%)")
+                    max_height_percent: float = 20, ass_preview: bool = False) -> None:
+    if path.suffix.lower() == ".ass":
+        write_ass(path, cues, font_size=font_size, max_height_percent=max_height_percent)
+        return
+    if path.suffix.lower() != ".srt":
+        raise ValueError("Subtitle output must end in .srt or .ass")
+    clean = validate_srt_layout(cues, font_size=font_size, max_height_percent=max_height_percent)
+    write_srt(path, clean)
+    if ass_preview:
+        write_ass(path.with_suffix(".ass"), clean, font_size=font_size,
+                  max_height_percent=max_height_percent)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -864,8 +912,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--tracks", nargs="+", type=Path,
                         help="Two or more tracks in display order; align shared phrase boundaries")
+    parser.add_argument("--ass-preview", action="store_true",
+                        help="Also save the ASS measurement preview; SRT is the main output")
+    parser.add_argument("--allow-approximate-alignment", action="store_true",
+                        help="Opt in to timing-only alignment of independently translated tracks")
     parser.add_argument("--font-size", type=int, default=38,
-                        help="Maximum ASS font size at 720p (default 38); one size fits the whole file")
+                        help="Fixed SRT measurement size at 720p (default 38); player controls display size")
     parser.add_argument("--max-height-percent", type=float, default=20,
                         help="Maximum rendered ASS block height as percent of frame (default 20)")
     parser.add_argument("--top", type=Path, help="Bilingual mode: SRT shown on top")
@@ -876,7 +928,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output",
         "-o",
         type=Path,
-        help="Output .ass or .srt; SRT always gets a styled .ass companion",
+        help="Output .srt (default), or explicitly request an .ass preview",
     )
     parser.add_argument(
         "--top-label", default="", help="Optional label such as DE (default: none)"
@@ -939,11 +991,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.tracks:
             tracks = [parse_srt(path) for path in args.tracks]
-            combined = (combine_multiple_tracks_exact(tracks) if args.exact_boundaries
-                        else combine_multiple_tracks(tracks, max_chars=args.max_chars,
-                                                     min_duration_ms=args.min_duration_ms))
+            timelines = [[(c.start_ms, c.end_ms) for c in track] for track in tracks]
+            if args.exact_boundaries:
+                combined = combine_multiple_tracks_exact(tracks)
+            elif all(timeline == timelines[0] for timeline in timelines[1:]):
+                # Source-aligned translations are indivisible: never re-split
+                # each language by character count after it has been translated.
+                combined = [Cue(row[0].start_ms, row[0].end_ms,
+                                "\n".join(c.text for c in row)) for row in zip(*tracks)]
+            elif args.allow_approximate_alignment:
+                print("Warning: timing-only alignment cannot guarantee matching meaning.")
+                combined = combine_multiple_tracks(tracks, max_chars=args.max_chars,
+                                                   min_duration_ms=args.min_duration_ms)
+            else:
+                raise ValueError(
+                    "Independent subtitle timelines have no verified phrase mapping. "
+                    "Translate the same English cue IDs into each language first. "
+                    "Use --allow-approximate-alignment only to explicitly accept timing heuristics."
+                )
             write_subtitles(output, combined, font_size=args.font_size,
-                            max_height_percent=args.max_height_percent)
+                            max_height_percent=args.max_height_percent, ass_preview=args.ass_preview)
             print(f"Created {output} ({len(combined)} cues)")
             return 0
         if args.input:
@@ -954,7 +1021,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 min_duration_ms=args.min_duration_ms,
             )
             write_subtitles(output, chunked, font_size=args.font_size,
-                            max_height_percent=args.max_height_percent)
+                            max_height_percent=args.max_height_percent, ass_preview=args.ass_preview)
             print(f"Created {output}")
             print(f"Input cues: {len(source_cues)} | Output cues: {len(chunked)}")
             return 0
@@ -970,7 +1037,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bottom_label=args.bottom_label,
                 keep_unpaired=not args.drop_unpaired,
             )
-        else:
+        elif ([(c.start_ms, c.end_ms) for c in top_cues]
+              == [(c.start_ms, c.end_ms) for c in bottom_cues]):
+            combined = combine_tracks_exact(
+                top_cues, bottom_cues, top_label=args.top_label,
+                bottom_label=args.bottom_label, keep_unpaired=not args.drop_unpaired,
+            )
+        elif args.allow_approximate_alignment:
+            print("Warning: timing-only alignment cannot guarantee matching meaning.")
             combined = combine_tracks(
                 top_cues,
                 bottom_cues,
@@ -980,8 +1054,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_chars=args.max_chars,
                 min_duration_ms=args.min_duration_ms,
             )
+        else:
+            raise ValueError(
+                "Independent subtitle timelines have no verified phrase mapping. "
+                "Translate shared English cue IDs first, or explicitly choose "
+                "--allow-approximate-alignment / --exact-boundaries."
+            )
         write_subtitles(output, combined, font_size=args.font_size,
-                            max_height_percent=args.max_height_percent)
+                            max_height_percent=args.max_height_percent, ass_preview=args.ass_preview)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
