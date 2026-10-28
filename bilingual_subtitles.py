@@ -3,11 +3,14 @@
 
 Input [EN], [DE], and [FR] prefixes are removed automatically. Language labels
 are only added when explicitly requested. Use --tracks for two or more tracks
-in display order; it preserves source timings. Output .ass to control font size
-(default 24 at 1280x720); SRT font size is controlled by the player.
+in display order; it preserves source timings. Every CLI output includes a styled
+ASS file: the preferred 38px font shrinks per cue to fit at most 20% of the 720p
+frame height. libass is required to measure the actual rendered text. SRT outputs
+also get an ASS companion, because SRT cannot enforce layout or font size.
+All subtitle outputs use UTF-8 with BOM for reliable player encoding detection.
 
     python3 bilingual_subtitles.py --tracks movie.en.srt movie.de.srt movie.fr.srt \
-        --output movie.en-de-fr.ass --font-size 36
+        --output movie.en-de-fr.ass
 
 
 The ``--top`` track is written above the ``--bottom`` track. Cue numbers do not
@@ -29,6 +32,8 @@ Example:
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import math
 import re
 from dataclasses import dataclass
@@ -547,7 +552,7 @@ def write_srt(path: Path, cues: Sequence[Cue]) -> None:
             f"{index}\n{_format_timestamp(cue.start_ms)} --> "
             f"{_format_timestamp(cue.end_ms)}\n{cue.text}"
         )
-    path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+    path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8-sig")
 
 
 def combine_multiple_tracks(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
@@ -571,27 +576,26 @@ def combine_multiple_tracks(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
     return result
 
 
-def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 24) -> None:
-    """Write bottom-aligned styled subtitles; font size is relative to 720p.
+class _AssImage(ctypes.Structure):
+    pass
 
-    This is a fixed font size, not a block-height cap: long lines can wrap.
-    """
-    if not cues or not 1 <= font_size <= 100:
-        raise ValueError("Need non-empty subtitles and font size from 1 to 100")
 
-    def timestamp(ms: int) -> str:
-        cs = round(ms / 10)
-        hours, cs = divmod(cs, 360000)
-        minutes, cs = divmod(cs, 6000)
-        seconds, cs = divmod(cs, 100)
-        return f"{hours}:{minutes:02}:{seconds:02}.{cs:02}"
+_AssImage._fields_ = [
+    ("w", ctypes.c_int), ("h", ctypes.c_int), ("stride", ctypes.c_int),
+    ("bitmap", ctypes.POINTER(ctypes.c_ubyte)), ("color", ctypes.c_uint32),
+    ("dst_x", ctypes.c_int), ("dst_y", ctypes.c_int),
+    ("next", ctypes.POINTER(_AssImage)), ("type", ctypes.c_int),
+]
 
-    header = f"""[Script Info]
+
+def _ass_header(font_size: int, max_height_percent: float) -> str:
+    return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1280
 PlayResY: 720
 WrapStyle: 0
 ScaledBorderAndShadow: yes
+; Maximum rendered subtitle height: {max_height_percent:g}% (including outline/shadow)
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -600,24 +604,149 @@ Style: Default,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H800000
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+
+
+def _ass_text(text: str) -> str:
+    # Source text cannot inject ASS style overrides.
+    return (text.replace("\\", "\\\\").replace("{", r"\{")
+            .replace("}", r"\}").replace("\n", r"\N"))
+
+
+class AssMeasurer:
+    """Measure with libass itself, including wrapping, outline, and shadow.
+
+    Font substitutions or player style overrides can change layout; use the
+    supplied ASS styles and DejaVu Sans to reproduce these measurements.
+    """
+    def __init__(self, header: str):
+        name = ctypes.util.find_library("ass")
+        if not name:
+            raise ValueError("Styled subtitles require libass (install libass9 on Debian/Ubuntu)")
+        self.api = ctypes.CDLL(name)
+        self.library = self.renderer = None
+        self.header = header
+        signatures = {
+            "ass_library_init": (ctypes.c_void_p, []),
+            "ass_library_done": (None, [ctypes.c_void_p]),
+            "ass_renderer_init": (ctypes.c_void_p, [ctypes.c_void_p]),
+            "ass_renderer_done": (None, [ctypes.c_void_p]),
+            "ass_set_frame_size": (None, [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]),
+            "ass_set_fonts": (None, [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+                                      ctypes.c_int, ctypes.c_char_p, ctypes.c_int]),
+            "ass_read_memory": (ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_char_p,
+                                                  ctypes.c_size_t, ctypes.c_char_p]),
+            "ass_free_track": (None, [ctypes.c_void_p]),
+            "ass_render_frame": (ctypes.POINTER(_AssImage), [ctypes.c_void_p,
+                                 ctypes.c_void_p, ctypes.c_longlong, ctypes.POINTER(ctypes.c_int)]),
+        }
+        for function, (restype, argtypes) in signatures.items():
+            getattr(self.api, function).restype = restype
+            getattr(self.api, function).argtypes = argtypes
+        self.library = self.api.ass_library_init()
+        if not self.library:
+            raise ValueError("Could not initialize libass")
+        # Suppress repeated library messages; initialization/render failures raise below.
+        callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p,
+                                         ctypes.c_void_p, ctypes.c_void_p)
+        self._log_callback = callback_type(lambda level, fmt, args, data: None)
+        self.api.ass_set_message_cb.restype = None
+        self.api.ass_set_message_cb.argtypes = [ctypes.c_void_p, callback_type, ctypes.c_void_p]
+        self.api.ass_set_message_cb(self.library, self._log_callback, None)
+        self.renderer = self.api.ass_renderer_init(self.library)
+        if not self.renderer:
+            self.close()
+            raise ValueError("Could not initialize ASS renderer")
+        self.api.ass_set_frame_size(self.renderer, 1280, 720)
+        self.api.ass_set_fonts(self.renderer, None, b"DejaVu Sans", 1, None, 1)
+
+    def close(self) -> None:
+        if self.renderer:
+            self.api.ass_renderer_done(self.renderer)
+            self.renderer = None
+        if self.library:
+            self.api.ass_library_done(self.library)
+            self.library = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def bounds(self, text: str, font_size: int) -> tuple[int, int, int, int]:
+        data = (self.header + "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,"
+                + rf"{{\fs{font_size}}}" + _ass_text(text) + "\n").encode("utf-8")
+        track = self.api.ass_read_memory(self.library, data, len(data), b"UTF-8")
+        if not track:
+            raise ValueError("Could not parse generated ASS for layout measurement")
+        boxes = []
+        try:
+            changed = ctypes.c_int()
+            node = self.api.ass_render_frame(self.renderer, track, 500, ctypes.byref(changed))
+            while node:
+                item = node.contents
+                if item.w and item.h and item.color & 255 != 255:
+                    boxes.append((item.dst_x, item.dst_y, item.dst_x + item.w, item.dst_y + item.h))
+                node = item.next
+        finally:
+            self.api.ass_free_track(track)
+        if not boxes:
+            raise ValueError("Subtitle has no visible rendered glyphs")
+        return (min(x[0] for x in boxes), min(x[1] for x in boxes),
+                max(x[2] for x in boxes), max(x[3] for x in boxes))
+
+    def fit(self, text: str, preferred_size: int, max_height: int) -> int:
+        # Descending checks avoid assuming that font hinting/wrapping is monotonic.
+        for size in range(preferred_size, 0, -1):
+            left, top, right, bottom = self.bounds(text, size)
+            if bottom - top <= max_height and left >= 20 and right <= 1260:
+                return size
+        raise ValueError("Subtitle cannot fit the requested frame-height limit")
+
+
+def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
+              max_height_percent: float = 20) -> None:
+    """Write BOM-marked ASS, shrinking each cue to the default 20% height cap."""
+    if not cues or not 1 <= font_size <= 100 or not 1 <= max_height_percent <= 100:
+        raise ValueError("Need non-empty subtitles and font size/height percent from 1 to 100")
+
+    def timestamp(cs: int) -> str:
+        hours, cs = divmod(cs, 360000)
+        minutes, cs = divmod(cs, 6000)
+        seconds, cs = divmod(cs, 100)
+        return f"{hours}:{minutes:02}:{seconds:02}.{cs:02}"
+
+    header = _ass_header(font_size, max_height_percent)
     events = []
-    for cue in cues:
-        # Literal source text cannot inject ASS style overrides.
-        text = cue.text.replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}")
-        text = text.replace("\n", r"\N")
-        start, end = timestamp(cue.start_ms), timestamp(cue.end_ms)
-        if start == end:
-            end = timestamp(cue.start_ms + 10)
-        events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
+    sizes: dict[str, int] = {}
+    previous_end_cs = 0
+    with AssMeasurer(header) as renderer:
+        for cue in cues:
+            if cue.text not in sizes:
+                sizes[cue.text] = renderer.fit(cue.text, font_size, int(720 * max_height_percent / 100))
+            size = sizes[cue.text]
+            text = _ass_text(cue.text)
+            if size != font_size:
+                text = rf"{{\fs{size}}}" + text
+            # ASS has 10ms precision. Keep tiny transitions without creating
+            # simultaneous events, which would stack two independently capped blocks.
+            start_cs = max(round(cue.start_ms / 10), previous_end_cs)
+            end_cs = max(round(cue.end_ms / 10), start_cs + 1)
+            previous_end_cs = end_cs
+            start, end = timestamp(start_cs), timestamp(end_cs)
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    path.write_text(header + "\n".join(events) + "\n", encoding="utf-8-sig")
 
 
-def write_subtitles(path: Path, cues: Sequence[Cue], *, font_size: int = 24) -> None:
-    if path.suffix.lower() == ".ass":
-        write_ass(path, cues, font_size=font_size)
-    else:
+def write_subtitles(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
+                    max_height_percent: float = 20) -> None:
+    ass_path = path if path.suffix.lower() == ".ass" else path.with_suffix(".ass")
+    # Validate and render the styled output before writing an SRT companion.
+    write_ass(ass_path, cues, font_size=font_size, max_height_percent=max_height_percent)
+    if path.suffix.lower() != ".ass":
         write_srt(path, cues)
+        print(f"Created styled companion {ass_path} (maximum height {max_height_percent:g}%)")
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -632,8 +761,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--tracks", nargs="+", type=Path,
                         help="Two or more tracks in display order; preserve source timings")
-    parser.add_argument("--font-size", type=int, default=24,
-                        help="ASS font size at 720p (default 24); no effect on SRT")
+    parser.add_argument("--font-size", type=int, default=38,
+                        help="Preferred ASS font size at 720p (default 38); shrinks to fit")
+    parser.add_argument("--max-height-percent", type=float, default=20,
+                        help="Maximum rendered ASS block height as percent of frame (default 20)")
     parser.add_argument("--top", type=Path, help="Bilingual mode: SRT shown on top")
     parser.add_argument(
         "--bottom", type=Path, help="Bilingual mode: SRT shown underneath"
@@ -642,7 +773,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output",
         "-o",
         type=Path,
-        help="Output SRT (default: .chunked.srt or .bilingual.srt)",
+        help="Output .ass or .srt; SRT always gets a styled .ass companion",
     )
     parser.add_argument(
         "--top-label", default="", help="Optional label such as DE (default: none)"
@@ -673,6 +804,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Minimum duration for generated chunks in milliseconds (default: 1300)",
     )
     args = parser.parse_args(argv)
+    if not 1 <= args.max_height_percent <= 100:
+        parser.error("--max-height-percent must be between 1 and 100")
     if not 1 <= args.font_size <= 100:
         parser.error("--font-size must be between 1 and 100")
     if args.tracks:
@@ -701,7 +834,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.tracks:
             combined = combine_multiple_tracks([parse_srt(path) for path in args.tracks])
-            write_subtitles(output, combined, font_size=args.font_size)
+            write_subtitles(output, combined, font_size=args.font_size,
+                            max_height_percent=args.max_height_percent)
             print(f"Created {output} ({len(combined)} cues)")
             return 0
         if args.input:
@@ -711,7 +845,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_chars=args.max_chars,
                 min_duration_ms=args.min_duration_ms,
             )
-            write_subtitles(output, chunked, font_size=args.font_size)
+            write_subtitles(output, chunked, font_size=args.font_size,
+                            max_height_percent=args.max_height_percent)
             print(f"Created {output}")
             print(f"Input cues: {len(source_cues)} | Output cues: {len(chunked)}")
             return 0
@@ -737,7 +872,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_chars=args.max_chars,
                 min_duration_ms=args.min_duration_ms,
             )
-        write_subtitles(output, combined, font_size=args.font_size)
+        write_subtitles(output, combined, font_size=args.font_size,
+                            max_height_percent=args.max_height_percent)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1

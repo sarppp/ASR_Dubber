@@ -293,3 +293,66 @@ def test_ass_escapes_source_style_overrides(tmp_path):
 def test_multitrack_cli_rejects_conflicting_inputs(tmp_path):
     with pytest.raises(SystemExit):
         main(['--tracks', 'en.srt', 'de.srt', '--input', 'fr.srt'])
+
+
+@pytest.mark.parametrize('suffix', ['srt', 'ass'])
+def test_subtitle_outputs_have_unicode_marker_and_keep_accents(tmp_path, suffix):
+    from bilingual_subtitles import write_subtitles
+    output = tmp_path / f'accents.{suffix}'
+    text = 'Man weiß: Größe, für, schön.\nFrançais: déjà, où, cœur.'
+    write_subtitles(output, [Cue(0, 3000, text)])
+    assert output.read_bytes().startswith(b'\xef\xbb\xbf')
+    decoded = output.read_bytes().decode('utf-8-sig')
+    assert 'weiß' in decoded and 'Größe' in decoded and 'cœur' in decoded
+    assert 'Ã' not in decoded
+    ass = output.with_suffix('.ass')
+    assert ass.exists() and ass.read_bytes().startswith(b'\xef\xbb\xbf')
+
+
+def test_ass_default_keeps_selected_size_and_shrinks_long_captions(tmp_path):
+    import re
+    from bilingual_subtitles import write_ass, AssMeasurer, _ass_header
+    short = 'uncovered something of great import.\nMan weiß, dass es so etwas wie ein viszerales Gefühl ist, dass\nVous savez, c’est un peu un sentiment viscéral que vous avez découvert'
+    long = '\n'.join(['Eine sehr lange Übersetzung mit äöü und ß. ' * 5] * 3)
+    output = tmp_path / 'capped.ass'
+    write_ass(output, [Cue(0, 3000, short), Cue(3000, 9000, long)])
+    text = output.read_text(encoding='utf-8-sig')
+    assert 'Style: Default,DejaVu Sans,38,' in text
+    assert 'Maximum rendered subtitle height: 20%' in text
+    events = [line for line in text.splitlines() if line.startswith('Dialogue:')]
+    assert r'{\fs' not in events[0]
+    reduced = int(re.search(r'\{\\fs(\d+)\}', events[1]).group(1))
+    assert reduced < 38
+    with AssMeasurer(_ass_header(38, 20)) as renderer:
+        for content, size in [(short, 38), (long, reduced)]:
+            left, top, right, bottom = renderer.bounds(content, size)
+            assert bottom - top <= 144
+            assert 20 <= left < right <= 1260
+
+
+def test_default_cli_produces_twenty_percent_ass_companion(tmp_path):
+    top = _write(tmp_path / 'de.srt', '1\n00:00:00,000 --> 00:00:03,000\nMan weiß.')
+    bottom = _write(tmp_path / 'fr.srt', '1\n00:00:00,000 --> 00:00:03,000\nOn sait.')
+    assert main(['--tracks', str(top), str(bottom)]) == 0
+    output = top.with_suffix('.multilingual.ass')
+    assert output.read_bytes().startswith(b'\xef\xbb\xbf')
+    text = output.read_text(encoding='utf-8-sig')
+    assert 'Maximum rendered subtitle height: 20%' in text
+    assert r'Man weiß.\NOn sait.' in text
+
+
+def test_cli_rejects_impossible_height_limit():
+    with pytest.raises(SystemExit):
+        main(['--tracks', 'en.srt', 'de.srt', '--max-height-percent', '0'])
+
+
+def test_ass_subcentisecond_transitions_never_overlap_two_caption_blocks(tmp_path):
+    from bilingual_subtitles import write_ass
+    output = tmp_path / 'short.ass'
+    write_ass(output, [Cue(0, 1001, 'First'), Cue(1001, 1004, 'Transition'),
+                       Cue(1004, 2000, 'Next')])
+    events = [s.split(',',9) for s in output.read_text(encoding='utf-8-sig').splitlines()
+              if s.startswith('Dialogue:')]
+    assert [(s[1],s[2]) for s in events] == [
+        ('0:00:00.00','0:00:01.00'), ('0:00:01.00','0:00:01.01'),
+        ('0:00:01.01','0:00:02.00')]
