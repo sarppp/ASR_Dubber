@@ -16,22 +16,203 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-The original dubbing workers remain unchanged. The candidate timing code is
-isolated and is not the default production path. Existing videos, subtitles, and
-generated audio have not been overwritten.
+**Latest checkpoint: 2026-10-28 17:22 UTC — code integrated; local regressions passed.**
+The user explicitly requires a general automatic solution across videos and
+languages, not manually corrected timestamps or individually rewritten phrases.
+They also request periodic updates to this handoff. The new source-timing and
+safe-fitting code is now being integrated into shared workers; see the current
+checkpoint below before relying on older experiment-only descriptions. Existing
+videos, subtitles, and generated audio have not been overwritten. No new model
+job has run since the released grouping trial.
+
+## Current implementation checkpoint — 2026-10-28 17:22 UTC
+
+This section supersedes older statements that workers are unchanged. These are
+committed source changes on `modal-control`, not a claim of deployment, a newly
+synthesized video, or verified perceptual naturalness.
+
+### Newly measured causes
+
+- Native TTS files include removable edge padding. The conservative **peak**
+  detector in `batch_dubbing/audio_edges.py` uses -60 dB activity, 10 ms frames,
+  80 ms leading / 120 ms trailing guards, and at most one second removed per edge.
+  It preserves interior pauses and quiet activity rather than trimming by RMS.
+- `edge_audit.json` measures 22 saved native clips: **115.774694 seconds raw,
+  101.800000 seconds retained, 13.974694 seconds removable edge padding**.
+  This read-only waveform audit used one core, about 25 MiB RSS, and no model.
+  Earlier larger RMS estimates are superseded by these conservative figures.
+- The problematic German caption for `Ich habe es nicht berechnet.` lasts
+  0.880 seconds, while original English word timing spans 334.840–336.280
+  (1.440 seconds) and the diarized corridor spans 334.845–336.345 (1.500 seconds).
+  Thus translated caption display windows are not reliable speech deadlines.
+- Guarded edge removal still leaves the first Mind candidate at about 21.270
+  seconds against 17.360 seconds of source speech. Removing padding and restoring
+  source timing cannot by themselves make every translation fit.
+- Cached Supertonic code returns a predicted duration, not measured speech
+  activity; retain both predicted duration and waveform measurements in reports.
+
+### General code now present
+
+- `batch_dubbing/speech_units.py`: immutable source-word/utterance IDs, real ASR
+  timestamps and speaker corridors; sentence/pause grouping; exact translation
+  binding by ID. Rejects missing/ambiguous alignment. Subtitle display estimates
+  remain distinct from synthesis timing. Both GPU workers now persist
+  `source_words` and `speech_units[language]` and translate each unit's own audio.
+  GPU catalog source pins were updated; hardware limits were not changed.
+- `batch_dubbing/audio_edges.py`: conservative outer-padding measurements, with
+  quiet consonant protection and explicit retained sample boundaries.
+- `batch_dubbing/speech_schedule.py`: schedules a speaker's utterances jointly
+  inside its corridor, tries native speed first, then at most 1.15×, with bounded
+  onset/end shifts and pause protection. Infeasible speech returns diagnostics.
+- `batch_dubbing/natural_pipeline.py`: provider-independent serial synthesis,
+  persisted raw attempts/hashes/measurements, scheduling, and an optional bounded
+  faithful-shortening callback (at most one revision per utterance, explicit call
+  budget). No model is loaded by this module. Protected-term checks alone cannot
+  establish semantic fidelity. Twelve orchestration tests now pass, including
+  bounded revisions, rejection before inference, failure receipts, language-varied
+  fixtures and a tiny synthetic source-to-timeline FFmpeg test.
+- `batch_dubbing/natural_render.py`: validates source hashes/samples and the whole
+  schedule before publishing a new timeline. Serial bounded FFmpeg, no slowing,
+  no post-tempo clipping, and no partial timeline on overflow. Shared gain avoids
+  per-phrase loudness normalization. Synthetic/mocked checks are not listening.
+- `batch_dubbing/cpu_natural.py`: adapter for the pinned Supertonic model within
+  a released Modal CPU job. Requires source-linked speech units; old translated
+  subtitle artifacts must be regenerated. Preserves native attempts in the cache
+  volume. **All five CPU workers now call this helper**, save reports before
+  rejecting unsuccessful output, and commit native attempts even on failure.
+  Local entrypoints also validate source units before remote allocation, including
+  rejecting old subtitle-only artifacts and empty complete-utterance ranges.
+  Eight CPU catalogs pin the shared helpers. The old smoke catalog's output-name
+  mismatch was corrected to the worker's `_v2` filenames. The
+  adapter currently has no revision provider: impossible timing yields an explicit
+  `needs_revision` report rather than a distorted finished dub.
+- Legacy `qwen3-tts/dub_audio.py` now delegates to `batch_dubbing/fit_audio.py`:
+  no artificial slowdown, no cropped trailing words, at most 1.15×, one fit job
+  at a time, and fit failure prevents final stitching/publication. Old unsafe
+  fitted checkpoints are invalidated. Matching CLI defaults and Supertonic thread
+  limits were changed. The legacy local-inference CLI still exists; executing it
+  is not authorized under `AGENTS.md`. Following-gap borrowing is now capped at
+  250 ms and bounded by the next utterance; the last phrase gets no extra allowance.
+
+### Integration review findings and fixes
+
+- A strict assumption that every ASR word fits inside a diarization turn within
+  20 ms would reject real input. Read-only endpoint checks on saved English cues
+  found discrepancies in 65/2442, 15/1406, 15/250, 201/416 and 4/866 cues across
+  the five existing videos. Cue endpoints come from ASR words, but this check is
+  not a substitute for a fresh word-level alignment audit. **An explicit generic
+  reconciliation step is implemented:** keep word timestamps unchanged,
+  use positive speaker-overlap evidence, retain raw turns and adjustment records,
+  reject ambiguous attribution, and prevent adjacent speakers' corridors overlapping.
+  Both GPU workers save raw words/turns, reconciliation diagnostics and a SHA256
+  receipt under `/cache/source-alignment` before translation. An unresolved
+  alignment returns `needs_alignment` and the entrypoint saves diagnostics then
+  fails. The five historical raw-turn sets contain no actual overlapping
+  different-speaker turns, but individual-word acceptance still needs fresh ASR.
+- Adapter preflight now rejects invalid or >7200-second ranges before loading a
+  model. A partial-range smoke clips only corridor bounds, never word bounds, and
+  records any utterance excluded because it crosses the requested end. A range
+  with no complete utterance fails with an explanation instead of empty synthesis.
+- Renderer/encoder failures now persist `failed`, the failing stage and error,
+  retaining native attempts. An incomplete AAC file is never published as the final
+  timeline. Previously the scheduling report could misleadingly remain `ready`.
+- Word provenance validation now rejects duplicate/mismatched indices, altered
+  first/last bounds and wrong speakers. Provider callbacks receive copied data so
+  they cannot mutate source evidence in place.
+
+### Verification and limits at this checkpoint
+
+- Agent-reported source-unit tests: **23 passed + 23 subtests**, including worker source-contract
+  checks, language-varied text, and word preservation. No cloud/model execution.
+- Agent-reported legacy fitter plus existing routing/checkpoint tests: **70 passed
+  + 4 subtests**. Includes tiny synthetic native/mild-tempo FFmpeg fixtures and a
+  regression proving one failed phrase prevents final stitching. No existing
+  user media was transformed in these tests.
+- Earlier module checks: 11 edge tests, 13 scheduling tests, 14 mocked renderer
+  tests. An integrated rerun after all worker edits is still required; do not add
+  these counts to historical totals as if they were independent runs.
+- Main-agent verification: **25 passed + 28 subtests** for orchestration/rendering;
+  **25 passed + 64 subtests** for adapter, worker integration and orchestration.
+  These runs overlap and must not be summed. One CPU core, 512 MiB address-space
+  cap, BLAS/OMP thread limits 1; each finished in under two seconds. Only tiny
+  synthetic FFmpeg fixtures ran; no model or user-media transformation occurred.
+- Final combined run: **229 passed, 1 skipped, 185 subtests passed in 14.84 s**
+  (15.517 s outer wall time), **56,300 KiB peak child RSS**, one CPU core and a
+  512 MiB address-space ceiling. The skip is the MCP test's missing `mcp`
+  dependency. This includes all `batch_dubbing/test_*.py` except the unrelated
+  video packaging test, all `modal_control/tests`, and the existing
+  `tests/test_supertonic_default.py` / `tests/test_dub_pipeline.py` suites.
+  No model was loaded and no cloud job or existing-media transformation ran.
+- Static review validates **18 changed catalog jobs** against controller resource
+  rules. All changed helper source pins exist. Six historical GPU job entries
+  still reference five original MP4 paths that no longer exist at those locations;
+  do not call those catalogs runnable. A fresh evaluation needs verified current
+  input locations and fresh exclusive output paths, plus the new release below.
+  `git -c core.whitespace=cr-at-eol diff --check` passed; legacy CRLF is preserved.
+- No fresh synthesis validates the new source-unit translation path yet. Translation
+  fidelity, voice/prosody, ambience restoration, and English/German listening
+  validation remain separate open questions. A universal naturalness guarantee is
+  neither established nor realistic from timing tests alone.
+- `plan_repair.py`, `repair_alignments.json`, and `repair_plan.json` are earlier
+  **diagnostic, manually aligned experiments only**. Do not wire them into production,
+  use their per-video corrections as the general solution, or publish their feasible
+  schedule as if repaired audio had been rendered. No repaired media was produced.
+
+### Remaining work and next handoff update
+
+1. Verify delivery state below, and preserve any concurrent bilingual-subtitle work.
+2. Prepare a fresh bounded controller evaluation with verified input paths and new
+   output names. The previous trial did not retain individual ASR words, so old
+   JSON cannot establish acceptance of the new source-unit path. Do not turn cue
+   endpoints into invented word alignments. No new evaluation plan is released.
+3. Validate translation quality with utterance-based Canary input; shorter context
+   can affect meaning or prosody. Record actual call count/runtime/resource usage.
+4. Connect and separately evaluate a bounded faithful revision provider if needed.
+   Current default CPU workers deliberately have none: an infeasible translation
+   is diagnosed rather than automatically repaired. The pure callback tests do
+   not prove that any translation model preserves meaning. A semantic check must
+   cover facts, numbers, negation, names, temporal meaning and speaker intent.
+5. Listen to source English and target German at corresponding times; expand to a
+   ten-minute comparison only after a successful bounded test. Music/ambience,
+   pronunciation and expressiveness remain unvalidated. The legacy subtitle-based
+   CLI received safe fitting but does not yet consume the source-unit grouping path.
+6. Update this handoff after each material implementation, test, release or listening
+   result. Keep code correctness, timing feasibility and perceptual quality distinct.
+
+Reproduce the combined local suite with Python/BLAS restricted to one core/thread,
+512 MiB address space, and no model imports (the small FFmpeg fixtures are synthetic):
+
+```python
+tests = sorted(str(p) for p in Path('batch_dubbing').glob('test_*.py')
+               if p.name != 'test_package_video.py')
+tests += ['modal_control/tests', '../tests/test_supertonic_default.py',
+          '../tests/test_dub_pipeline.py']
+# Inside the bounded subprocess used for the recorded run:
+subprocess.run(['.venv/bin/python', '-m', 'pytest', '-q', '-p',
+                'no:cacheprovider', *tests], check=True, timeout=120)
+```
 
 ## Current delivery and execution state
 
 - Source branch: `modal-control`, created from local `main` at `9a3624e`.
-- Source commit: `afcaaddcef8a7d89659eb159b6af1ec36424a08d` —
+- **General timing/fitting implementation:**
+  `ba136640ad14b33db5c6a69d1be5af0a5ab7f360` —
+  `Use source-linked speech timing and bounded natural audio fitting`.
+  Push to `origin/modal-control` succeeded after the 229-test combined run.
+  This code commit contains 38 source/config/test/documentation files; this
+  periodic handoff update follows it as a separate documentation commit.
+- The earlier viewer/handoff commit is
+  `219feb5b130f1b6481cd6d2c6bb559fe936c80a3`. Concurrent subtitle work in `27d9a0a`
+  and `c0708b9` was preserved; it is not part of the dubbing fix's test evidence.
+- Initial source commit: `afcaaddcef8a7d89659eb159b6af1ec36424a08d` —
   `Add bounded Modal dubbing workflows and naturalness investigation`.
 - Push to `origin/modal-control` succeeded; a separate `git ls-remote` confirmed
   that exact commit. Remote: `git@github.com:sarppp/ASR_Dubber.git`.
 - That commit contains all 47 pending source/configuration/documentation files,
   including changes that predated this investigation, plus the small frozen test
   fixture and telemetry helper that were initially hidden by ignore rules.
-- This handoff is a subsequent documentation change. Do not confuse the source
-  commit above with the eventual documentation commit.
+- The diagnostic-only `plan_repair.py` remains an untracked local artifact;
+  it was deliberately excluded from the general solution commit.
 - Generated evidence/media and controller state remain local and ignored. A new
   clone will have the scripts and frozen experiment input, not the original media,
   cached models, local virtual environments, or generated review results.
