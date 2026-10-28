@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "new_guys_video_04_cpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/cpu_override_worker.py",
+        "--video-index",
+        "4"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/cpu_override_worker.py",
+        "--video-index",
+        "4",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/cpu_override_worker.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "modal_control/batch_inputs/video_04.gpu_full.json",
+        "modal_control/dub_segments.py",
+        "modal_control/batch_inputs/video_04.pitch_review_v2.json",
+        "batch_dubbing/measure_pitch.py",
+        "batch_dubbing/voice_fallback.py"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_04.cpu_v2_full.json",
+        "modal_control/batch_inputs/video_04.cpu_v2_full.m4a"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_04.cpu_v2_preflight.json",
+        "modal_control/batch_inputs/video_04.cpu_v2_preflight.m4a"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Synthesize German dialogue for Mind Control video 5/5",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic package 1.3.1",
+        "precision": "ONNX CPU inference",
+        "reason": "Render German speech using a consistent Supertonic preset per detected speaker",
+        "input": "GPU results and pitch measurements for The Secret to Mind Control, first 15 seconds then the full 1231.4-second recording",
+        "input_seconds": 1231.447075,
+        "outputs": "video_04.cpu_v2_preflight and video_04.cpu_v2_full M4A and JSON reports under modal_control/batch_inputs",
+        "quality_tradeoffs": "One speaker was detected and M1 was estimated from pitch; it may not match the source voice. Unassigned cues use the sole speaker and are recorded. Adjacent cues are grouped and speech accelerated to fit the next cue; very fast spans may sound unnatural. Presets are not voice clones.",
+        "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    }
+  }
+}

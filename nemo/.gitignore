@@ -9,7 +9,22 @@
 !modal-control
 !modal_control/
 !modal_control/**
+!batch_dubbing/
+!batch_dubbing/*.py
+# Keep the investigation code and frozen test fixture, not generated evidence/media.
+!dubbing_naturalness_2026-10-28/
+dubbing_naturalness_2026-10-28/*
+!dubbing_naturalness_2026-10-28/*.py
+!dubbing_naturalness_2026-10-28/review_template.html
+!dubbing_naturalness_2026-10-28/experiment_inputs.json
+# Shared worker dependency; all benchmark data and other outputs remain local.
+!speech_model_benchmark_2026-10-27/
+speech_model_benchmark_2026-10-27/*
+!speech_model_benchmark_2026-10-27/code/
+speech_model_benchmark_2026-10-27/code/*
+!speech_model_benchmark_2026-10-27/code/telemetry.py
 modal_control/.state/
+modal_control/batch_inputs/
 modal_control/**/__pycache__/
 # Local inputs and generated outputs remain on disk, outside version control.
 modal_control/*_input_manifest.json

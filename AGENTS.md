@@ -44,6 +44,26 @@ These instructions apply to this repository and all subdirectories, including
 
 ## Modal execution and spending
 
+### Modal: never fan out without a container cap (incident 2026-10-28)
+**What happened:** an agent generated a dataset with `shard.starmap(...)` over 192 jobs and no
+`max_containers`. Modal autoscaled straight to 100 containers at once (the default limit). The owner
+found 99 running containers in the inventory without any warning. Cost $1.50 (the estimate was
+$1.15), and the owner had never agreed to 100 parallel machines.
+**Why:** `.map()`, `.starmap()`, `.spawn()` in a loop and batch submissions autoscale by default up to
+the workspace limit. The agent only checked total cost (CPU-seconds are the same in parallel or in
+series) and never stated or limited how many containers would run. A mistake inside such a burst
+(wrong code, too much memory, a GPU type) is multiplied by 100 before anyone can react.
+**Rules from now on:**
+1. Every Modal function or class gets an explicit `max_containers=` in its decorator: at most 5 for
+   CPU and 1 for GPU, unless the owner approves a higher number for that specific run.
+2. Before the batch, disclose its job count, parallel container cap, hardware, duration, cost and
+   bounded retries. One explicit release covers launches within that reviewed batch.
+3. Smoke test with 1-2 jobs first; only then the full run, still within the cap.
+4. While it runs, check `modal container list`; if the owner says stop, run `modal app stop <app-id>`
+   immediately (finished outputs in volumes are kept).
+5. Afterwards report the real cost from `modal billing report --for today`.
+
+
 - Always use Modal for model inference, dubbing synthesis, and model benchmarks,
   including CPU models. Supertonic CPU means a Modal CPU container, not local
   inference. Do not fall back to local inference without an explicit user override.

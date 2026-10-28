@@ -1,0 +1,332 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "new_guys_video_00_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "0"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "0",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "new_guys/Bill Ackman_ Is Permanent Capital an Investor’s Biggest Edge_ _ Podcast _ In Good Company_1080p_en_129kbps.mp4",
+        "modal_control/batch_inputs/video_00.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/batch_inputs/video_02.wav",
+        "modal_control/batch_inputs/video_03.wav",
+        "modal_control/batch_inputs/video_04.wav"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_00.gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_00.gpu_preflight.json"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Transcribe, diarize and translate video 1/5 as part of a two-video pipeline",
+        "model": "Parakeet TDT 0.6B v3, Canary 1B v2, NeMo MarbleNet VAD and TitaNet large",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; diarization model registry revisions not pinned",
+        "precision": "FP16 ASR and translation; default NeMo diarization",
+        "reason": "Generate English transcript and speaker-timed German/French translation",
+        "input": "new_guys/Bill Ackman_ Is Permanent Capital an Investor’s Biggest Edge_ _ Podcast _ In Good Company_1080p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
+        "input_seconds": 3202.844444,
+        "outputs": "modal_control/batch_inputs/video_00.gpu_preflight.json and video_00.gpu_full.json",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    },
+    "new_guys_video_01_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "1"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "1",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4",
+        "modal_control/batch_inputs/video_01.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/batch_inputs/video_02.wav",
+        "modal_control/batch_inputs/video_03.wav",
+        "modal_control/batch_inputs/video_04.wav"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_01.gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_01.gpu_preflight.json"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Transcribe, diarize and translate video 2/5 as part of a two-video pipeline",
+        "model": "Parakeet TDT 0.6B v3, Canary 1B v2, NeMo MarbleNet VAD and TitaNet large",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; diarization model registry revisions not pinned",
+        "precision": "FP16 ASR and translation; default NeMo diarization",
+        "reason": "Generate English transcript and speaker-timed German/French translation",
+        "input": "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
+        "input_seconds": 2209.959184,
+        "outputs": "modal_control/batch_inputs/video_01.gpu_preflight.json and video_01.gpu_full.json",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    },
+    "new_guys_video_02_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "2"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "2",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "new_guys/Can 2 People Really Restart Humanity__720p_en_129kbps.mp4",
+        "modal_control/batch_inputs/video_02.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/batch_inputs/video_02.wav",
+        "modal_control/batch_inputs/video_03.wav",
+        "modal_control/batch_inputs/video_04.wav"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_02.gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_02.gpu_preflight.json"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Transcribe, diarize and translate video 3/5 as part of a two-video pipeline",
+        "model": "Parakeet TDT 0.6B v3, Canary 1B v2, NeMo MarbleNet VAD and TitaNet large",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; diarization model registry revisions not pinned",
+        "precision": "FP16 ASR and translation; default NeMo diarization",
+        "reason": "Generate English transcript and speaker-timed German/French translation",
+        "input": "new_guys/Can 2 People Really Restart Humanity__720p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
+        "input_seconds": 418.493243,
+        "outputs": "modal_control/batch_inputs/video_02.gpu_preflight.json and video_02.gpu_full.json",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    },
+    "new_guys_video_03_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "3"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "3",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "new_guys/Every Political System Explained in 10 Minutes_ Capitalism, Communism, Fascism & More_720p_en_129kbps.mp4",
+        "modal_control/batch_inputs/video_03.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/batch_inputs/video_02.wav",
+        "modal_control/batch_inputs/video_03.wav",
+        "modal_control/batch_inputs/video_04.wav"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_03.gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_03.gpu_preflight.json"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Transcribe, diarize and translate video 4/5 as part of a two-video pipeline",
+        "model": "Parakeet TDT 0.6B v3, Canary 1B v2, NeMo MarbleNet VAD and TitaNet large",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; diarization model registry revisions not pinned",
+        "precision": "FP16 ASR and translation; default NeMo diarization",
+        "reason": "Generate English transcript and speaker-timed German/French translation",
+        "input": "new_guys/Every Political System Explained in 10 Minutes_ Capitalism, Communism, Fascism & More_720p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
+        "input_seconds": 587.766712,
+        "outputs": "modal_control/batch_inputs/video_03.gpu_preflight.json and video_03.gpu_full.json",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    },
+    "new_guys_video_04_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "4"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/gpu_worker.py",
+        "--video-index",
+        "4",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "new_guys/The Secret to Mind Control - Nobel Prize 2026 EXPLAINED_720p_en-US_129kbps.mp4",
+        "modal_control/batch_inputs/video_04.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/batch_inputs/video_02.wav",
+        "modal_control/batch_inputs/video_03.wav",
+        "modal_control/batch_inputs/video_04.wav"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/video_04.gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/video_04.gpu_preflight.json"
+      ],
+      "max_seconds": 7200,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "Transcribe, diarize and translate video 5/5 as part of a two-video pipeline",
+        "model": "Parakeet TDT 0.6B v3, Canary 1B v2, NeMo MarbleNet VAD and TitaNet large",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; diarization model registry revisions not pinned",
+        "precision": "FP16 ASR and translation; default NeMo diarization",
+        "reason": "Generate English transcript and speaker-timed German/French translation",
+        "input": "new_guys/The Secret to Mind Control - Nobel Prize 2026 EXPLAINED_720p_en-US_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
+        "input_seconds": 1231.447075,
+        "outputs": "modal_control/batch_inputs/video_04.gpu_preflight.json and video_04.gpu_full.json",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 14400
+      }
+    }
+  }
+}

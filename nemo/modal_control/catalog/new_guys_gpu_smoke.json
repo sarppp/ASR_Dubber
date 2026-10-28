@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "new_guys_gpu_smoke": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "modal_control/smoke_gpu_worker.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "modal_control/smoke_gpu_worker.py",
+        "--smoke"
+      ],
+      "source_files": [
+        "modal_control/smoke_gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "modal_control/batch_inputs/smoke.wav",
+        "modal_control/batch_inputs/smoke.json",
+        "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4"
+      ],
+      "success_files": [
+        "modal_control/batch_inputs/gpu_smoke.json"
+      ],
+      "smoke_success_files": [
+        "modal_control/batch_inputs/gpu_preflight.json"
+      ],
+      "max_seconds": 1800,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "purpose": "First step of end-to-end smoke: speech transcription, diarization, pitch-based voice hints, German and French speech translation; no dubbing in this stage",
+        "model": "Parakeet TDT 0.6B v3; Canary 1B v2; NeMo multilingual MarbleNet VAD and TitaNet large diarization",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; NeMo VAD and TitaNet resolved by NeMo 2.5.3, revisions not pinned",
+        "precision": "FP16 ASR and translation; diarization default precision",
+        "reason": "Generate and test timestamped English transcription, speaker turns and German/French translation before CPU dubbing",
+        "input": "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4 first 15 seconds preflight and first 60 seconds smoke, 16kHz mono WAV; no full video",
+        "input_seconds": 60,
+        "outputs": "modal_control/batch_inputs/gpu_preflight.json and gpu_smoke.json; includes cues, speaker turns, pitch estimates and per-stage timings",
+        "quality_tradeoffs": "Automatic translation and diarization can contain mistakes; pitch-based preset hints may be uncertain and do not establish gender; multiple speakers in excerpt are unverified",
+        "cost_estimate": "Unknown actual cost; 1 T4 listed at $0.000164/sec plus 4 CPU, 32 GiB RAM and other applicable charges. Maximum two 1800-second stage deadlines implies at most $0.59 GPU time if both use a T4 throughout; CPU and RAM additional. Not a billing cap.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 3600
+      }
+    }
+  }
+}
