@@ -306,7 +306,7 @@ def test_subtitle_outputs_have_unicode_marker_and_keep_accents(tmp_path, suffix)
     assert 'weiß' in decoded and 'Größe' in decoded and 'cœur' in decoded
     assert 'Ã' not in decoded
     ass = output.with_suffix('.ass')
-    assert ass.exists() and ass.read_bytes().startswith(b'\xef\xbb\xbf')
+    assert ass.exists() == (suffix == 'ass')
 
 
 def test_ass_uses_one_size_for_short_and_long_captions(tmp_path):
@@ -329,10 +329,10 @@ def test_ass_uses_one_size_for_short_and_long_captions(tmp_path):
             assert 20 <= left < right <= 1260
 
 
-def test_default_cli_produces_twenty_percent_ass_companion(tmp_path):
+def test_cli_produces_ass_preview_only_when_requested(tmp_path):
     top = _write(tmp_path / 'de.srt', '1\n00:00:00,000 --> 00:00:03,000\nMan weiß.')
     bottom = _write(tmp_path / 'fr.srt', '1\n00:00:00,000 --> 00:00:03,000\nOn sait.')
-    assert main(['--tracks', str(top), str(bottom)]) == 0
+    assert main(['--tracks', str(top), str(bottom), '--ass-preview']) == 0
     output = top.with_suffix('.multilingual.ass')
     assert output.read_bytes().startswith(b'\xef\xbb\xbf')
     text = output.read_text(encoding='utf-8-sig')
@@ -439,7 +439,7 @@ def test_multitrack_cli_honors_exact_boundaries(tmp_path):
     output = tmp_path / 'exact.srt'
     assert main(['--tracks', *map(str, paths), '--exact-boundaries', '-o', str(output)]) == 0
     assert len(parse_srt(output)) == 5
-    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 0
+    assert main(['--tracks', *map(str, paths), '--allow-approximate-alignment', '-o', str(output)]) == 0
     assert len(parse_srt(output)) == 1
 
 
@@ -454,10 +454,10 @@ def test_multitrack_cli_uses_chunk_settings(tmp_path, crispr_tracks):
     for path, track in zip(paths, crispr_tracks):
         write_srt(path, track)
     output = tmp_path / 'combined.srt'
-    args = ['--tracks', *map(str, paths), '-o', str(output)]
+    args = ['--tracks', *map(str, paths), '--allow-approximate-alignment', '-o', str(output)]
     assert main(args + ['--max-chars', '42']) == 0
     short = parse_srt(output)
-    assert main(args + ['--max-chars', '80', '--min-duration-ms', '3000']) == 0
+    assert main(args + ['--max-chars', '60', '--min-duration-ms', '3000']) == 0
     long = parse_srt(output)
     assert len(long) < len(short)
     assert all(c.end_ms - c.start_ms >= 3000 for c in long)
@@ -469,3 +469,54 @@ def test_multitrack_preserves_intentional_repetitions():
               [Cue(0, 4000, 'Ja. Ja.')], [Cue(0, 4000, 'Oui. Oui.')]]
     result = combine_multiple_tracks(tracks)
     assert result == [Cue(0, 4000, 'Yes. Yes.\nJa. Ja.\nOui. Oui.')]
+
+
+def test_srt_is_primary_and_strips_per_cue_size_markup(tmp_path):
+    from bilingual_subtitles import write_subtitles
+    path = tmp_path / 'captions.srt'
+    write_subtitles(path, [Cue(0, 2000, '<font size="80">Hello &amp; goodbye</font>\n'
+                              r'{\fs90}Hallo & tschüss')])
+    assert not path.with_suffix('.ass').exists()
+    assert 'Hello & goodbye\nHallo & tschüss' in path.read_text(encoding='utf-8-sig')
+    assert '<font' not in path.read_text() and r'\fs' not in path.read_text()
+
+
+def test_srt_overflow_fails_without_shrinking_an_ass_file_or_replacing_output(tmp_path):
+    from bilingual_subtitles import write_subtitles
+    path = tmp_path / 'captions.srt'
+    path.write_text('existing subtitle')
+    with pytest.raises(ValueError, match='SRT cue 1 does not fit'):
+        write_subtitles(path, [Cue(0, 2000, 'W' * 160 + '\nHallo\nBonjour')])
+    assert path.read_text() == 'existing subtitle'
+    assert not path.with_suffix('.ass').exists()
+
+
+def test_independent_tracks_require_explicit_approximation(tmp_path, crispr_tracks):
+    paths = [tmp_path / f'{i}.srt' for i in range(3)]
+    for path, cues in zip(paths, crispr_tracks):
+        write_srt(path, cues)
+    output = tmp_path / 'combined.srt'
+    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 1
+    assert not output.exists()
+
+
+def test_aligned_translation_phrases_are_never_split_independently(tmp_path):
+    from bilingual_subtitles import write_subtitles
+    tracks = [
+        [Cue(29022, 31172, 'a transformative technology for research,'),
+         Cue(31172, 32969, 'and we hoped, of course,')],
+        [Cue(29022, 31172, 'eine transformative Technologie für die Forschung,'),
+         Cue(31172, 32969, 'und wir hofften natürlich,')],
+        [Cue(29022, 31172, 'une technologie transformatrice pour la recherche,'),
+         Cue(31172, 32969, 'et nous espérions bien sûr,')],
+    ]
+    paths = [tmp_path / f'{i}.srt' for i in range(3)]
+    for path, cues in zip(paths, tracks):
+        write_srt(path, cues)
+    output = tmp_path / 'combined.srt'
+    assert main(['--tracks', *map(str, paths), '--max-chars', '10', '-o', str(output)]) == 0
+    blocks = output.read_text(encoding='utf-8-sig').strip().split('\n\n')
+    assert len(blocks) == 2
+    assert blocks[1].splitlines()[2:] == [track[1].text for track in tracks]
+    assert 'transformatrice' not in blocks[1]
+    assert 'hofften' not in blocks[0] and 'espérions' not in blocks[0]
