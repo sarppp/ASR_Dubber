@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import logging
+import math
 import queue as _queue
 import re
 import subprocess
@@ -64,6 +65,20 @@ from dub_audio import (
 # ---------------------------------------------------------------------------
 # VRAM auto-detection
 # ---------------------------------------------------------------------------
+
+def _fit_window(start: float, end: float, next_start=None) -> float:
+    """Borrow at most 250 ms; never cross the following utterance onset."""
+    values = (start, end) if next_start is None else (start, end, next_start)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) for value in values):
+        raise ValueError("Speech times must be finite numbers")
+    if start < 0 or end <= start:
+        raise ValueError("Speech timestamps must have a positive duration")
+    deadline = end if next_start is None else min(end + .25, next_start)
+    if deadline <= start:
+        raise ValueError("Speech onsets must be ordered and distinct")
+    return deadline - start
+
 
 def _auto_workers(device_ids: List[int]) -> int:
     """Return the number of TTS worker threads.
@@ -122,12 +137,10 @@ Examples:
                         help="Working directory for intermediate files (default: output/dub)")
     parser.add_argument("--qwen-dir",   default=".",
                         help="Path to the qwen3-tts uv project (default: current folder)")
-    parser.add_argument("--max-speed",  type=float, default=1.35,
-                        help="Max TTS speed-up before capping (default: 1.35)")
-    parser.add_argument("--min-speed",  type=float, default=0.65,
-                        help="Min TTS slow-down for short clips (default: 0.65). "
-                             "Clips shorter than this ratio are slowed to 0.65x speed "
-                             "to fill the slot, matching academic lecture pace.")
+    parser.add_argument("--max-speed",  type=float, default=1.15,
+                        help="Max natural TTS speed-up; overflow requires review (default: 1.15)")
+    parser.add_argument("--min-speed",  type=float, default=1.0,
+                        help="Native minimum tempo; only 1.0 is supported (no artificial slowing)")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
@@ -141,6 +154,8 @@ Examples:
                         help="Comma-separated GPU IDs for workers, e.g. '0,1,2' "
                              "(default: '0'). Workers round-robin across devices.")
     args = parser.parse_args()
+    if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
+        parser.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
 
     if args.tts_engine == "supertonic":
         from supertonic_tts_worker import language_code
@@ -204,7 +219,7 @@ Examples:
     work_dir   = Path(args.workdir).resolve()
     import hashlib
     cache_key = hashlib.sha256(srt_path.read_bytes() + repr((
-        args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
+        "natural-fit-v1-gap025", args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
         args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
         str(video_path), video_path.stat().st_mtime_ns,
     )).encode()).hexdigest()[:16]
@@ -303,19 +318,12 @@ Examples:
     log.info(f"🗣️  Synthesising {len(segments)} segments "
              f"({len(done_indices)} cached, {len(todo)} remaining)")
 
-    # Pre-compute available window per segment: slot + silence gap to next
-    # speaker.  TTS is allowed to overflow into that gap (no one is talking
-    # there) rather than being hard-compressed into just the slot.
-    # Cap: slot + 5 s max so we never stretch speech unnaturally over a long
-    # pause.
+    # Preserve pauses: only a small end allowance may be borrowed, and the
+    # next utterance onset is always a hard deadline.
     _available: Dict[int, float] = {}
     for idx, seg in enumerate(segments):
-        slot = seg["end"] - seg["start"]
-        if idx + 1 < len(segments):
-            gap_end = segments[idx + 1]["start"]
-        else:
-            gap_end = seg["end"]
-        _available[seg["index"]] = min(gap_end - seg["start"], slot + 5.0)
+        next_start = segments[idx + 1]["start"] if idx + 1 < len(segments) else None
+        _available[seg["index"]] = _fit_window(seg["start"], seg["end"], next_start)
 
     device_ids = ([None] if args.tts_engine == "supertonic"
                   else [int(x.strip()) for x in args.tts_devices.split(",")])
@@ -337,7 +345,7 @@ Examples:
     for seg in todo:
         seg_queue.put(seg)
 
-    fit_pool    = ThreadPoolExecutor(max_workers=max(4, n_workers * 2))
+    fit_pool    = ThreadPoolExecutor(max_workers=1)
     fit_futures: List = []
 
     # ── Shared TTS Managers (one model instance per mode) ─────────────────────
@@ -367,12 +375,9 @@ Examples:
         clone_broken_global = True
 
     def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
-        slot = max(0.1, end - start)
-        raw_dur = _audio_duration(raw_out)
-        # Use overflow window only when TTS is too long for the original slot.
-        # Short/fitting clips use the slot so they aren't slowed unnecessarily.
-        target_dur = available_dur if raw_dur > slot * args.max_speed else slot
-        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
+        # The safe fitter measures speech after edge cleanup. Native short
+        # speech stays native even when a small end allowance is available.
+        fitted = speed_fit(raw_out, available_dur, max_speed=args.max_speed, min_speed=args.min_speed)
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
@@ -401,7 +406,7 @@ Examples:
                 spk        = seg["speaker"]
                 text       = seg["text"]
                 start, end = seg["start"], seg["end"]
-                target_dur = max(0.1, _available.get(i, end - start))
+                target_dur = _available[i]
                 log.info(f"   [{i:04d}] text={repr(text)}")
                 raw_out    = temp_dir / f"seg_{i:04d}.wav"
                 ok         = False
@@ -475,16 +480,20 @@ Examples:
 
     pbar.close()
 
-    # Wait for all speed_fit jobs
+    # Resolve every fit before publishing; a missing phrase is a failed dub.
+    fit_errors = []
     for fut in fit_futures:
         try:
             fut.result()
         except Exception as exc:
-            log.error(f"speed_fit error (segment skipped on resume): {exc}")
+            fit_errors.append(exc)
+            log.error(f"Speech could not fit safely: {exc}")
     fit_pool.shutdown(wait=True)
 
-    if worker_exceptions and not final_files:
-        raise worker_exceptions[0]
+    if fit_errors or worker_exceptions or len(final_files) != len(segments):
+        log.error("Dubbing incomplete; refusing to publish a track with missing speech. "
+                  "Successful checkpoints are preserved for review and resume.")
+        return 1
 
     # Sort by start time — parallel workers may have appended out of order
     final_files.sort(key=lambda x: x[1])

@@ -229,10 +229,10 @@ def main():
                    help="Qwen-only voice mode: clone (default) or custom")
     p.add_argument("--no-demucs",      action="store_true",
                    help="Skip demucs — faster, no background music preserved")
-    p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
-                   help="Max TTS speed-up before capping (default: 1.35)")
-    p.add_argument("--min-speed",      type=float, default=0.65, metavar="SPEED",
-                   help="Min TTS slow-down for short clips (default: 0.65)")
+    p.add_argument("--max-speed",      type=float, default=1.15, metavar="SPEED",
+                   help="Max natural TTS speed-up; overflow requires review (default: 1.15)")
+    p.add_argument("--min-speed",      type=float, default=1.0, metavar="SPEED",
+                   help="Native minimum tempo; only 1.0 is supported (no artificial slowing)")
     p.add_argument("--merge-gap",      type=float, default=1.0, metavar="SEC",
                    help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
     p.add_argument("--merge-max-dur",  type=float, default=10.0, metavar="SEC",
@@ -286,6 +286,8 @@ def main():
     p.add_argument("--safety-factor",  default=None, type=float, metavar="F",
                    help="VRAM safety multiplier for NeMo chunking (default: 0.85)")
     args = p.parse_args()
+    if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
+        p.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
 
     # Expand translate model shorthands: '4b' → 'translategemma:4b', etc.
     if ":" not in args.translate_model:

@@ -33,15 +33,20 @@
       "source_files": [
         "modal_control/smoke_cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
-        "modal_control/batch_inputs/gpu_smoke.json"
+        "modal_control/batch_inputs/gpu_smoke.json",
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
-        "modal_control/batch_inputs/cpu_smoke.json",
-        "modal_control/batch_inputs/cpu_smoke.wav"
+        "modal_control/batch_inputs/cpu_v2_smoke.json",
+        "modal_control/batch_inputs/cpu_v2_smoke.wav"
       ],
       "smoke_success_files": [
-        "modal_control/batch_inputs/cpu_preflight.json",
-        "modal_control/batch_inputs/cpu_preflight.wav"
+        "modal_control/batch_inputs/cpu_v2_preflight.json",
+        "modal_control/batch_inputs/cpu_v2_preflight.wav"
       ],
       "max_seconds": 1800,
       "build_timeout_seconds": 1200,
@@ -55,8 +60,8 @@
         "reason": "Use detected speaker assignments and Supertonic feminine/masculine presets to produce a German smoke dub",
         "input": "GPU smoke JSON, first 15 seconds preflight and first 60 seconds workload",
         "input_seconds": 60,
-        "outputs": "modal_control/batch_inputs/cpu_preflight.wav and cpu_smoke.wav and matching timing reports",
-        "quality_tradeoffs": "Voice hints depend on crude pitch estimates; this worker stops when speaker or voice is uncertain, and rejects speech requiring >2x compression",
+        "outputs": "modal_control/batch_inputs/cpu_v2_preflight.wav and cpu_v2_smoke.wav and matching timing reports",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; 4 CPU and 16 GiB memory for two bounded 1800-second stages; billed CPU, memory, startup, storage and egress can apply",
         "hardware": "CPU",
         "max_containers": 1,

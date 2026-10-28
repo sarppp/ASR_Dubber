@@ -48,7 +48,8 @@
         "modal_control/batch_inputs/video_01.wav",
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
-        "modal_control/batch_inputs/video_04.wav"
+        "modal_control/batch_inputs/video_04.wav",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_00.gpu_full.json"
@@ -68,8 +69,8 @@
         "reason": "Generate English transcript and speaker-timed German/French translation",
         "input": "new_guys/Bill Ackman_ Is Permanent Capital an Investor’s Biggest Edge_ _ Podcast _ In Good Company_1080p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
         "input_seconds": 3202.844444,
-        "outputs": "modal_control/batch_inputs/video_00.gpu_preflight.json and video_00.gpu_full.json",
-        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "outputs": "modal_control/batch_inputs/video_00.gpu_preflight.json and video_00.gpu_full.json; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged. Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,
@@ -111,7 +112,8 @@
         "modal_control/batch_inputs/video_01.wav",
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
-        "modal_control/batch_inputs/video_04.wav"
+        "modal_control/batch_inputs/video_04.wav",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_01.gpu_full.json"
@@ -131,8 +133,8 @@
         "reason": "Generate English transcript and speaker-timed German/French translation",
         "input": "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
         "input_seconds": 2209.959184,
-        "outputs": "modal_control/batch_inputs/video_01.gpu_preflight.json and video_01.gpu_full.json",
-        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "outputs": "modal_control/batch_inputs/video_01.gpu_preflight.json and video_01.gpu_full.json; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged. Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,
@@ -174,7 +176,8 @@
         "modal_control/batch_inputs/video_01.wav",
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
-        "modal_control/batch_inputs/video_04.wav"
+        "modal_control/batch_inputs/video_04.wav",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_02.gpu_full.json"
@@ -194,8 +197,8 @@
         "reason": "Generate English transcript and speaker-timed German/French translation",
         "input": "new_guys/Can 2 People Really Restart Humanity__720p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
         "input_seconds": 418.493243,
-        "outputs": "modal_control/batch_inputs/video_02.gpu_preflight.json and video_02.gpu_full.json",
-        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "outputs": "modal_control/batch_inputs/video_02.gpu_preflight.json and video_02.gpu_full.json; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged. Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,
@@ -237,7 +240,8 @@
         "modal_control/batch_inputs/video_01.wav",
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
-        "modal_control/batch_inputs/video_04.wav"
+        "modal_control/batch_inputs/video_04.wav",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_03.gpu_full.json"
@@ -257,8 +261,8 @@
         "reason": "Generate English transcript and speaker-timed German/French translation",
         "input": "new_guys/Every Political System Explained in 10 Minutes_ Capitalism, Communism, Fascism & More_720p_en_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
         "input_seconds": 587.766712,
-        "outputs": "modal_control/batch_inputs/video_03.gpu_preflight.json and video_03.gpu_full.json",
-        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "outputs": "modal_control/batch_inputs/video_03.gpu_preflight.json and video_03.gpu_full.json; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged. Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,
@@ -300,7 +304,8 @@
         "modal_control/batch_inputs/video_01.wav",
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
-        "modal_control/batch_inputs/video_04.wav"
+        "modal_control/batch_inputs/video_04.wav",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_04.gpu_full.json"
@@ -320,8 +325,8 @@
         "reason": "Generate English transcript and speaker-timed German/French translation",
         "input": "new_guys/The Secret to Mind Control - Nobel Prize 2026 EXPLAINED_720p_en-US_129kbps.mp4; first 15 seconds in preflight, complete video in workload",
         "input_seconds": 1231.447075,
-        "outputs": "modal_control/batch_inputs/video_04.gpu_preflight.json and video_04.gpu_full.json",
-        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged.",
+        "outputs": "modal_control/batch_inputs/video_04.gpu_preflight.json and video_04.gpu_full.json; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Neural speech translation and diarization are imperfect. Voice assignments from pitch can be ambiguous. Speaker overlaps are flagged. Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 $0.000164/s plus 4 CPUs and 32 GiB memory. Two 7200-second deadlines bound GPU execution to $2.36 per video at published rate, excluding other resources; not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,

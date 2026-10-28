@@ -17,6 +17,7 @@ image = (modal.Image.debian_slim(python_version='3.11')
          .add_local_file(ROOT / 'modal_control/smoke_nemo_helpers.py', '/work/smoke_nemo_helpers.py')
          .add_local_file(ROOT / 'nemo_audio.py', '/work/nemo_audio.py')
          .add_local_file(ROOT / 'local_subtitles.py', '/work/local_subtitles.py')
+         .add_local_file(ROOT / 'batch_dubbing/speech_units.py', '/work/batch_dubbing/speech_units.py')
          .add_local_file(ROOT / 'modal_control/speaker_timeline.py', '/work/speaker_timeline.py')
          .add_local_file(ROOT / 'modal_control/speaker_voices.py', '/work/speaker_voices.py')
          .add_local_file(ROOT / 'speech_model_benchmark_2026-10-27/code/telemetry.py', '/work/telemetry.py'))
@@ -28,6 +29,7 @@ app = modal.App('new-guys-speech-smoke')
               max_containers=1, retries=0, volumes={'/cache': volume})
 def process(seconds):
     import gc
+    import hashlib
     import subprocess
     import sys
     import tempfile
@@ -39,7 +41,7 @@ def process(seconds):
     from telemetry import emit, start
     import smoke_nemo_helpers as nemo
     from local_subtitles import chunk_boundaries, infer_chunk
-    from speaker_timeline import assign_cue_speakers
+    from batch_dubbing.speech_units import build_speech_units, bind_caption_translations, reconcile_speaker_corridors
     from speaker_voices import assign_voices
     import nemo.collections.asr as nasr
 
@@ -99,12 +101,55 @@ def process(seconds):
             words, _, _ = nemo._transcribe_manifest(model, [{'path': str(p), 'offset': a} for p, a, b in chunks], repo, 'en', 'en')
             if not words:
                 raise RuntimeError('Parakeet returned no word timestamps')
-            english = nemo._words_to_segments_diarized(nemo._assign_speakers(words, turns))
+            source_words = nemo._assign_speakers([dict(word) for word in words], turns)
+            source_digest = hashlib.sha256()
+            with wav.open('rb') as source_audio:
+                for block in iter(lambda: source_audio.read(1024 * 1024), b''):
+                    source_digest.update(block)
+            source_id = 'sha256:' + source_digest.hexdigest()
+            alignment = reconcile_speaker_corridors(source_words, turns)
+            # Retain costly ASR evidence even if alignment or later translation fails.
+            import uuid
+            alignment_path = Path('/cache/source-alignment') / (uuid.uuid4().hex + '.json')
+            alignment_path.parent.mkdir(parents=True, exist_ok=True)
+            alignment_bytes = (json.dumps({'source_id': source_id, 'source_language': 'en',
+                'source_words': source_words, 'raw_turns': turns, 'alignment': alignment},
+                ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+            if len(alignment_bytes) > 64 * 1024**2:
+                raise ValueError('Alignment diagnostic exceeds the 64 MiB artifact bound')
+            alignment_sha256 = hashlib.sha256(alignment_bytes).hexdigest()
+            with alignment_path.open('xb') as alignment_file:
+                alignment_file.write(alignment_bytes)
+            del alignment_bytes
+            volume.commit()
+            if alignment['status'] != 'ready':
+                emit('alignment_blocked', conflicts=alignment['conflicts'], artifact=str(alignment_path))
+                return {'status': 'needs_alignment', 'duration_seconds': seconds, 'turns': turns,
+                        'raw_turns': turns, 'reconciled_turns': [], 'alignment': alignment,
+                        'alignment_artifact': str(alignment_path), 'source_words': source_words,
+                        'source_id': source_id, 'source_language': 'en', 'voices': voices,
+                        'alignment_sha256': alignment_sha256, 'speech_units': {}, 'translations': {},
+                        'timings': timings, 'gpu': gpu}
+            reconciled_turns = alignment['turns']
+            source_units = build_speech_units(source_words, reconciled_turns, source_id=source_id)
+            if not source_units:
+                raise RuntimeError('No source speech units could be constructed')
+            english = nemo._words_to_segments_diarized(source_words)
             timings['transcription_seconds'] = time.monotonic() - stage
             emit('stage_complete', stage='transcription', cues=len(english))
             del model
             gc.collect()
             torch.cuda.empty_cache()
+            utterance_audio = {}
+            for index, unit in enumerate(source_units):
+                if unit.source_end - unit.source_start > 30:
+                    raise RuntimeError(f'Source unit {unit.id} exceeds the bounded translation duration')
+                path = work / f'utterance_{index}.wav'
+                subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-threads', '1',
+                                '-ss', str(unit.source_start), '-i', str(wav),
+                                '-t', str(unit.source_end - unit.source_start),
+                                '-threads', '1', str(path)], check=True)
+                utterance_audio[unit.id] = path
             repo = 'nvidia/canary-1b-v2'
             local = snapshot_download(repo, revision='d455706339a6b32e1aa40f82c713a482a0c938e2', allow_patterns=['*.nemo'])
             stage = time.monotonic()
@@ -112,19 +157,26 @@ def process(seconds):
             if model.timestamps_asr_model is None:
                 raise RuntimeError('Canary timestamp aligner missing')
             model.timestamps_asr_model.half().cuda().eval()
-            translations = {}
+            translations, speech_units = {}, {}
             for lang in ('de', 'fr'):
-                rows = []
-                for p, a, b in chunks:
-                    rows.extend(infer_chunk(model, p, 'en', lang, a, b))
-                if not rows:
-                    raise RuntimeError(f'No {lang} translation returned')
-                translations[lang] = assign_cue_speakers(rows, turns)
+                captions_by_id = {}
+                for index, unit in enumerate(source_units):
+                    captions_by_id[unit.id] = infer_chunk(model, utterance_audio[unit.id], 'en', lang,
+                                                          unit.source_start, unit.source_end)
+                    emit('unit_translated', source_id=unit.id, language=lang,
+                         index=index + 1, total=len(source_units))
+                bound_units, rows = bind_caption_translations(source_units, captions_by_id)
+                translations[lang] = rows
+                speech_units[lang] = [unit.to_dict() for unit in bound_units]
                 emit('stage_complete', stage='translation', language=lang, cues=len(rows))
             timings['translation_seconds'] = time.monotonic() - stage
             timings['worker_seconds'] = time.monotonic() - started
             return {'status': 'complete', 'duration_seconds': seconds, 'turns': turns, 'voices': voices, 'english': english,
-                    'translations': translations, 'timings': timings, 'gpu': gpu,
+                    'translations': translations, 'speech_units': speech_units,
+                    'source_words': source_words, 'source_id': source_id, 'timings': timings, 'gpu': gpu,
+                    'raw_turns': turns, 'reconciled_turns': reconciled_turns, 'alignment': alignment,
+                    'alignment_artifact': str(alignment_path), 'alignment_sha256': alignment_sha256,
+                    'source_language': 'en',
                     'notice': 'Speaker voice assignment and dubbing are separate CPU work.'}
     finally:
         monitor.set()
@@ -136,3 +188,5 @@ def main(smoke: bool = False):
     result = process.remote(15 if smoke else 60)
     destination.write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
     print('RESULT', destination, flush=True)
+    if result.get('status') != 'complete':
+        raise RuntimeError(f"Speech stage blocked; review preserved diagnostics: {destination}")

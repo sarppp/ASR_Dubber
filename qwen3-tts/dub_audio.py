@@ -602,75 +602,18 @@ def _last_word_boundary(audio_path: Path, before_sec: float) -> float:
 
 
 def speed_fit(audio_path: Path, target_dur: float,
-              max_speed: float = 1.35, min_speed: float = 0.65) -> Path:
+              max_speed: float = 1.15, min_speed: float = 1.0) -> Path:
+    """Fit generated speech conservatively; never slow it or cut trailing words.
+
+    Edge padding is removed before a bounded speed-up. Infeasible speech raises
+    an explicit error, so callers can revise wording or timing before publishing.
+    Short speech retains its native tempo and the stitcher supplies timeline gaps.
     """
-    Fit audio_path into EXACTLY target_dur seconds so the dub timeline
-    stays locked to the video.
-
-    Every branch guarantees the output is exactly target_dur via
-    ``apad,atrim=0:{target_dur}`` — pad if short, trim if long.
-    This eliminates cumulative drift in the stitched dub track.
-
-    - Very short (ratio < min_speed):  slow to min_speed + pad tail.
-    - Short (min_speed ≤ ratio < 1.0): gentle slow-down to fill exactly.
-    - Long (1.0 < ratio ≤ max_speed):  speed up to fill exactly.
-    - Very long (ratio > max_speed):   speed up to max_speed, then trim at
-                                       last word boundary before target_dur
-                                       (avoids mid-syllable cuts).
-
-    min_speed=0.65 means TTS can be slowed up to ~1.54× before we give up
-    and pad the rest with silence.  This matches the deliberate speaking pace
-    of academic/lecture content (~2–2.5 words/s vs TTS ~3 words/s).
-    """
-    curr = _audio_duration(audio_path)
-    if curr <= 0:
-        return audio_path
-
-    out   = audio_path.with_name(audio_path.stem + "_fit.wav")
-    ratio = curr / target_dur
-
-    if ratio < min_speed:
-        # Too short even at max slow-down → use min_speed + pad remainder
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={min_speed:.4f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-    elif ratio <= max_speed:
-        # 0.85–1.0: gentle slow-down;  1.0–max_speed: speed up
-        # apad + atrim guarantee exact target duration (atempo alone drifts by
-        # a few ms due to sample-rate rounding in ffmpeg)
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={ratio:.4f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-    else:
-        # Severely over — speed up to max_speed, then trim at a word boundary
-        # to avoid cutting mid-syllable.
-        compressed = audio_path.with_name(audio_path.stem + "_cmp.wav")
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={max_speed:.4f}",
-             "-vn", "-y", str(compressed), "-loglevel", "error"],
-            check=True,
-        )
-        cut_at = _last_word_boundary(compressed, target_dur)
-        # Trim at word boundary then pad silence to exact target_dur
-        subprocess.run(
-            ["ffmpeg", "-i", str(compressed),
-             "-filter:a", f"atrim=0:{cut_at:.6f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-        try:
-            compressed.unlink()
-        except OSError:
-            pass
-
-    return out if out.exists() else audio_path
+    shared_root = Path(__file__).resolve().parents[1] / "nemo"
+    if str(shared_root) not in sys.path:
+        sys.path.insert(0, str(shared_root))
+    from batch_dubbing.fit_audio import fit_file
+    return fit_file(audio_path, target_dur, max_speed=max_speed, min_speed=min_speed)
 
 
 # ---------------------------------------------------------------------------

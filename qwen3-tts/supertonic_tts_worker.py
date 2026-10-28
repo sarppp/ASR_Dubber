@@ -3,6 +3,7 @@
 import argparse
 from contextlib import redirect_stdout
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -30,10 +31,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["custom"], default="custom")
     parser.parse_args()
+    for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[variable] = "2"
     try:
         with redirect_stdout(sys.stderr):
             from supertonic import TTS
-            model = TTS(model="supertonic-3", auto_download=True)
+            model = TTS(model="supertonic-3", auto_download=True,
+                        intra_op_num_threads=2, inter_op_num_threads=1)
     except Exception as exc:
         print(f"LOAD_ERROR: {exc}", flush=True)
         return 1

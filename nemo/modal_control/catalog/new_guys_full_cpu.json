@@ -38,7 +38,11 @@
         "batch_dubbing/cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_00.gpu_full.json",
-        "modal_control/dub_segments.py"
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_00.cpu_v2_full.json",
@@ -61,7 +65,7 @@
         "input": "GPU results for new_guys/Bill Ackman_ Is Permanent Capital an Investor’s Biggest Edge_ _ Podcast _ In Good Company_1080p_en_129kbps.mp4, preflight first 15 seconds and full workload",
         "input_seconds": 3202.844444,
         "outputs": "modal_control/batch_inputs/video_00.cpu_v2_preflight and .cpu_v2_full audio and JSON reports",
-        "quality_tradeoffs": "Diarization and voice presentation estimates can be wrong. Unknown cues use the sole detected speaker where applicable and this is recorded; otherwise cues without speaker evidence fail. Same-speaker cues are grouped; available pauses and chained tempo filters fit speech before the next cue. Very fast speech may sound unnatural; the tempo for every span is recorded.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,
@@ -93,7 +97,11 @@
         "batch_dubbing/cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_01.gpu_full.json",
-        "modal_control/dub_segments.py"
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_01.cpu_v2_full.json",
@@ -116,7 +124,7 @@
         "input": "GPU results for new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4, preflight first 15 seconds and full workload",
         "input_seconds": 2209.959184,
         "outputs": "modal_control/batch_inputs/video_01.cpu_v2_preflight and .cpu_v2_full audio and JSON reports",
-        "quality_tradeoffs": "Diarization and voice presentation estimates can be wrong. Unknown cues use the sole detected speaker where applicable and this is recorded; otherwise cues without speaker evidence fail. Same-speaker cues are grouped; available pauses and chained tempo filters fit speech before the next cue. Very fast speech may sound unnatural; the tempo for every span is recorded.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,
@@ -148,7 +156,11 @@
         "batch_dubbing/cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_02.gpu_full.json",
-        "modal_control/dub_segments.py"
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_02.cpu_v2_full.json",
@@ -171,7 +183,7 @@
         "input": "GPU results for new_guys/Can 2 People Really Restart Humanity__720p_en_129kbps.mp4, preflight first 15 seconds and full workload",
         "input_seconds": 418.493243,
         "outputs": "modal_control/batch_inputs/video_02.cpu_v2_preflight and .cpu_v2_full audio and JSON reports",
-        "quality_tradeoffs": "Diarization and voice presentation estimates can be wrong. Unknown cues use the sole detected speaker where applicable and this is recorded; otherwise cues without speaker evidence fail. Same-speaker cues are grouped; available pauses and chained tempo filters fit speech before the next cue. Very fast speech may sound unnatural; the tempo for every span is recorded.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,
@@ -203,7 +215,11 @@
         "batch_dubbing/cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_03.gpu_full.json",
-        "modal_control/dub_segments.py"
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_03.cpu_v2_full.json",
@@ -226,7 +242,7 @@
         "input": "GPU results for new_guys/Every Political System Explained in 10 Minutes_ Capitalism, Communism, Fascism & More_720p_en_129kbps.mp4, preflight first 15 seconds and full workload",
         "input_seconds": 587.766712,
         "outputs": "modal_control/batch_inputs/video_03.cpu_v2_preflight and .cpu_v2_full audio and JSON reports",
-        "quality_tradeoffs": "Diarization and voice presentation estimates can be wrong. Unknown cues use the sole detected speaker where applicable and this is recorded; otherwise cues without speaker evidence fail. Same-speaker cues are grouped; available pauses and chained tempo filters fit speech before the next cue. Very fast speech may sound unnatural; the tempo for every span is recorded.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,
@@ -258,7 +274,11 @@
         "batch_dubbing/cpu_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_04.gpu_full.json",
-        "modal_control/dub_segments.py"
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_04.cpu_v2_full.json",
@@ -281,7 +301,7 @@
         "input": "GPU results for new_guys/The Secret to Mind Control - Nobel Prize 2026 EXPLAINED_720p_en-US_129kbps.mp4, preflight first 15 seconds and full workload",
         "input_seconds": 1231.447075,
         "outputs": "modal_control/batch_inputs/video_04.cpu_v2_preflight and .cpu_v2_full audio and JSON reports",
-        "quality_tradeoffs": "Diarization and voice presentation estimates can be wrong. Unknown cues use the sole detected speaker where applicable and this is recorded; otherwise cues without speaker evidence fail. Same-speaker cues are grouped; available pauses and chained tempo filters fit speech before the next cue. Very fast speech may sound unnatural; the tempo for every span is recorded.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,

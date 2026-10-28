@@ -142,6 +142,37 @@ Resource samples are observations, not billed GPU seconds. Actual billing, accou
 
 ## Checks
 
+### Source-linked natural dubbing
+
+The speaker-aware GPU workers retain original ASR words, reconcile speaker
+corridors using overlap evidence, and translate each source utterance by stable
+ID. Their `speech_units[language]` records drive the shared CPU implementation in
+`batch_dubbing/cpu_natural.py`; subtitle display windows do not set speech timing.
+Old subtitle-only JSON inputs fail local validation before remote synthesis.
+
+The CPU path measures conservative outer padding, schedules complete turns at
+native speed or at most 1.15×, and refuses to cut speech or publish a partial dub.
+Native attempts and measurements survive in the mounted cache volume. Impossible
+timing returns `needs_revision`; failed rendering/encoding returns `failed` with
+the stage and error. Local entrypoints save the report and exit unsuccessfully,
+so the controller cannot count either as completed audio.
+
+The provider-independent planner supports an explicitly budgeted revision callback;
+the current Supertonic adapter does **not** configure a translation/revision model.
+These timing checks do not prove translation fidelity or perceptual naturalness.
+Legacy fitting also uses the safe limits, but its subtitle-based input and local
+inference routing remain separate. Do not run local inference without the explicit
+override required by `AGENTS.md`.
+
+Changed code and catalogs require a newly reviewed release plan. Existing output
+files are exclusive, and historical inputs may lack source words or have moved;
+prepare fresh input/output paths and verify their hashes before proposing a new
+experiment. The earlier grouping comparison release does not authorize this changed
+pipeline. See [the investigation handoff](../dubbing_naturalness_2026-10-28/HANDOFF.md)
+for measurements, validation results and remaining work.
+
+### Controller tests
+
 ```bash
 python3 -m unittest discover -s modal_control/tests -v
 ```

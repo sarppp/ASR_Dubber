@@ -38,10 +38,14 @@
         "batch_dubbing/cpu_override_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_02.gpu_full.json",
-        "modal_control/dub_segments.py",
         "modal_control/batch_inputs/video_02.pitch_review_v2.json",
         "batch_dubbing/measure_pitch.py",
-        "batch_dubbing/voice_fallback.py"
+        "batch_dubbing/voice_fallback.py",
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_02.cpu_v2_full.json",
@@ -64,7 +68,7 @@
         "input": "GPU results and pitch measurements for Can 2 People Really Restart Humanity, first 15 seconds then the full 418.5-second recording",
         "input_seconds": 418.493243,
         "outputs": "video_02.cpu_v2_preflight and video_02.cpu_v2_full M4A and JSON reports under modal_control/batch_inputs",
-        "quality_tradeoffs": "One speaker was detected. Its median pitch is borderline; the 165 Hz heuristic chooses M1 with low confidence, which may not match the source voice. Unassigned cues use the sole speaker and are recorded. Adjacent cues are grouped and speech accelerated to fit the next cue; very fast spans may sound unnatural. Presets are not voice clones.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,

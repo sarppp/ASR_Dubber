@@ -40,7 +40,8 @@
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/smoke.wav",
         "modal_control/batch_inputs/smoke.json",
-        "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4"
+        "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4",
+        "batch_dubbing/speech_units.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/gpu_smoke.json"
@@ -60,8 +61,8 @@
         "reason": "Generate and test timestamped English transcription, speaker turns and German/French translation before CPU dubbing",
         "input": "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4 first 15 seconds preflight and first 60 seconds smoke, 16kHz mono WAV; no full video",
         "input_seconds": 60,
-        "outputs": "modal_control/batch_inputs/gpu_preflight.json and gpu_smoke.json; includes cues, speaker turns, pitch estimates and per-stage timings",
-        "quality_tradeoffs": "Automatic translation and diarization can contain mistakes; pitch-based preset hints may be uncertain and do not establish gender; multiple speakers in excerpt are unverified",
+        "outputs": "modal_control/batch_inputs/gpu_preflight.json and gpu_smoke.json; includes cues, speaker turns, pitch estimates and per-stage timings; retains diarized source_words and immutable ID-bound speech_units for every translated language, separately from display subtitle cues",
+        "quality_tradeoffs": "Automatic translation and diarization can contain mistakes; pitch-based preset hints may be uncertain and do not establish gender; multiple speakers in excerpt are unverified Translation is performed per source utterance with preserved ASR word timing; ambiguous or uncovered word-to-turn assignments and empty utterance translations fail for review rather than being guessed or skipped. Caption timings remain display estimates.",
         "cost_estimate": "Unknown actual cost; 1 T4 listed at $0.000164/sec plus 4 CPU, 32 GiB RAM and other applicable charges. Maximum two 1800-second stage deadlines implies at most $0.59 GPU time if both use a T4 throughout; CPU and RAM additional. Not a billing cap.",
         "hardware": "T4",
         "max_containers": 1,

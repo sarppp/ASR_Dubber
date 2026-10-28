@@ -38,9 +38,13 @@
         "batch_dubbing/cpu_duo_worker.py",
         "speech_model_benchmark_2026-10-27/code/telemetry.py",
         "modal_control/batch_inputs/video_00.gpu_full.json",
-        "modal_control/dub_segments.py",
         "modal_control/batch_inputs/video_00.pitch_review_v2.json",
-        "batch_dubbing/measure_pitch.py"
+        "batch_dubbing/measure_pitch.py",
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "batch_dubbing/cpu_natural.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_00.cpu_full.json",
@@ -63,7 +67,7 @@
         "input": "GPU results for new_guys/Bill Ackman_ Is Permanent Capital an Investor’s Biggest Edge_ _ Podcast _ In Good Company_1080p_en_129kbps.mp4, preflight first 15 seconds and full workload; includes pitch estimates from longer turns for the two detected speakers",
         "input_seconds": 3202.844444,
         "outputs": "modal_control/batch_inputs/video_00.cpu_preflight and .cpu_full audio and JSON reports",
-        "quality_tradeoffs": "Speaker presentation from pitch and diarization can be wrong. Unassigned translated cues use maximum overlap with English speaker cues; this inference can be wrong and is recorded. Cues without source evidence fail. Same-speaker cues are merged up to 20 seconds and 280 characters; speech needing over 2x acceleration fails. M1 and M2 are estimates, not voice clones.",
+        "quality_tradeoffs": "Requires regenerated source-linked utterances and resolved speaker voices; retain native speech, conservative edge padding removal, whole-turn scheduling at 1.0–1.15x. Infeasible turns save native attempts and revision diagnostics, then fail without packaging. No automatic text revision or model retry.",
         "cost_estimate": "Actual cost unknown; two 7200-second deadlines, 4 CPU and 16 GiB RAM, plus applicable storage and egress. Not a billing cap.",
         "hardware": "CPU",
         "max_containers": 1,
