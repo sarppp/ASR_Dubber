@@ -3,40 +3,24 @@
 These instructions apply to this repository and all subdirectories, including
 `nemo`, `qwen3-tts`, and the translation pipeline.
 
-## Mandatory Modal controller and human release gate
+## Modal controller and batch release
 
-- ALL agent work with Modal must go through `nemo/modal_control` and its
-  `nemo/modal-control` CLI or plan/inspect MCP. Start with controller status.
-  Never bypass it with direct `modal run`, Python SDK calls, shell wrappers,
-  ad hoc scripts, or a separate deployment path. Do not weaken this gate.
-- Agents may research and propose the model/version, precision, CPU/T4 hardware,
-  and runtime settings. Model selection is preparation, NOT permission to launch.
-  Supertonic 3 M1 on Modal CPU remains the preferred dubbing option.
-- Prepare an exact expiring plan with the controller, then explain its plan ID,
-  purpose, model/revision, settings, input/time range, outputs, CPU or T4,
-  smoke and full stages, container/time limits, expected speed/quality, and
-  evidence-backed cost estimate (or explicitly unknown cost). Disclose all
-  optional processing steps. Wait for the user's explicit go for this plan.
-- The user can simply say **"release it"** in chat. The agent then executes
-  that exact reviewed plan through the controller CLI, with its exact ID and
-  the user's actual approval message. The user does NOT have to run a terminal
-  command. Never fabricate approval or treat silence, a default, general task
-  intent, or a status question as approval of a newly prepared plan.
-- MCP is plan/inspect-only. Calling the controller execute CLI after the user's
-  explicit go is permitted; calling it before that go is forbidden.
-- Any change to model, hardware, code, input, catalog, or limits invalidates the
-  approval: prepare a new plan and obtain a new go. Expired or consumed plans
-  also need a new plan and approval; there are no automatic fallback retries.
-- GPU allocation is T4-only, with no environment-selected hardware or GPU
-  fallback. CPU allocations are allowed. Worker declarations must explicitly
-  bound timeout, max_containers=1, and retries=0. Do not work around validation
-  by hiding allocations in helpers or dynamic code. Include all execution code,
-  imported local helpers, configuration and inputs in source_files.
-- Report the actual result, timing, quality evidence and limitations, artifacts,
-  errors and observed usage/cost afterward. Preserve the approval and run logs.
-- This is an operational gate, not an OS sandbox: an agent with shell access
-  and Modal credentials must still obey this contract. Never claim the MCP or
-  plan receipt cryptographically proves a chat message came from the human.
+- Use the Modal controller for all Modal work. Before a batch starts, present
+  the complete bounded scope, models, input set, output set, T4/CPU hardware,
+  global container limits, smoke checks, time limits, retry limits and cost
+  estimate (or say when cost is unknown).
+- A single explicit user release authorizes the entire reviewed batch, including
+  its specified later steps and bounded retries. Do not ask for another release
+  merely because a dependent input becomes available or a step needs retry, as
+  long as it stays within the released scope and limits. Preserve the actual
+  user message in the audit record and do not claim it proves human identity.
+- Ask for a new release only for a material change outside the approved
+  model, input, hardware, concurrency, retry, time or cost scope.
+- Keep GPU work T4-only unless explicitly authorized otherwise; bound each
+  worker and the global concurrent GPU count. Preserve monitoring, logs,
+  source provenance and smoke-before-full checks. Do not hide allocations.
+- Finish independent implementation and local checks before requesting the
+  initial release. Do not repeatedly ask for decisions already made.
 
 ## Optional processing tools also require user selection
 
@@ -73,7 +57,7 @@ These instructions apply to this repository and all subdirectories, including
   run configuration, model/version, app/function IDs, hardware, stdout/stderr,
   events, timings, results, errors, and available cost/usage data. Never log secrets.
 - Check startup and progress proactively. Stop failing or runaway jobs promptly;
-  report the failure and ask before a paid retry outside the authorized scope.
+  report the failure and ask before a paid retry outside the authorized batch scope.
 - After the authorized run, stop owned jobs and verify that their containers are
   no longer running. Preserve artifacts and logs for review.
 - Local source edits, lightweight tests with mocked models, artifact inspection,

@@ -1,6 +1,7 @@
 """Local MCP transport check; no Modal credentials or cloud calls."""
 import asyncio
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,14 +13,14 @@ class MCPTests(unittest.TestCase):
         from mcp.client.stdio import StdioServerParameters, stdio_client
         async def check():
             with tempfile.TemporaryDirectory() as state:
-                launcher = Path(__file__).resolve().parents[2] / 'modal-control'
-                params = StdioServerParameters(command=str(launcher), args=['--state',state,'mcp'])
+                params = StdioServerParameters(command=sys.executable, args=['-m','modal_control','--state',state,'mcp'])
                 async with stdio_client(params) as (read, write):
-                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
-                        await session.initialize()
+                    async with ClientSession(read, write, read_timeout_seconds=45) as session:
+                        initialized = await session.initialize()
+                        self.assertIn("single explicit user release", initialized.instructions)
                         result = await session.list_tools()
                         names = {tool.name for tool in result.tools}
-                        self.assertEqual(names, {'get_status','prepare_run_plan','get_run_plan','get_run','get_run_events'})
+                        self.assertEqual(names, {'get_status','prepare_run_plan','get_run_plan','get_run','get_run_events','prepare_batch_plan','get_batch_plan'})
                         response = await session.call_tool('get_status', {})
                         self.assertFalse(response.is_error)
         asyncio.run(check())

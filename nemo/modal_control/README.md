@@ -10,8 +10,11 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control watch                 # cloud inventory every 30 seconds
 ./modal-control --catalog /path/to/reviewed-jobs.json plan JOB
 ./modal-control inspect-plan PLAN_ID
-# Agent runs this ONLY after the user explicitly says "release it":
+# Single-job compatibility; use batch-plan for a multi-stage batch:
 ./modal-control execute PLAN_ID --confirm-plan-id PLAN_ID --approval-message "release it"
+./modal-control batch-plan /path/to/reviewed-batch.json
+./modal-control batch-inspect BATCH_PLAN_ID
+./modal-control batch-execute BATCH_PLAN_ID --confirm-plan-id BATCH_PLAN_ID --approval-message "release all"
 ./modal-control mcp                  # plan/inspect-only stdio server
 ./modal-control status
 ./modal-control logs RUN_ID --follow
@@ -21,49 +24,69 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control backup /tmp/modal-control-backup.tar.gz
 ```
 
-## Mandatory plan and release workflow
+## Batch release workflow
 
-All agent Modal operations use this controller. Direct `run` and `batch` are
-blocked, including the old background path. Agents may propose models/settings,
-but must prepare and explain the exact plan and wait for the user's go. The user
-says **"release it"** in chat; the agent executes that plan and records the actual
-approval message. The user need not run a terminal command. General permission
-to do a task does not approve a newly prepared plan.
+A user can release one bounded batch once, including its predeclared dependent
+steps and bounded retries. Create a version-1 JSON specification with `steps`,
+`max_parallel` (1 or 2), `max_gpu_parallel` (1 or 2), `max_wall_seconds`,
+`max_resource_seconds`, and `estimated_cost_ceiling_usd`. Each step declares
+`id`, `catalog`, `job`, literal `cpu_cores` and `memory_mib`, optional
+`depends_on`, `max_attempts` (1 to 3), and `derived_inputs` mapping input paths
+to the producing dependency. The producer must list each such path as a success
+file; the controller hashes it after production and checks it before later use.
 
-Plans expire after 30 minutes (maximum one hour), hash their complete payload,
-and bind the catalog, worker/helper/input hashes, controller implementation,
-model/settings, hardware, output expectations and smoke/full limits. Execution
-rejects altered, stale, expired or consumed plans. An atomic single-use receipt
-prevents concurrent release/retries. A failed attempt needs a new plan and go.
-Catalogs marked submissions-disabled remain blocked; do not restore archived
-benchmark sweeps. Prepare a separate small catalog for a newly requested task.
+Example specification (use actual catalog paths, job names and resource values):
 
-Each job requires `review` fields: `purpose`, `model`, `revision`, `precision`,
-`reason`, `input`, `input_seconds`, `outputs`, `quality_tradeoffs`, `cost_estimate`,
-`hardware` (`CPU` or `T4`), `max_containers` (1), and `max_total_seconds`.
-Cost may be explicitly unknown; it is not a billing cap. Job `max_seconds` is a
-per-stage deadline, so the reviewed total must cover smoke plus full execution.
-Commands must directly invoke `python -m modal run worker.py`, without detach or
-shell wrappers. Pin worker code, imported local helpers and inputs/configuration
-in `source_files`. Function decorators must use literal CPU/T4 allocation,
-`max_containers=1`, `retries=0`, and a timeout within the stage deadline. Dynamic
-GPU selectors and fallback lists are rejected. T4 workers must include observed
-`gpu` in the `worker_ready` event. These checks fail closed on legacy jobs: adapt
-them explicitly before proposing a new plan, never bypass the gate.
+```json
+{
+  "version": 1,
+  "max_parallel": 2,
+  "max_gpu_parallel": 2,
+  "max_wall_seconds": 7200,
+  "max_resource_seconds": 28800,
+  "estimated_cost_ceiling_usd": 10,
+  "steps": [
+    {"id": "gpu", "catalog": "/path/gpu.json", "job": "gpu_job",
+     "cpu_cores": 4, "memory_mib": 32768, "max_attempts": 2},
+    {"id": "cpu", "catalog": "/path/cpu.json", "job": "cpu_job",
+     "cpu_cores": 4, "memory_mib": 16384, "max_attempts": 2,
+     "depends_on": ["gpu"],
+     "derived_inputs": {"/path/gpu-output.json": "gpu"}}
+  ]
+}
+```
+
+`batch-plan` hashes the specification, catalogs, static inputs, worker and
+controller sources, checks each worker's literal CPU/T4 configuration, rejects
+unbounded concurrency, and checks that worst-case resource seconds and the
+pinned-rate compute estimate fit the stated ceilings. The cost estimate is not
+a provider-enforced billing limit: image builds, storage, network, price changes
+and billing behavior can add costs. Use a separate Modal workspace spend limit
+when a hard monetary cap is needed. Plans expire before release after at most
+one hour; the approved batch may continue within its wall and stage limits.
+
+`batch-execute` records the user's actual release message once and executes
+ready steps within the global cap. Each step has a smoke and workload stage.
+Reviewed retries repeat the same code and configuration; partial output blocks
+automatic retry and is preserved. Failure stops admission of new steps.
+Existing single-job `plan` and `execute` remain supported. A process crash is
+recorded and recovered by the existing `recover` workflow; automatic batch
+resume after a crash is not yet implemented.
 
 ## MCP agent interface
 
 Install `modal_control/requirements.txt` into the controller Python environment.
 Launch the stdio server with the absolute path to `nemo/modal-control mcp`.
-MCP tools: `get_status`, `prepare_run_plan`, `get_run_plan`, `get_run`, and
-`get_run_events`. There is no execute/approve tool. The CLI and MCP share the
+MCP tools include `get_status`, `prepare_run_plan`, `get_run_plan`,
+`prepare_batch_plan`, `get_batch_plan`, `get_run`, and `get_run_events`. There is no execute/approve tool. The CLI and MCP share the
 same planning/inspection implementation. Register the server in your agent
 client to expose these tools; creating this server does not automatically
 connect an already-running client session.
 
-This follows prod-control's immutable plan/inspect pattern, with the user's
-explicitly requested chat-release workflow: the agent may execute through the
-CLI only AFTER the user approves. See [AGENTS.md](../../AGENTS.md).
+The agent executes an explicitly authorized batch through the CLI; the MCP
+interface remains plan/inspect only. The same user release message is recorded
+once for the full batch, without asking again for dependent stages or approved
+retries. See [AGENTS.md](../../AGENTS.md).
 
 **Enforcement boundary:** the controller blocks unsupported paths through its
 public API/CLI, but is not an OS sandbox. An agent with arbitrary shell access,

@@ -214,6 +214,17 @@ def main():
         sub.add_parser(name)
     r = sub.add_parser("plan")
     r.add_argument("job")
+    r.add_argument("--ttl-seconds", type=int, default=1800,
+                   help="Plan review lifetime in seconds (maximum 3600)")
+    r = sub.add_parser("batch-plan")
+    r.add_argument("spec")
+    r.add_argument("--ttl-seconds", type=int, default=3600)
+    r = sub.add_parser("batch-inspect")
+    r.add_argument("plan_id")
+    r = sub.add_parser("batch-execute")
+    r.add_argument("plan_id")
+    r.add_argument("--confirm-plan-id", required=True)
+    r.add_argument("--approval-message", required=True, help="Actual user's batch release message")
     r = sub.add_parser("inspect-plan")
     r.add_argument("plan_id")
     r = sub.add_parser("execute")
@@ -265,7 +276,18 @@ def main():
         )
     elif a.cmd == "plan":
         from .plans import prepare_plan
-        print(json.dumps(prepare_plan(s, a.catalog, a.job), indent=2))
+        print(json.dumps(prepare_plan(s, a.catalog, a.job, ttl_seconds=a.ttl_seconds), indent=2))
+    elif a.cmd == "batch-plan":
+        from .plans import prepare_batch_plan
+        print(json.dumps(prepare_batch_plan(s, a.spec, ttl_seconds=a.ttl_seconds), indent=2))
+    elif a.cmd == "batch-inspect":
+        from .plans import show_batch_plan
+        print(json.dumps(show_batch_plan(s, a.plan_id), indent=2))
+    elif a.cmd == "batch-execute":
+        from .batch_plans import run_batch
+        run_id, rc = run_batch(s, a.plan_id, a.confirm_plan_id, a.approval_message)
+        print(json.dumps({'run_id': run_id, 'exit_code': rc}))
+        return rc
     elif a.cmd == "inspect-plan":
         from .plans import show_plan
         print(json.dumps(show_plan(s, a.plan_id), indent=2))

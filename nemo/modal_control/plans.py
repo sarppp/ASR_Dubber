@@ -132,3 +132,19 @@ def release_plan(store, plan_id, confirmation, approval_message):
     with receipt.open('x') as f:
         json.dump({'plan_id': plan_id, 'released_at': time.time(), 'approval_message': approval_message}, f)
     return plan
+
+
+def prepare_batch_plan(store, spec_path, ttl_seconds=3600):
+    """Prepare one bounded multi-step plan; no Modal calls occur here."""
+    from .batch_plans import prepare_batch
+    return prepare_batch(store, spec_path, ttl_seconds=ttl_seconds)
+
+
+def show_batch_plan(store, plan_id):
+    from .batch_plans import show_batch
+    return show_batch(store, plan_id)
+
+
+def release_batch_plan(store, plan_id, confirmation, approval_message):
+    from .batch_plans import release_batch
+    return release_batch(store, plan_id, confirmation, approval_message)
