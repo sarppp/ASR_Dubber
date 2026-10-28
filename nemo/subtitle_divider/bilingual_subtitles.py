@@ -3,9 +3,11 @@
 
 Input [EN], [DE], and [FR] prefixes are removed automatically. Language labels
 are only added when explicitly requested. Use --tracks for two or more tracks
-in display order; it preserves source timings. Every CLI output includes a styled
-ASS file: the preferred 38px font shrinks per cue to fit at most 20% of the 720p
-frame height. libass is required to measure the actual rendered text. SRT outputs
+in display order; languages advance together in shared phrase groups. Use
+--exact-boundaries to preserve independent source timings instead. Every CLI
+output includes a styled ASS file with one consistent font size, chosen up to
+38px to fit every cue within 20% of the 720p frame height. libass is required
+to measure the actual rendered text. SRT outputs
 also get an ASS companion, because SRT cannot enforce layout or font size.
 All subtitle outputs use UTF-8 with BOM for reliable player encoding detection.
 
@@ -200,6 +202,11 @@ def split_text_naturally(text: str, parts: int, *, max_chars: int = 42) -> list[
 
     target = max(1.0, (len(text) - (parts - 1)) / parts)
     word_count = len(words)
+    lengths = [0]
+    for word in words:
+        lengths.append(lengths[-1] + len(word) + 1)
+    penalties = [_boundary_penalty(words, end) if end < word_count else 0.0
+                 for end in range(word_count + 1)]
     # dp[part_count][word_count_used] = (cost, previous_word_count)
     dp: list[dict[int, tuple[float, int]]] = [dict() for _ in range(parts + 1)]
     dp[0][0] = (0.0, -1)
@@ -212,7 +219,7 @@ def split_text_naturally(text: str, parts: int, *, max_chars: int = 42) -> list[
             for start, (previous_cost, _) in dp[part_count - 1].items():
                 if start >= end:
                     continue
-                phrase_length = len(" ".join(words[start:end]))
+                phrase_length = lengths[end] - lengths[start] - 1
                 balance_cost = (phrase_length - target) ** 2
                 overflow = max(0, phrase_length - max_chars)
                 # ``max_chars`` is deliberately soft: a few extra characters
@@ -226,7 +233,7 @@ def split_text_naturally(text: str, parts: int, *, max_chars: int = 42) -> list[
                     + 500.0 * hard_overflow
                     + 40.0 * hard_overflow**2
                 )
-                break_cost = _boundary_penalty(words, end) if end < word_count else 0.0
+                break_cost = penalties[end]
                 cost = previous_cost + balance_cost + overflow_cost + break_cost
                 if best is None or cost < best[0]:
                     best = (cost, start)
@@ -555,7 +562,7 @@ def write_srt(path: Path, cues: Sequence[Cue]) -> None:
     path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8-sig")
 
 
-def combine_multiple_tracks(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
+def combine_multiple_tracks_exact(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
     """Stack all active languages in input order without changing their timings."""
     if len(tracks) < 2 or any(not track for track in tracks):
         raise ValueError("Provide at least two non-empty subtitle tracks")
@@ -573,6 +580,96 @@ def combine_multiple_tracks(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
             result[-1] = Cue(result[-1].start_ms, end, text)
         else:
             result.append(Cue(start, end, text))
+    return result
+
+
+def _split_multilingual_cue(cue: Cue, *, max_chars: int,
+                            min_duration_ms: int) -> list[Cue]:
+    """Split every language into the same number of phrases on one timeline."""
+    lines = cue.text.split("\n")
+    present = [line for line in lines if line]
+    limit = max(1, min((cue.end_ms - cue.start_ms) // min_duration_ms,
+                       min(len(line.split()) for line in present)))
+    parts = min(limit, max(1, math.ceil(max(map(len, present)) / max_chars)))
+    while True:
+        chunks = [split_text_naturally(line, parts, max_chars=max_chars)
+                  if line else [""] * parts for line in lines]
+        if max(len(part) for track in chunks for part in track) <= max_chars + 2 or parts == limit:
+            break
+        parts += 1
+    rows = list(zip(*chunks))
+    times = _allocate_chunk_times(
+        cue.start_ms, cue.end_ms, [max(map(len, row)) for row in rows],
+        min_duration_ms=min_duration_ms,
+    )
+    return [Cue(start, end, "\n".join(part for part in row if part))
+            for (start, end), row in zip(times, rows)]
+
+
+def combine_multiple_tracks(
+    tracks: Sequence[Sequence[Cue]], *, max_chars: int = 42,
+    min_duration_ms: int = 1300,
+) -> list[Cue]:
+    """Align overlapping sentence groups and advance all languages together.
+
+    Timings provide a heuristic, not semantic translation alignment. Small tail
+    overlaps (under 20% of the shorter group) must not drag the next sentence
+    into the current one. Exact source timing remains available separately.
+    """
+    if len(tracks) < 2 or any(not track for track in tracks):
+        raise ValueError("Provide at least two non-empty subtitle tracks")
+    if max_chars <= 0 or min_duration_ms <= 0:
+        raise ValueError("Character and duration limits must be positive")
+    nodes = sorted(
+        ((language, cue) for language, track in enumerate(tracks)
+         for cue in group_sentence_cues(sorted(track, key=lambda c: (c.start_ms, c.end_ms)))),
+        key=lambda item: (item[1].start_ms, item[1].end_ms),
+    )
+    parents = list(range(len(nodes)))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    active: list[int] = []
+    for index, (language, cue) in enumerate(nodes):
+        active = [other for other in active if nodes[other][1].end_ms > cue.start_ms]
+        for other in active:
+            other_language, other_cue = nodes[other]
+            overlap = min(cue.end_ms, other_cue.end_ms) - cue.start_ms
+            shorter = min(cue.end_ms - cue.start_ms, other_cue.end_ms - other_cue.start_ms)
+            if language != other_language and overlap * 5 >= shorter:
+                parents[root(index)] = root(other)
+        active.append(index)
+
+    components: dict[int, list[tuple[int, Cue]]] = {}
+    for index, node in enumerate(nodes):
+        components.setdefault(root(index), []).append(node)
+    ordered = sorted(components.values(), key=lambda group: min(c.start_ms for _, c in group))
+    # A component can surround another when inputs overlap within a track.
+    # Merge those components so no text is reordered or given negative duration.
+    groups: list[list[tuple[int, Cue]]] = []
+    for component in ordered:
+        while groups and max(c.end_ms for _, c in groups[-1]) >= max(c.end_ms for _, c in component):
+            component = groups.pop() + component
+        groups.append(component)
+    starts = [min(c.start_ms for _, c in group) for group in groups]
+    ends = [max(c.end_ms for _, c in group) for group in groups]
+    for index in range(len(groups) - 1):
+        if ends[index] > starts[index + 1]:
+            boundary = (ends[index] + starts[index + 1]) // 2
+            ends[index] = starts[index + 1] = boundary
+
+    result: list[Cue] = []
+    for start, end, group in zip(starts, ends, groups):
+        lines = [" ".join(c.text for lang, c in sorted(group, key=lambda item: (item[1].start_ms, item[1].end_ms))
+                          if lang == language) for language in range(len(tracks))]
+        result.extend(_split_multilingual_cue(
+            Cue(start, end, "\n".join(lines)), max_chars=max_chars,
+            min_duration_ms=min_duration_ms,
+        ))
     return result
 
 
@@ -706,7 +803,7 @@ class AssMeasurer:
 
 def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
               max_height_percent: float = 20) -> None:
-    """Write BOM-marked ASS, shrinking each cue to the default 20% height cap."""
+    """Write BOM-marked ASS with one font size that fits every caption."""
     if not cues or not 1 <= font_size <= 100 or not 1 <= max_height_percent <= 100:
         raise ValueError("Need non-empty subtitles and font size/height percent from 1 to 100")
 
@@ -718,16 +815,22 @@ def write_ass(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
 
     header = _ass_header(font_size, max_height_percent)
     events = []
-    sizes: dict[str, int] = {}
     previous_end_cs = 0
     with AssMeasurer(header) as renderer:
+        # Check every cue at the same size; per-cue fitting caused visible jumps.
+        unique_texts = sorted(set(cue.text for cue in cues), key=len, reverse=True)
+        for size in range(font_size, 0, -1):
+            for content in unique_texts:
+                left, top, right, bottom = renderer.bounds(content, size)
+                if bottom - top > int(720 * max_height_percent / 100) or left < 20 or right > 1260:
+                    break
+            else:
+                break
+        else:
+            raise ValueError("Subtitle cannot fit the requested frame-height limit")
+        header = _ass_header(size, max_height_percent)
         for cue in cues:
-            if cue.text not in sizes:
-                sizes[cue.text] = renderer.fit(cue.text, font_size, int(720 * max_height_percent / 100))
-            size = sizes[cue.text]
             text = _ass_text(cue.text)
-            if size != font_size:
-                text = rf"{{\fs{size}}}" + text
             # ASS has 10ms precision. Keep tiny transitions without creating
             # simultaneous events, which would stack two independently capped blocks.
             start_cs = max(round(cue.start_ms / 10), previous_end_cs)
@@ -751,7 +854,7 @@ def write_subtitles(path: Path, cues: Sequence[Cue], *, font_size: int = 38,
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Naturally shorten one SRT or stack two timestamp-aligned SRTs."
+        description="Naturally shorten one SRT or align multiple language tracks."
     )
     parser.add_argument(
         "--input",
@@ -760,9 +863,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Single SRT to shorten naturally (cannot be combined with --top/--bottom)",
     )
     parser.add_argument("--tracks", nargs="+", type=Path,
-                        help="Two or more tracks in display order; preserve source timings")
+                        help="Two or more tracks in display order; align shared phrase boundaries")
     parser.add_argument("--font-size", type=int, default=38,
-                        help="Preferred ASS font size at 720p (default 38); shrinks to fit")
+                        help="Maximum ASS font size at 720p (default 38); one size fits the whole file")
     parser.add_argument("--max-height-percent", type=float, default=20,
                         help="Maximum rendered ASS block height as percent of frame (default 20)")
     parser.add_argument("--top", type=Path, help="Bilingual mode: SRT shown on top")
@@ -808,6 +911,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--max-height-percent must be between 1 and 100")
     if not 1 <= args.font_size <= 100:
         parser.error("--font-size must be between 1 and 100")
+    if args.max_chars <= 0 or args.min_duration_ms <= 0:
+        parser.error("--max-chars and --min-duration-ms must be positive")
     if args.tracks:
         if len(args.tracks) < 2 or args.input or args.top or args.bottom:
             parser.error("--tracks needs at least two files and cannot use --input/--top/--bottom")
@@ -833,7 +938,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         output = args.output or args.top.with_name(f"{args.top.stem}.bilingual.srt")
     try:
         if args.tracks:
-            combined = combine_multiple_tracks([parse_srt(path) for path in args.tracks])
+            tracks = [parse_srt(path) for path in args.tracks]
+            combined = (combine_multiple_tracks_exact(tracks) if args.exact_boundaries
+                        else combine_multiple_tracks(tracks, max_chars=args.max_chars,
+                                                     min_duration_ms=args.min_duration_ms))
             write_subtitles(output, combined, font_size=args.font_size,
                             max_height_percent=args.max_height_percent)
             print(f"Created {output} ({len(combined)} cues)")

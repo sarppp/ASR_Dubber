@@ -259,10 +259,10 @@ def test_input_language_labels_are_removed_without_removing_speaker_notes(tmp_pa
 
 
 def test_three_tracks_preserve_gaps_order_and_endpoints():
-    from bilingual_subtitles import combine_multiple_tracks
+    from bilingual_subtitles import combine_multiple_tracks_exact
     tracks = [[Cue(0, 2000, 'Hello')], [Cue(500, 2500, 'Hallo')],
               [Cue(1000, 3000, 'Bonjour')]]
-    assert combine_multiple_tracks(tracks) == [
+    assert combine_multiple_tracks_exact(tracks) == [
         Cue(0, 500, 'Hello'), Cue(500, 1000, 'Hello\nHallo'),
         Cue(1000, 2000, 'Hello\nHallo\nBonjour'),
         Cue(2000, 2500, 'Hallo\nBonjour'), Cue(2500, 3000, 'Bonjour')]
@@ -309,7 +309,7 @@ def test_subtitle_outputs_have_unicode_marker_and_keep_accents(tmp_path, suffix)
     assert ass.exists() and ass.read_bytes().startswith(b'\xef\xbb\xbf')
 
 
-def test_ass_default_keeps_selected_size_and_shrinks_long_captions(tmp_path):
+def test_ass_uses_one_size_for_short_and_long_captions(tmp_path):
     import re
     from bilingual_subtitles import write_ass, AssMeasurer, _ass_header
     short = 'uncovered something of great import.\nMan weiß, dass es so etwas wie ein viszerales Gefühl ist, dass\nVous savez, c’est un peu un sentiment viscéral que vous avez découvert'
@@ -317,14 +317,13 @@ def test_ass_default_keeps_selected_size_and_shrinks_long_captions(tmp_path):
     output = tmp_path / 'capped.ass'
     write_ass(output, [Cue(0, 3000, short), Cue(3000, 9000, long)])
     text = output.read_text(encoding='utf-8-sig')
-    assert 'Style: Default,DejaVu Sans,38,' in text
+    size = int(re.search(r'Style: Default,DejaVu Sans,(\d+),', text).group(1))
+    assert size < 38
     assert 'Maximum rendered subtitle height: 20%' in text
     events = [line for line in text.splitlines() if line.startswith('Dialogue:')]
-    assert r'{\fs' not in events[0]
-    reduced = int(re.search(r'\{\\fs(\d+)\}', events[1]).group(1))
-    assert reduced < 38
-    with AssMeasurer(_ass_header(38, 20)) as renderer:
-        for content, size in [(short, 38), (long, reduced)]:
+    assert all(r'{\fs' not in event for event in events)
+    with AssMeasurer(_ass_header(size, 20)) as renderer:
+        for content in (short, long):
             left, top, right, bottom = renderer.bounds(content, size)
             assert bottom - top <= 144
             assert 20 <= left < right <= 1260
@@ -356,3 +355,117 @@ def test_ass_subcentisecond_transitions_never_overlap_two_caption_blocks(tmp_pat
     assert [(s[1],s[2]) for s in events] == [
         ('0:00:00.00','0:00:01.00'), ('0:00:01.00','0:00:01.01'),
         ('0:00:01.01','0:00:02.00')]
+
+
+def test_multitrack_default_advances_languages_together():
+    from bilingual_subtitles import combine_multiple_tracks
+    tracks = [[Cue(0, 2000, 'Hello')], [Cue(500, 2500, 'Hallo')],
+              [Cue(1000, 3000, 'Bonjour')], [Cue(600, 2200, 'Merhaba')]]
+    assert combine_multiple_tracks(tracks) == [
+        Cue(0, 3000, 'Hello\nHallo\nBonjour\nMerhaba')]
+
+
+def test_multitrack_keeps_real_silent_gaps_and_unpaired_text():
+    from bilingual_subtitles import combine_multiple_tracks
+    tracks = [[Cue(0, 2000, 'Hello.'), Cue(10000, 12000, 'Alone.')],
+              [Cue(100, 2100, 'Hallo.')], [Cue(200, 2200, 'Bonjour.')]]
+    assert combine_multiple_tracks(tracks) == [
+        Cue(0, 2200, 'Hello.\nHallo.\nBonjour.'), Cue(10000, 12000, 'Alone.')]
+
+
+def test_multitrack_does_not_chain_sentences_through_small_tail_overlaps():
+    from bilingual_subtitles import combine_multiple_tracks
+    tracks = [[Cue(0, 4000, 'First.'), Cue(4000, 8000, 'Second.')],
+              [Cue(100, 4200, 'Erste.'), Cue(4200, 8200, 'Zweite.')],
+              [Cue(0, 3900, 'Première.'), Cue(3900, 8000, 'Deuxième.')]]
+    result = combine_multiple_tracks(tracks)
+    assert [c.text for c in result] == ['First.\nErste.\nPremière.',
+                                      'Second.\nZweite.\nDeuxième.']
+    assert result[0].end_ms == result[1].start_ms
+
+
+@pytest.fixture
+def crispr_tracks():
+    # Original 23-36 second sequence shown in the user's screenshots.
+    return [
+        [Cue(23360, 26600, 'When we first published Our research on CRISPR.'),
+         Cue(27080, 29880, 'It was clear it was going to be a transformative'),
+         Cue(29880, 33800, 'technology for research, and we hoped, of course, for impacting'),
+         Cue(33800, 35160, "people's lives in the future.")],
+        [Cue(25000, 28927, 'Als wir unsere Forschung zu CRISPR durchführten, war klar, dass es eine'),
+         Cue(28927, 32527, 'transformative Technologie für die Forschung sein würde, und wir hofften natürlich,'),
+         Cue(32527, 35800, 'dass sie das Leben der Menschen in Zukunft beeinflussen würde.')],
+        [Cue(25000, 28307, 'Lorsque nous avons commencé notre recherche sur le CRISPR, il était clair'),
+         Cue(28307, 31613, "qu'il allait devenir une technologie transformatrice pour la recherche et nous espérions"),
+         Cue(31613, 34920, "bien sûr avoir un impact sur la vie des gens à l'avenir.")],
+    ]
+
+
+def test_crispr_shared_phrases_preserve_every_word_without_flashes(crispr_tracks):
+    from bilingual_subtitles import combine_multiple_tracks
+    result = combine_multiple_tracks(crispr_tracks)
+    assert result[0].start_ms == 23360
+    assert result[-1].end_ms == 35800
+    assert all(len(c.text.splitlines()) == 3 for c in result)
+    assert all(c.end_ms - c.start_ms >= 1300 for c in result)
+    assert all(a.end_ms == b.start_ms for a, b in zip(result, result[1:]))
+    assert all(len(line) <= 48 for c in result for line in c.text.splitlines())
+    for index, track in enumerate(crispr_tracks):
+        assert ' '.join(c.text.splitlines()[index] for c in result) == ' '.join(c.text for c in track)
+
+
+def test_crispr_captions_have_constant_size_and_fit_rendered_frame(tmp_path, crispr_tracks):
+    import re
+    from bilingual_subtitles import combine_multiple_tracks, write_ass, AssMeasurer, _ass_header
+    result = combine_multiple_tracks(crispr_tracks)
+    output = tmp_path / 'crispr.ass'
+    write_ass(output, result)
+    text = output.read_text(encoding='utf-8-sig')
+    size = int(re.search(r'Style: Default,DejaVu Sans,(\d+),', text).group(1))
+    assert size == 38
+    assert r'{\fs' not in text
+    with AssMeasurer(_ass_header(size, 20)) as renderer:
+        for cue in result:
+            left, top, right, bottom = renderer.bounds(cue.text, size)
+            assert 20 <= left < right <= 1260
+            assert bottom - top <= 144
+
+
+def test_multitrack_cli_honors_exact_boundaries(tmp_path):
+    paths = [_write(tmp_path / f'{index}.srt', text) for index, text in enumerate([
+        '1\n00:00:00,000 --> 00:00:02,000\nHello',
+        '1\n00:00:00,500 --> 00:00:02,500\nHallo',
+        '1\n00:00:01,000 --> 00:00:03,000\nBonjour'])]
+    output = tmp_path / 'exact.srt'
+    assert main(['--tracks', *map(str, paths), '--exact-boundaries', '-o', str(output)]) == 0
+    assert len(parse_srt(output)) == 5
+    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 0
+    assert len(parse_srt(output)) == 1
+
+
+@pytest.mark.parametrize('option', ['--max-chars', '--min-duration-ms'])
+def test_multitrack_rejects_nonpositive_chunk_limits(option):
+    with pytest.raises(SystemExit):
+        main(['--tracks', 'en.srt', 'de.srt', option, '0'])
+
+
+def test_multitrack_cli_uses_chunk_settings(tmp_path, crispr_tracks):
+    paths = [tmp_path / f'{index}.srt' for index in range(3)]
+    for path, track in zip(paths, crispr_tracks):
+        write_srt(path, track)
+    output = tmp_path / 'combined.srt'
+    args = ['--tracks', *map(str, paths), '-o', str(output)]
+    assert main(args + ['--max-chars', '42']) == 0
+    short = parse_srt(output)
+    assert main(args + ['--max-chars', '80', '--min-duration-ms', '3000']) == 0
+    long = parse_srt(output)
+    assert len(long) < len(short)
+    assert all(c.end_ms - c.start_ms >= 3000 for c in long)
+
+
+def test_multitrack_preserves_intentional_repetitions():
+    from bilingual_subtitles import combine_multiple_tracks
+    tracks = [[Cue(0, 2000, 'Yes.'), Cue(2000, 4000, 'Yes.')],
+              [Cue(0, 4000, 'Ja. Ja.')], [Cue(0, 4000, 'Oui. Oui.')]]
+    result = combine_multiple_tracks(tracks)
+    assert result == [Cue(0, 4000, 'Yes. Yes.\nJa. Ja.\nOui. Oui.')]
