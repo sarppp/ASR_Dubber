@@ -127,5 +127,7 @@
         "hardware": "CPU"
       }
     }
-  }
+  },
+  "submissions_disabled": true,
+  "disabled_reason": "Superseded by user requirement: playback must remain 1.0x and original speech/pause durations must match. Existing evaluation allows 1.15x fitting and tests only containment, not equal speech duration. Prepare a revised duration-targeted evaluation before release."
 }

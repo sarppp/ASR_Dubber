@@ -19,6 +19,7 @@ dubbing_naturalness_2026-10-28/*
 !dubbing_naturalness_2026-10-28/experiment_inputs.json
 !dubbing_naturalness_2026-10-28/source_validation_inputs.json
 !dubbing_naturalness_2026-10-28/HANDOFF.md
+!dubbing_naturalness_2026-10-28/RESEARCH_ISOCHRONY_2026-10-29.md
 # Shared worker dependency; all benchmark data and other outputs remain local.
 !speech_model_benchmark_2026-10-27/
 speech_model_benchmark_2026-10-27/*

@@ -16,7 +16,7 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest checkpoint: 2026-10-29 05:54 UTC — evaluation prepared and inspected; no new inference released or run.**
+**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. No new inference released or run.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
@@ -24,6 +24,200 @@ safe-fitting code is integrated into shared workers; see the current
 checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. No new model
 job has run since the released grouping trial.
+
+## Strict timing implementation checkpoint: 2026-10-29
+
+The user approved the researched direction: adapt wording and condition synthesis
+to the original speech/pause pattern, with playback fixed at 1.0x. The following
+shared modules now implement the model-independent comparison stage:
+
+- `batch_dubbing/isochrony.py`: immutable, provenance-labelled speech intervals;
+  Boolean activity-mask conversion; speech/pause overlap and missing/extra speech;
+  onset, offset and duration errors including edge silence. Default timing
+  tolerance is zero apart from 1ns numeric slack. Measurement resolution is
+  reported separately and never used to silently relax the policy. Unequal
+  block counts do not receive fabricated correspondence. Subtitle/ASR-word gaps
+  and energy thresholds cannot become verified acoustic speech evidence.
+- `batch_dubbing/isochrony_backend.py`: explicit language/duration/pause capability
+  declarations and immutable candidate specifications. IDs bind wording, source
+  timing/evidence, model revision and seed. A duration-only provider cannot
+  silently claim pause control. Up to eight serial candidates; no automatic
+  retries, rate adjustment or trimming. Capability declarations are not proof
+  of achieved timing or naturalness.
+- `batch_dubbing/isochrony_revision.py`: prepares full-context feedback for
+  shorter or longer faithful wording, mixed phrase budgets, or pause repair.
+  Preserves names, numbers, negation and intent; forbids added facts/filler and
+  dropped information. Allows `cannot_fit_faithfully` or a synthesis repair.
+  Chronological blocks are not claimed to be semantic alignments. This prepares
+  a provider request; it does not call a translation model.
+- `batch_dubbing/isochrony_pipeline.py`: connects prepared candidates, a supplied
+  synthesis/measurement callback, strict comparison, and wording feedback. All
+  candidates are validated before the first call. Failures stop without retry;
+  earlier attempts and raw-audio references/digests remain in a new report folder.
+  Timelines are limited to 256 speech intervals per comparison to bound report
+  growth. Unsafe speed/trim observations request synthesis repair instead of
+  deriving misleading wording feedback from altered audio. Synthetic matches
+  are separate from acoustic matches. Meaning, listening and artifact/processing
+  audit stay pending; this harness never publishes audio.
+
+Important boundary: these are general components with synthetic provider tests,
+not an installed English/German synthesis solution. Existing production workers
+still use the older scheduler and are not wired to this strict comparison path.
+No new model adapter, acoustic measurement worker, translation provider, model
+download, cloud inference or real-media processing ran in this implementation.
+The external Modal controller must enforce hardware/time limits around callbacks.
+Audio references and processing declarations are recorded, not independently
+downloaded/verified by the pure comparison harness.
+
+Independent review caught and corrected JSON numeric normalization, contradictory
+processing metadata in nested revision feedback, and excessive possible report
+growth. Tests include a maximum-sized comparison (eight candidates, 256 intervals)
+and 1,000 randomized mask comparisons against a separate discrete overlap oracle.
+The final combined run reports **313 passed, 1 skipped, 370 subtests passed**
+(56 new strict-timing tests, including 1,000 randomized cases). The existing skip
+is the optional MCP dependency. The test command below used one core, 512MiB
+address space, serial execution and synthetic media only: 18.24s pytest,
+18.655s outer wall time, 78,396KiB peak child RSS (about76.6MiB). No model or GPU
+ran. `test_package_video.py` remains outside this bounded suite as in the earlier
+checkpoint; no claim of that separate packaging workflow being revalidated.
+
+Next concrete work: choose and implement a reproducible English/German backend
+adapter with source acoustic measurement, connect these comparisons inside the
+controller, and prepare a bounded model experiment. F5's duration-only candidate
+must remain labelled as such; internal pause matching is not established. Do not
+re-enable the old 1.15x evaluation or present code tests as listening evidence.
+
+## Research checkpoint: 2026-10-29
+
+The user asked to research cinema practice and papers before proceeding. Read
+[the primary-source research report](RESEARCH_ISOCHRONY_2026-10-29.md) before
+selecting a synthesis backend or preparing another release.
+
+The investigation supports adapting translation and conditioning synthesis on
+speech/pause budgets. It does not establish a ready English/German system that
+guarantees exact timing and natural pace. Professional practice is not evidence
+that every source pause must already be identical in cinema dubs. Keep the
+user's stricter target explicit. Equal duration, playback 1.0x, and matching
+speech activity are three different checks. The report records language,
+release-availability, hidden rate-control, and evaluation-metric limitations.
+
+No inference or media processing ran for this research. The superseded catalog
+remains disabled. Strict timeline evaluation and backend capability contracts are
+now implemented as described above; a model comparison still needs a concrete
+bounded plan and a real backend/measurement integration.
+
+## Latest priority correction: 1.0x and matching speech/pause timing
+
+This section supersedes the emotional-performance-first plan below. The user
+clarified: "It doesn't matter if they are doubtful etc at first. At first speed
+and silences. It should be always 1.0 so same silence time same talking time.
+Just language is different."
+
+Operational target:
+
+- Original speech blocks and intervening pauses define the target timeline.
+  The translated language must occupy the corresponding talking intervals and
+  preserve the pauses. Total video length alone is not the acceptance test.
+- Playback/assembly tempo stays exactly **1.0x**. No atempo acceleration or
+  slowdown, no consuming the source pause, no clipping words to meet a deadline.
+- A short generated utterance followed by added silence does **not** satisfy
+  equal talking time: it changes the speech/pause structure. An overlong utterance
+  does not pass merely because it fits inside a wider speaker turn either.
+- Translation adaptation and synthesis must jointly produce an appropriate native
+  utterance duration. Too-short and too-long output both require a new wording or
+  synthesis candidate under an explicitly bounded plan. Meaning must be preserved.
+- "1.0x" alone does not specify how quickly a model naturally speaks. Verify
+  generated duration and source pauses directly rather than relabeling rushed
+  generation as natural because its playback multiplier happens to be one.
+- Source acoustic speech/pause evidence is needed. Subtitle display timings and
+  word-boundary gaps are not exact measurements of original silence. Distinguish
+  within-word unvoiced sounds from actual pauses; retain measurement uncertainty
+  and timing error rather than claiming sample-perfect speech detection.
+- Natural multilingual delivery remains the final goal, but emotion transfer,
+  elaborate expressive conditioning and ambience restoration are not the first
+  evaluation priorities now.
+
+Current implementation gap: the source scheduler permits 1.15x, up to250ms
+boundary shifts, and early speech endings. It tests bounded fit, not equal
+speech/pause duration. Existing tests validate that older policy, not this new
+requirement. Changing only the cap to1.0 would leave short speech, incorrect
+internal pauses and infeasible longer wording unresolved. Do not claim that
+change alone implements the user's request.
+
+The previous evaluation catalog `source_naturalness_validation.json` is now
+explicitly `submissions_disabled` with this reason. Its frozen plan
+`mb-c20afdeffc3ad48fd06e197b60ec1d7b` is superseded; changing the catalog invalidates
+its pinned digest as well. Do not ask the user to release that old experiment.
+No existing audio, models or general-purpose historical worker policy were
+silently changed or executed in this clarification.
+
+Next implementation/evaluation must target duration-conditioned native synthesis
+plus faithful dialogue adaptation, with separate assertions for playback rate,
+each speech onset/offset, each pause and preserved content. Do not promise every
+language/phrase can meet exact duration naturally before testing that capability.
+
+## User correction: cinema-style delivery — 2026-10-29
+
+The user explicitly clarified: "I want it to be like cinema. Not less rushed."
+They want natural tone in different languages even when translated dialogue has
+a different length. Treat this as the acceptance target for the ongoing task.
+Passing timing tests or imposing a 1.15x cap does not meet that target.
+
+Current concrete limitation: `cpu_natural.py` passes translated text, a preset
+voice style and a language code to Supertonic. It does not pass the original
+utterance audio, emotion, emphasis, pitch/energy movement or delivery intention
+to synthesis. Source-word timing and speaker IDs are retained, but the source
+performance is not used to condition the generated performance. The committed
+work prevents known damage; it cannot restore information never supplied to TTS.
+
+The earlier engineering choice was to repair measurable timing defects before
+changing models. Retain those protections and diagnostics as infrastructure, but
+revise the next evaluation around performance quality. The prepared three-case
+Supertonic-only plan remains an unreleased timing baseline; do not present it as
+a sufficient test or solution for cinema-style dubbing, and do not launch it by
+default in response to this correction.
+
+Required architecture and acceptance dimensions:
+
+1. Carry original dialogue audio and contextual delivery information through the
+   pipeline, alongside words and speaker identity. Emotion labels alone are not
+   equivalent to preserving a performance.
+2. Adapt dialogue into idiomatic target-language speech with context and a duration
+   budget. Preserve meaning, facts, negation and intention; do not enforce literal
+   word counts or shorten away information. Different sentence lengths require
+   different wording/rhythm, not uniformly accelerated waveforms.
+3. Evaluate expressive multilingual synthesis or speech-to-speech translation
+   conditioned on source delivery. Distinguish voice identity from acting/emotion:
+   matching a voice alone does not establish matching performance. Target-language
+   stress and intonation should remain natural rather than copying every source
+   pitch movement mechanically. No new model is selected or benchmarked yet.
+4. Let synthesis and adapted wording solve duration jointly. Permit phrase-level
+   timing flexibility within meaningful speaker/visual anchors, preserve pauses
+   that carry intention, and avoid global tempo as the main fitting method. Fixed
+   video still creates real constraints at speaker changes and visible action.
+5. Preserve/reconstruct the music/effects bed and match loudness/room acoustics;
+   this remains unimplemented and any separation/media execution needs its own
+   disclosed approval within the new reviewed scope.
+6. Evaluate meaning, idiomatic speech, emotional intent, emphasis, voice consistency,
+   audible edits, audiovisual timing and mix separately using listening comparisons.
+   English/German are the initial evaluation pair; do not generalize that result
+   into an all-language quality guarantee. Automated checks are supporting evidence.
+
+Before requesting another cloud release, compare candidate architectures/models
+against these requirements, check supported languages and reference/duration
+conditioning, and verify bounded hardware feasibility. The user's 6 GB local GPU
+does not constrain a separately approved cloud model to the CPU preset already
+chosen. Local WSL protection and controller release rules remain unchanged.
+
+Primary references consulted for this correction:
+
+- [Amazon Science: Evaluating and optimizing prosodic alignment for automatic dubbing](https://www.amazon.science/publications/evaluating-and-optimizing-prosodic-alignment-for-automatic-dubbing)
+  describes duration, audiovisual timing, emotion/prosody and background acoustics
+  as separate dubbing requirements, and studies relaxed synchronization.
+- [Meta: Seamless Communication](https://ai.meta.com/research/seamless-communication/)
+  describes expressive cross-language translation preserving speech rate, pauses,
+  vocal style and emotional tone. This establishes a relevant architecture to
+  investigate, not a model selection or proof of cinema-level results here.
 
 ## Continuation — 2026-10-29
 
