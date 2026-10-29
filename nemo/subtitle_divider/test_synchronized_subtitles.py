@@ -27,7 +27,7 @@ def test_staggered_fragments_become_one_complete_shared_sentence():
     assert blocks[0]['text'] == ['We study genes.', 'Wir untersuchen Gene.', 'Nous étudions les gènes.']
     assert (blocks[0]['start_ms'], blocks[0]['end_ms']) == (0, 4000)
     assert blocks[0]['source_cue_indices'] == [[0, 1], [0], [0, 1]]
-    assert len(block_cues(blocks)[0].text.splitlines()) == 6
+    assert len(block_cues(blocks)[0].text.splitlines()) == 3
 
 
 def test_real_pauses_keep_all_languages_off_screen_and_repetitions_survive():
@@ -73,7 +73,7 @@ def test_cli_exports_matching_formats_with_one_style_and_keeps_existing_trial(tm
     cues = parse_srt(output, preserve_lines=True)
     assert cues[0].text.replace(EMPTY_SUBTITLE_ROW, '').split() == ['Hello.', 'Hallo.', 'Bonjour.']
     ass = output.with_suffix('.ass').read_text(encoding='utf-8-sig')
-    assert 'Style: Default,DejaVu Sans,18,' in ass and r'\fs' not in ass
+    assert 'Style: Default,DejaVu Sans,28,' in ass and r'\fs' not in ass
     assert len(re.findall(r'^Dialogue:', ass, re.M)) == len(cues)
     report = json.loads(output.with_suffix('.alignment.json').read_text())
     assert len(report['inputs']) == 3 and 'not a semantic model' in report['alignment_basis']
@@ -93,7 +93,7 @@ def test_actual_ass_stays_identical_across_old_individual_boundaries(tmp_path):
     blocks = synchronize(tracks)
     assert len(blocks) == 1
     output = tmp_path / 'trial.srt'
-    write_subtitles(output, block_cues(blocks), font_size=18, ass_preview=True)
+    write_subtitles(output, block_cues(blocks), font_size=28, ass_preview=True)
     rendered = subprocess.run([
         'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=4:r=4',
         '-vf', f'subtitles={output.with_suffix(".ass")}', '-frames:v', '16', '-threads', '1',
@@ -104,3 +104,49 @@ def test_actual_ass_stays_identical_across_old_individual_boundaries(tmp_path):
     ys = [y for y in range(720) if max(frames[0][y * 1280:(y + 1) * 1280]) > 100]
     assert ys and max(ys) - min(ys) + 1 <= 144
     assert all(max(f) < 100 for f in frames[12:])
+
+
+def test_paragraphs_are_rejected_even_when_a_tiny_font_would_fit():
+    paragraph = ('We make discoveries and learn about the world ' * 5).strip() + '.'
+    with pytest.raises(ValueError, match='No complete'):
+        synchronize([[Cue(0, 18000, paragraph)]] * 3, font_size=18)
+    with pytest.raises(ValueError, match='one line'):
+        block_cues([dict(start_ms=0, end_ms=4000, lines=[['long', 'paragraph']] * 3)])
+
+
+@pytest.fixture
+def aligned_rows():
+    return [dict(id=1, start_ms=0, end_ms=3000, en='We study genes.',
+                 de='Wir untersuchen Gene.', fr='Nous étudions les gènes.'),
+            dict(id=2, start_ms=3000, end_ms=6000, en='We hope to help people.',
+                 de='Wir hoffen, Menschen zu helfen.', fr='Nous espérons aider les gens.')]
+
+
+@pytest.mark.parametrize('fault', ['id', 'words', 'paragraph', 'multiline', 'style', 'long', 'overlap', 'wide'])
+def test_aligned_publication_requires_short_matching_source_ids(aligned_rows, fault):
+    from synchronized_subtitles import aligned_phrase_blocks
+    source = [Cue(0, 6000, 'We study genes. We hope to help people.')]
+    if fault == 'id': aligned_rows[1]['id'] = 1
+    if fault == 'words': aligned_rows[0]['en'] = 'We changed the meaning.'
+    if fault == 'paragraph': aligned_rows[0]['de'] = 'Ein langer Absatz. ' * 10
+    if fault == 'multiline': aligned_rows[0]['fr'] += '\nDeuxième ligne.'
+    if fault == 'style': aligned_rows[0]['de'] = '<font size="12">Hallo</font>'
+    if fault == 'long': aligned_rows[1]['end_ms'] = 10000
+    if fault == 'overlap': aligned_rows[1]['start_ms'] = 2500
+    if fault == 'wide': aligned_rows[0]['de'] = 'W' * 80
+    with pytest.raises(ValueError):
+        aligned_phrase_blocks(aligned_rows, source)
+
+
+def test_aligned_cli_exports_three_short_rows_without_shrinking(tmp_path, aligned_rows):
+    source = tmp_path / 'original.en.srt'
+    write_srt(source, [Cue(0, 6000, 'We study genes. We hope to help people.')])
+    data = tmp_path / 'phrases.json'
+    data.write_text(json.dumps(aligned_rows))
+    output = tmp_path / 'readable.srt'
+    assert main(['--aligned-file', str(data), '--source-english', str(source), '--output', str(output)]) == 0
+    cues = parse_srt(output, preserve_lines=True)
+    assert [c.text.splitlines() for c in cues] == [[r[l] for l in ('en', 'de', 'fr')] for r in aligned_rows]
+    ass = output.with_suffix('.ass').read_text(encoding='utf-8-sig')
+    assert 'Style: Default,DejaVu Sans,28,' in ass
+    assert r'\fs' not in ass

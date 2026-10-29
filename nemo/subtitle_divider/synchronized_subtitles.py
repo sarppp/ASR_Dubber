@@ -1,11 +1,12 @@
-"""Trial alignment of existing translations into shared subtitle events.
+"""Publish short multilingual phrases with shared subtitle events.
 
-Uses timing and sentence punctuation, not a semantic model. Never translates,
-deletes, or independently splits text to equal character counts. Review the
-alignment report before treating a trial as a semantically verified alignment.
+Prefer explicit English phrase IDs with matching DE/FR text. The optional
+independent-track aligner uses timing and punctuation, not a semantic model.
+Neither path permits paragraph blocks: one line per language, 84 characters
+maximum, a six-second duration cap, and one fixed font (default 28 at 720p).
 
-Example: python synchronized_subtitles.py --tracks movie.en.srt movie.de.srt
-movie.fr.srt --output movie.synchronized.srt
+Example: python synchronized_subtitles.py --aligned-file movie.phrases.json
+--source-english movie.en.srt --output movie.synchronized.srt
 Writes a separate SRT, styled ASS, and source-traceable alignment report.
 """
 from __future__ import annotations
@@ -52,11 +53,11 @@ def sentence_fragments(track: list[Cue]) -> tuple[list[Cue], list[int]]:
     return result, sources
 
 
-def synchronize(tracks: list[list[Cue]], *, font_size: int = 18,
+def synchronize(tracks: list[list[Cue]], *, font_size: int = 28,
                 width: int = 1100, max_height_percent: float = 20,
-                max_join: int = 12, max_duration_ms: int = 22000,
+                max_join: int = 12, max_duration_ms: int = 6000,
                 preserve_silence_ms: int = 750) -> list[dict]:
-    """Find monotone shared blocks fitting two reserved rows per language.
+    """Find short shared blocks fitting ONE reserved row per language.
 
     Translated end candidates are bounded to five near each source end. The
     path prefers sentence endings, modest timing shifts, and readable durations.
@@ -93,31 +94,18 @@ def synchronize(tracks: list[list[Cue]], *, font_size: int = 18,
         measured = {}
 
         def wrap(text):
-            lines, line = [], ''
-            for word in text.split():
-                candidate = (line + ' ' + word).strip()
-                if candidate not in measured:
-                    left, _, right, _ = renderer.bounds(candidate, font_size)
-                    measured[candidate] = right - left
-                if measured[candidate] <= width:
-                    line = candidate
-                else:
-                    if not line:
-                        return None
-                    lines.append(line)
-                    line = word
-                    if len(lines) >= 2:
-                        return None
-                    left, _, right, _ = renderer.bounds(word, font_size)
-                    if right - left > width:
-                        return None
-            return lines + ([line] if line else [])
+            if text not in measured:
+                left, _, right, _ = renderer.bounds(text, font_size)
+                measured[text] = right - left
+            return [text] if measured[text] <= width else None
 
         for track in tracks:
             spans.append({})
             for start in range(len(track)):
                 for end in range(start + 1, min(start + max_join, len(track)) + 1):
                     text = ' '.join(c.text for c in track[start:end])
+                    if len(text) > 84:
+                        break
                     lines = wrap(text)
                     if lines is None:
                         break
@@ -154,7 +142,7 @@ def synchronize(tracks: list[list[Cue]], *, font_size: int = 18,
                         continue
                     empty = sum(not c[0] for c in cells)
                     score = (cost + 4 + punctuation + timing * 2 + empty * 12
-                             + max(0, 2 - duration) * 8 + max(0, duration - 8) * 1.5)
+                             + max(0, 2 - duration) * 8 + max(0, duration - 4) * 1.5)
                     if score < best[0]:
                         best = (score, previous)
             if best[1] is not None:
@@ -162,7 +150,8 @@ def synchronize(tracks: list[list[Cue]], *, font_size: int = 18,
         levels.append(level)
     node = tuple(sizes)
     if node not in levels[-1]:
-        raise ValueError('No complete synchronized path fits the layout and timing limits')
+        raise ValueError('No complete synchronized path fits the short-phrase limits; '
+                         'provide source-aligned phrase translations instead of shrinking paragraphs')
     blocks = []
     while any(node):
         previous = levels[node[0]][node][1]
@@ -192,17 +181,65 @@ def synchronize(tracks: list[list[Cue]], *, font_size: int = 18,
 def block_cues(blocks: list[dict], languages: list[int] | None = None) -> list[Cue]:
     if languages is None:
         languages = list(range(len(blocks[0]['lines'])))
+    if any(len(b['lines'][language]) > 1 for b in blocks for language in languages):
+        raise ValueError('Readable subtitles allow only one line per language')
     return [Cue(b['start_ms'], b['end_ms'], '\n'.join(
         line for language in languages
-        for line in b['lines'][language] + [EMPTY_SUBTITLE_ROW] * (2 - len(b['lines'][language]))))
+        for line in b['lines'][language] + [EMPTY_SUBTITLE_ROW] * (1 - len(b['lines'][language]))))
         for b in blocks if any(b['lines'][language] for language in languages)]
+
+
+def aligned_phrase_blocks(rows: list[dict], source_english: list[Cue], *,
+                          font_size: int = 28, max_height_percent: float = 20) -> list[dict]:
+    """Validate explicit shared phrase IDs; never infer translation alignment.
+
+    English words must be conserved in order. DE/FR are concise translations
+    prepared for each English phrase, not slices of independent transcripts.
+    Layout validation is not an automatic semantic quality certification.
+    """
+    if not isinstance(rows, list) or not rows or not source_english:
+        raise ValueError('Need aligned phrase rows and the original English track')
+    if not 1 <= font_size <= 100 or not 1 <= max_height_percent <= 100:
+        raise ValueError('Invalid fixed font size or height limit')
+    blocks = []
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] != index:
+            raise ValueError('Missing, duplicate, or reordered phrase ID')
+        start, end = row.get('start_ms'), row.get('end_ms')
+        if (type(start) is not int or type(end) is not int or start < 0
+                or not 1500 <= end - start <= 6000
+                or blocks and start < blocks[-1]['end_ms']):
+            raise ValueError(f'Phrase {index} needs nonoverlapping timing of 1.5 to 6 seconds')
+        text = [row.get(lang) for lang in ('en', 'de', 'fr')]
+        if any(not isinstance(t, str) or not t.strip() or '\n' in t or '\r' in t
+               or len(t) > 84 or plain_srt_text(t) != t for t in text):
+            raise ValueError(f'Phrase {index} must have one plain line, at most 84 characters, per language')
+        blocks.append(dict(start_ms=start, end_ms=end, text=text,
+                           lines=[[t] for t in text], phrase_id=index,
+                           source_phrase_ids=row.get('source_phrase_ids', [index])))
+    expected = ' '.join(plain_srt_text(c.text) for c in source_english).split()
+    actual = ' '.join(b['text'][0] for b in blocks).split()
+    if expected != actual:
+        raise ValueError('Aligned phrases changed the original English word sequence')
+    with AssMeasurer(_ass_header(font_size, max_height_percent).replace('WrapStyle: 0', 'WrapStyle: 2')) as renderer:
+        for block in blocks:
+            for text in block['text']:
+                left, _, right, _ = renderer.bounds(text, font_size)
+                if right - left > 1100:
+                    raise ValueError(f'Phrase {block["phrase_id"]} exceeds the readable line width')
+    validate_srt_layout(block_cues(blocks), font_size=font_size, max_height_percent=max_height_percent)
+    return blocks
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--tracks', nargs='+', type=Path, required=True)
+    inputs_group = parser.add_mutually_exclusive_group(required=True)
+    inputs_group.add_argument('--tracks', nargs='+', type=Path)
+    inputs_group.add_argument('--aligned-file', type=Path,
+                              help='JSON phrase IDs with en/de/fr and shared times; preferred for semantic alignment')
+    parser.add_argument('--source-english', type=Path, help='Original English SRT, required with --aligned-file')
     parser.add_argument('--output', type=Path, required=True, help='New trial .srt; also writes .ass and .alignment.json')
-    parser.add_argument('--font-size', type=int, default=18)
+    parser.add_argument('--font-size', type=int, default=28)
     parser.add_argument('--max-height-percent', type=float, default=20)
     args = parser.parse_args(argv)
     output = args.output
@@ -211,12 +248,21 @@ def main(argv=None):
     outputs = [output, output.with_suffix('.ass'), output.with_suffix('.alignment.json')]
     if any(p.exists() for p in outputs):
         parser.error('Trial outputs already exist; use a new output name')
+    if args.aligned_file and not args.source_english:
+        parser.error('--aligned-file requires --source-english')
+    paths = [args.aligned_file, args.source_english] if args.aligned_file else args.tracks
     inputs = [{'path': str(p.resolve()), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
-              for p in args.tracks]
-    blocks = synchronize([parse_srt(p) for p in args.tracks], font_size=args.font_size,
-                         max_height_percent=args.max_height_percent)
-    report = dict(alignment_basis='Timing and punctuation; not a semantic model or full semantic verification',
-                  inputs=inputs, font_size=args.font_size, rows_per_language=2,
+              for p in paths]
+    if args.aligned_file:
+        blocks = aligned_phrase_blocks(json.loads(args.aligned_file.read_text()), parse_srt(args.source_english),
+                                       font_size=args.font_size, max_height_percent=args.max_height_percent)
+        basis = 'Explicit shared English phrase IDs with matching DE/FR translations; structural checks do not certify semantics'
+    else:
+        blocks = synchronize([parse_srt(p) for p in args.tracks], font_size=args.font_size,
+                             max_height_percent=args.max_height_percent)
+        basis = 'Timing and punctuation; not a semantic model or full semantic verification'
+    report = dict(alignment_basis=basis,
+                  inputs=inputs, font_size=args.font_size, rows_per_language=1,
                   max_height_percent=args.max_height_percent, blocks=blocks)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.synchronized-', dir=output.parent) as directory:
