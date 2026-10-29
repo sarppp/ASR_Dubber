@@ -16,7 +16,7 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The longer-sentence probe completed under release; the first OpenRouter request was blocked by account provider settings.**
+**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The longer-sentence probe completed; user liked its audio. CRISPR0–74.24s comparison is now prepared, not released. Nemotron is excluded.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
@@ -24,6 +24,76 @@ safe-fitting code is integrated into shared workers; see the current
 checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. The most recent
 completed model job is the six-sample longer-sentence probe recorded below.
+
+## Current next test: CRISPR opening, 2026-10-29
+
+The user said the preceding tests were already good, reports enabling DeepInfra
+in OpenRouter, and requested trying the approach on the CRISPR video in
+`new_guys`. This is positive user listening feedback for those test clips, not
+proof of original-video timing or general cinema-quality dubbing. No OpenRouter
+retry was requested or performed; the provider-setting change is user-reported
+and has not been remotely checked. Nemotron is excluded from the next run.
+
+User selected **opening74seconds with complete sentences**. Located the
+36m49.959184s Jennifer Doudna video, existing English/German captions and older
+German dub in `new_guys/crispr`. Exact test range0.00–74.24s includes the final
+whole German caption. Prepared scope is `crispr_native/scope.json`; controller
+plan `mb-c06b3c66dd33827ecddf49e9f1430990` in
+`crispr_native/release_plan.json`. **Not released and no new inference yet.**
+
+- Reusable `native_excerpt_prepare.py` groups whole existing captions into
+  longer blocks, splitting at a>=1s gap only after terminal punctuation. Actual
+  input has2English blocks and2German blocks. No text rewrites, subtitles edits,
+  transcription or translation. English55/125words, German58/118words.
+- Actual cached Supertonic1.3.1 chunker, inspected without package/model loading,
+  produces1/3/2/3chunks: **four API calls/nine internal chunks total**. Smoke
+  consumes `en_000` once; workload reuses it and synthesizes the remainingthree.
+  Existing F1 preset, explicit speed1.0/playback1.0, eightsteps, fixedseeds.
+- Existing input has German `Tiefkes`, awkward translation and English subtitle
+  punctuation artifacts. All wording is retained to isolate synthesis behavior.
+  Original20English/18German cues and source hashes are preserved. Last German
+  cue has unresolved old speaker attribution; the explicit F1 comparison preset
+  does not claim to repair speaker identity or provide a voice clone.
+- `native_excerpt_probe.py` retains entire native float waveforms, checks hashes,
+  and builds listening sequences from raw samples plus caption leading,
+  between-block and trailing gaps. It **does not preserve every internal pause**:
+ 6English internal caption gaps total1.44s and5German gaps total1.64s. Internal
+  pauses instead come from TTS and its explicit0.3s chunk gap. These are caption
+  measurements, not acoustic-source speech/silence measurements.
+- Strict report records each raw duration versus its caption window and potential
+  collisions. A mismatch never causes stretch, slowdown, trim or a claim of
+  synchronized output. Native sequence duration may differ from74.24s. If every
+  slot matches exactly, `aligned_timeline_files` references the existing native
+  WAVs; no redundant byte copies consume the transfer budget. Even exact caption
+  matching is not verified acoustic alignment.
+- Cached Modal CPU worker: one container,2CPU/4GiB,150s function/30s startup,
+  180s percontroller stage,420s batchwall, no retries, downloads, builds orGPU.
+  Max120sclip,300sgeneratedstage,63MiBaudio+1MiBmetadata. Estimate$0.01848 with
+  conservative cleanup/egress, within$0.10 target, not a provider dollar cap.
+- After successful synthesis, prepared `native_excerpt_review.py` builds an
+  offline listening page using references to original/older-dub videos and new
+  native English/German WAVs. Original videos stop at74.24s; new native speech
+  stays complete. No video extraction/reencoding, subtitle burn-in, background
+  remix, publication or original-file overwrite. Page displays timing differences
+  and exact text. Preview exists at `crispr_native/review.html`; generated audio
+  does not exist yet. Post-run page generation is part of this comparison scope.
+- Read `crispr_native/README.md` for sources, execution and limitations. The
+  generic worker accepts `--input-file`, `--output-root`, `--smoke`, and
+  `--smoke-result`; catalog `modal_control/catalog/crispr_native_excerpt.json`
+  and `crispr_native/batch.json` pin the reviewed run. Verify hashes in scope
+  before release and reprepare an expired plan only from unchanged inputs.
+- Local execution must retain the proven oneCPU/512MiB bound,1MiB thread stack,
+  and `MALLOC_ARENA_MAX=2` before starting the controller. This avoids the prior
+  local thread-reservation failure without raising the memory limit.
+
+Checks: **354 passed,1 skipped,574 subtests passed**, covering
+`pytest -q batch_dubbing modal_control/tests`;16.06s pytest/16.356s outer wall,
+90,540KiB peak child RSS (~88.4MiB),oneCPU/512MiB. Twenty-nine new tests cover
+preparation, waveform retention, smoke reuse, strict placement, bounds, wrapper
+failure receipts and exact-fit artifact deduplication. Independent review verified
+fixture reconstruction/source hashes and caught the need to disclose internal
+pause changes. Parent review fixed the duplicate aligned-file transfer overflow.
+Final pure chunker validation and scope hashes passed; no cloud/model call ran.
 
 ## Released transition result: 2026-10-29
 

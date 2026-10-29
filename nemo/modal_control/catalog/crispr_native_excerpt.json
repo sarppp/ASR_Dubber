@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "crispr_native_excerpt": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/native_excerpt_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/crispr_native/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/crispr_native/trial",
+        "--smoke-result",
+        "dubbing_naturalness_2026-10-28/crispr_native/trial/smoke/report.json"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/native_excerpt_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/crispr_native/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/crispr_native/trial",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/native_excerpt_worker.py",
+        "batch_dubbing/native_excerpt_probe.py",
+        "batch_dubbing/native_excerpt_prepare.py",
+        "batch_dubbing/cheap_native_probe.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "dubbing_naturalness_2026-10-28/crispr_native/inputs.json"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/crispr_native/trial/workload/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/crispr_native/trial/smoke/report.json"
+      ],
+      "max_seconds": 180,
+      "build_timeout_seconds": 30,
+      "startup_timeout_seconds": 45,
+      "idle_timeout_seconds": 155,
+      "review": {
+        "purpose": "CRISPR opening native1.0 English/German comparison using saved captions",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1; cached image im-40qUTZlx5ttgX1nwrQdvyw",
+        "precision": "ONNX CPU inference; raw FLOAT32 WAV, 44100Hz",
+        "reason": "Apply the user-approved native speech direction to real video. Inspect complete paragraphs, ending retention and caption-window timing feasibility without forcing or disguising alignment.",
+        "input": "CRISPR Jennifer Doudna0.0..74.24s; frozen existing EN20cues andDE18cues grouped into two complete-caption blocks perlanguage. FourAPIcalls/nineactualinternalchunks: EN55words1chunk smoke,EN125words3chunks,DE58words2chunks,DE118words3chunks. ExistingF1preset, fixedseeds, speed1.0/eightsteps. Smoke reused. ExistingGerman wording retained, includingknownTiefkes issue. No sourcevideo upload, ASR, translation, voiceclone or download.",
+        "input_seconds": 74.24,
+        "outputs": "crispr_native/trial/smoke and/workload: fourunique rawFLOAT32mono44100WAVs and native_en.wav/native_de.wav listening sequences, reports withsample hashes/caption timing differences. Full samples retained; insert only captionlead/interblock/tail gaps. InternalpausescontrolledbyTTS. Max120sclip/300sgeneratedstage/63MiBaudio+1MiBmetadata. Separatelocalofflinecomparisonpage references original andolderdub without decoding/reencodingvideo.",
+        "quality_tradeoffs": "This native-speed listening test is not exactsource acoustic alignment. Existingtranslation/punctuationissuesremain, no rewrite. WithinblockcaptiongapsEN1.44s/DE1.64s are not inserted independently. Nativeclips mayoverrun/underfilltheircaptionwindows; reportmismatch andkeepwholeaudio, no stretch/trim/shift-to-fit. Sequence length maydiffer from74.24s. Originalvideo/dub/subtitle files unchanged. F1isfixedtestpreset, notverifiednewdiarization/clone. Absentcachefailswithoutdownload/build. Normalfailuresretainpartials; abruptdeathmayloseinmemoryaudio.",
+        "cost_estimate": "Same reviewedbase rates CPU$0.0000131/core/s andRAM$0.00000222/GiB/s: two180s stages2CPU4GiB=$0.0126288; plus24s cleanup allowance and128MiBegressat$0.04/GiB givesabout$0.01848. Target$0.10; notprovider-enforcedcurrencycap. Existingcachedimage/modelonly. NoASR/translationcost, paidretry, GPUorbudgetincrease.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 360,
+        "max_synthesis_calls_including_smoke": 4,
+        "max_internal_chunks_including_smoke": 9
+      }
+    }
+  }
+}

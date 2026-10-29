@@ -41,3 +41,10 @@ modal_control/**/*.srt
 !dubbing_naturalness_2026-10-28/RESEARCH_NEMOTRON_2026-10-29.md
 !dubbing_naturalness_2026-10-28/sentence_transition_batch.json
 !dubbing_naturalness_2026-10-28/transition_release_scope.json
+
+!dubbing_naturalness_2026-10-28/crispr_native/
+dubbing_naturalness_2026-10-28/crispr_native/*
+!dubbing_naturalness_2026-10-28/crispr_native/inputs.json
+!dubbing_naturalness_2026-10-28/crispr_native/batch.json
+!dubbing_naturalness_2026-10-28/crispr_native/scope.json
+!dubbing_naturalness_2026-10-28/crispr_native/README.md

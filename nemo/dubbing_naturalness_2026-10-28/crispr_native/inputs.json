@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "model": "Supertone/supertonic-3",
+  "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323",
+  "package": "supertonic==1.3.1",
+  "image_id": "im-40qUTZlx5ttgX1nwrQdvyw",
+  "speed": 1.0,
+  "steps": 8,
+  "max_chunk_length": 300,
+  "silence_duration": 0.3,
+  "excerpt_start": 0.0,
+  "excerpt_end": 74.24,
+  "source_metadata": {
+    "kind": "existing_captions_not_acoustic_speech_timing",
+    "title": "CRISPR — Jennifer Doudna, opening",
+    "caption_source": "modal_control/batch_inputs/video_01.gpu_full.json",
+    "caption_source_sha256": "54c5468352ee60d92915d84637414ffa7dfe5bdc294b4aab02c3fea1d241c167",
+    "original_video": "new_guys/crispr/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4",
+    "original_video_sha256": "1c4c1e98cc1a8d4a6e1a871fd00ca8dad030a94ac91d62835365f793456e05f2",
+    "older_dub": "new_guys/crispr/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.german-dub.mp4",
+    "older_dub_sha256": "1f42ef20d64f33bb1d8211a7da2ee0a47b9cf6e6cc6ec72bbe9918e73f4758fa",
+    "voice_policy": "Reuse F1 from existing report as a fixed listening-test preset; no voice cloning or new speaker-identity claim",
+    "grouping": "Keep complete captions together; split only at a >=1s gap after terminal punctuation. Preserve text; no translation or subtitle edits.",
+    "known_text_issues": [
+      "German source says Tiefkes; preserved to isolate synthesis timing.",
+      "English source punctuation puts a period after the subordinate clause When we first published Our research on CRISPR; it remains inside a longer block.",
+      "Final German caption has speaker=None in old report because translated timing extends beyond diarization coverage; chosen test preset does not resolve attribution."
+    ],
+    "intrablock_caption_gaps_not_explicitly_preserved": {
+      "en": {
+        "count": 6,
+        "total_seconds": 1.44
+      },
+      "de": {
+        "count": 5,
+        "total_seconds": 1.64
+      }
+    },
+    "pause_limit": "Only caption lead, between-block and tail gaps are inserted. Internal pauses come from TTS and its0.3s chunk silence; original acoustic timing is not measured."
+  },
+  "samples": [
+    {
+      "id": "en_000",
+      "language": "en",
+      "voice": "F1",
+      "speaker": "comparison_voice_F1",
+      "seed": 20261029,
+      "srt_start": 4.32,
+      "srt_end": 22.32,
+      "text": "I think one of the reasons we do science is because every now and then, it's pretty rare, but you know, every now and then you make a discovery and you know in your gut that it's something really profound. You know, it's kind of a visceral sense that you've uncovered something of great import.",
+      "source_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "en_001",
+      "language": "en",
+      "voice": "F1",
+      "speaker": "comparison_voice_F1",
+      "seed": 20261030,
+      "srt_start": 23.36,
+      "srt_end": 73.76,
+      "text": "When we first published Our research on CRISPR. It was clear it was going to be a transformative technology for research, and we hoped, of course, for impacting people's lives in the future. And it's now, 14 years later, amazing to see what's happening. We now have the potential to do things like changing disease-causing genes, and that's already being done. But it also means that we Have the opportunity to change the course of human evolution if we choose to do that. And so I've had to figure out how to navigate that, how to encourage responsibility among scientists around the world, and to wrestle with a powerful tool that has a lot of great potential, but it comes with a some real risk.",
+      "source_indices": [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ]
+    },
+    {
+      "id": "de_000",
+      "language": "de",
+      "voice": "F1",
+      "speaker": "comparison_voice_F1",
+      "seed": 20261031,
+      "srt_start": 4.64,
+      "srt_end": 23.28,
+      "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass es ab und zu ziemlich selten ist, aber man weiß, dass man ab und zu eine Entdeckung macht und im Inneren weiß, dass es etwas wirklich Tiefkes ist. Man weiß, dass es so etwas wie ein viszerales Gefühl ist, dass man etwas von großer Bedeutung entdeckt hat.",
+      "source_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "de_001",
+      "language": "de",
+      "voice": "F1",
+      "speaker": "comparison_voice_F1",
+      "seed": 20261032,
+      "srt_start": 25.0,
+      "srt_end": 74.24,
+      "text": "Als wir unsere Forschung zu CRISPR durchführten, war klar, dass es eine transformative Technologie für die Forschung sein würde, und wir hofften natürlich, dass sie das Leben der Menschen in Zukunft beeinflussen würde. Und jetzt, vierzehn Jahre später, ist es erstaunlich zu sehen, was passiert. Wir haben jetzt das Potenzial, Dinge wie die Änderung von Krankheitsverursachgenen zu tun, und das wird bereits getan. Wir haben die Möglichkeit, den Verlauf der menschlichen Evolution zu verändern, wenn wir uns dafür entscheiden. Und so musste ich herausfinden, wie ich das navigieren kann, wie ich Verantwortung unter Wissenschaftlern auf der ganzen Welt fördern kann und mit einem mächtigen Werkzeug zu kämpfen, das viel großes Potenzial hat, aber mit einigen echten Risiken einhergeht.",
+      "source_indices": [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ]
+    }
+  ]
+}
