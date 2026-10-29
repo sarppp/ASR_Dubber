@@ -16,14 +16,121 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. No new inference released or run.**
+**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The released cheap probe completed; the longer-sentence and OpenRouter tests are being prepared, not released.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
 safe-fitting code is integrated into shared workers; see the current
 checkpoint below before relying on older experiment-only descriptions. Existing
-videos, subtitles, and generated audio have not been overwritten. No new model
-job has run since the released grouping trial.
+videos, subtitles, and generated audio have not been overwritten. The most recent
+completed model job is the four-sample cheap probe recorded below.
+
+## Current continuation: longer sentences and hosted Nemotron, 2026-10-29
+
+The user requested longer English/German sentences and short/long transitions,
+then asked about NVIDIA Nemotron 3.5 Transcribe. They initially selected preparing
+DeepInfra, then superseded that choice because they have no DeepInfra billing:
+prefer OpenRouter, otherwise investigate downloading weights on Modal.
+**No new inference, audio upload or weight download occurred in this continuation.**
+
+OpenRouter's official transcription catalog and endpoint metadata now confirm
+`nvidia/nemotron-3.5-transcribe`, canonical release
+`nvidia/nemotron-3.5-transcribe-20261028`. The currently listed backend is DeepInfra;
+OpenRouter credentials/billing avoid a separate DeepInfra account. Rate is
+$0.0000333/audio-second, approximately $0.002/minute or $0.02/ten minutes.
+No model fallback is planned. Backend routing is not pin-able with the ordinary
+provider `only`/`order` fields for this endpoint; record actual returned evidence.
+Speaker diarization is currently listed unsupported. Word/segment timestamps are
+requested, but their actual presence and correctness remain untested.
+
+The user explicitly directed credential discovery in Budget_App. A configured
+`OPEN_ROUTER` field exists in that project's root `.env`; it has not been printed,
+copied, committed or sent. Runtime setup can read it there without modifying that
+project. The project's standard `OPENROUTER_API_KEY` environment is absent.
+Do not put credential values in a manifest, CLI argument, report, or handoff.
+
+The new transition fixture has six synthesis requests and eight internal chunks:
+English short/long/short and German short/long/short. Each long passage has 73
+words, including a terminal sentence. The first English short is the smoke and
+is reused, not regenerated. Explicit synthesis/playback speed1.0, eight steps,
+M1 voice, cached model/image, no model downloads. Internal chunk silence remains
+0.3s and the test inserts0.4s between complete raw clips. Those are synthetic
+fixture gaps, not measurements of the original video. Lossless placement tests
+reject insufficient slots and collisions; sample preservation cannot prove that
+the synthesizer pronounced every word. Nemotron text comparisons can flag possible
+missing endings, but recognition errors still require listening.
+
+Research, route limitations, and exact preparation status are recorded in
+[RESEARCH_NEMOTRON_2026-10-29.md](RESEARCH_NEMOTRON_2026-10-29.md).
+Do not interpret the old probe's release as approval for these new inputs/model.
+The cheap probe below remains the latest measured audio and billing result.
+
+
+Preparation details for the next agent:
+
+- `batch_dubbing/sentence_transition_probe.py`: frozen bilingual fixture and
+  pure placement checks. `sentence_transition_worker.py`: existing cached Modal
+  CPU image, serial smoke/workload, exact waveform copying and SHA slice checks.
+  Sources include `cheap_native_probe.py` for unchanged model/image pins.
+- `modal_control/catalog/sentence_transition_probe.json` and
+  `sentence_transition_batch.json`: one container,2CPU/4GiB, six API calls/eight
+  expected internal chunks,150s function/30s startup/180s controller perstage,
+  two stages, no retries. WAV transfer reserves1MiB for metadata within64MiB.
+  An ordinary synthesis/validation failure preserves accepted partials; abrupt
+  timeout or process death can lose in-memory partials. `internal_calls` counts
+  expected chunks dispatched, not observed internal completion on failure.
+- `batch_dubbing/nemotron_probe.py`: explicit OpenRouter adapter and pure
+  validation; at most two serial inputs/180seconds combined/16MB perfile,
+  60s wall deadline perrequest, no retry/redirect/proxy/model fallback. Entire
+  input set is hash/WAV-checked before the first upload. Expected text stays
+  local. Persist responses, timestamp/text discrepancies, receipt IDs and cost;
+  a missing receipt/cost or invalid response must stop remaining requests.
+- Intended API inputs are only the successfully generated `sequence_en.wav`
+  and `sequence_de.wav`. Bind the actual hashes/durations after generation and
+  before upload. Do not substitute full source videos or older samples without
+  a new reviewed scope. A single release of the combined scope covers this
+  dependent step; do not request approval again merely because files now exist.
+- Estimated total under the reviewed limits is about$0.025, within the$0.10
+  target: Modal approximately$0.01848 including conservative transfer/cleanup,
+  OpenRouter at most estimated$0.005994 for180s. Actual billing can differ;
+  missing cost metadata is unknown cost, not zero. Do not retry automatically.
+- No local model loads. Keep API orchestration and verification to one local
+  CPU and512MiB; all synthesis remains on Modal. Read the existing credential
+  only at execution and inject it into the child's `OPENROUTER_API_KEY` env,
+  never a command-line argument. No separate DeepInfra credential required.
+- Independent review found and requested fixes for mismatched segment text,
+  incomplete generation receipts and misleading internal-call completion labels.
+  All three findings are fixed and covered by the final checks.
+
+Final preparation checkpoint:
+
+- Controller plan `mb-3cf1b6b0f31da2434a0bcb701a93737f`, generated locally only;
+  `sentence_transition_release_plan.json` holds its source hashes and one-hour
+  expiration. `transition_release_scope.json` freezes both stages, inputs,
+  derived-input rules, source hashes, exclusions, cost and stop conditions.
+  If the plan expires before release, reprepare the unchanged reviewed scope;
+  do not silently change inputs, model, hardware or budgets.
+- **325 passed,1 skipped,550 subtests passed** for
+  `pytest -q batch_dubbing modal_control/tests`;16.96s pytest,17.211s outer wall,
+  85,704KiB peak child RSS (about83.7MiB), oneCPU/512MiB. This command covers
+  those two directories, not every repository test. The new transition and ASR
+  files account for50tests. `transition_validation.json` saves this result.
+- The adapter's `prepare_transition_manifest(workload_report_path)` verifies
+  complete saved raw samples and sequences, hashes, fixture identity, order,
+  schedule, copied bytes, and zero joins before deriving exactly two API inputs.
+  Use `python -m batch_dubbing.nemotron_probe --transition-report
+  dubbing_naturalness_2026-10-28/sentence_transition_trial/workload/report.json`
+  to get the manifest hash without a network request. `--execute`, the matching
+  `--confirm-sha256`, a fresh `--output-dir`, and an in-memory credential are
+  required for the explicitly released API stage. The hash is a consistency
+  check; it does not itself supply user authorization.
+- Read-only official catalog evidence is saved in
+  `openrouter_nemotron_catalog.json`. Recheck availability/rate before sending
+  audio; a material scope/rate change requires review. Existing key presence
+  is verified, but its validity/credit balance has not been checked remotely.
+- No actual audio upload, synthesis, new model download, or cloud allocation
+  happened during this preparation. Listening and source-pause alignment are
+  still pending. Outputs of the next experiment do not exist yet.
 
 ## Released cheap probe result: 2026-10-29
 

@@ -37,3 +37,7 @@ modal_control/**/*.log
 modal_control/**/*.mp4
 modal_control/**/*.wav
 modal_control/**/*.srt
+
+!dubbing_naturalness_2026-10-28/RESEARCH_NEMOTRON_2026-10-29.md
+!dubbing_naturalness_2026-10-28/sentence_transition_batch.json
+!dubbing_naturalness_2026-10-28/transition_release_scope.json
