@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "target_language": "de",
+  "smoke_case_id": "crispr",
+  "max_units_per_case": 12,
+  "cases": [
+    {
+      "id": "bill",
+      "input_file": "modal_control/batch_inputs/video_00.wav",
+      "source_sha256": "c70006cdd5299646d88b60fff1713b2673ad603dd647a1ecfff375a16557c9d1",
+      "source_duration_seconds": 3202.8444375,
+      "offset_seconds": 325,
+      "duration_seconds": 25
+    },
+    {
+      "id": "mind",
+      "input_file": "modal_control/batch_inputs/video_04.wav",
+      "source_sha256": "0142c5e44d14a1c975c0249cf3c785464fa0c6820984e52f48f5b54c47c704c0",
+      "source_duration_seconds": 1231.4470625,
+      "offset_seconds": 0,
+      "duration_seconds": 30
+    },
+    {
+      "id": "crispr",
+      "input_file": "modal_control/batch_inputs/video_01.wav",
+      "source_sha256": "b64652394c40367bf47ed756caec197546776f4d92c880c5aaebe63309971cd7",
+      "source_duration_seconds": 2209.9591875,
+      "offset_seconds": 0,
+      "duration_seconds": 30
+    }
+  ]
+}

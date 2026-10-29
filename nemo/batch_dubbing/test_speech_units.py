@@ -195,7 +195,7 @@ class SpeechUnitTests(unittest.TestCase):
 
     def test_gpu_workers_persist_source_contract_without_importing_modal(self):
         root = Path(__file__).resolve().parents[1]
-        for filename in ("batch_dubbing/gpu_worker.py", "modal_control/smoke_gpu_worker.py"):
+        for filename in ("batch_dubbing/speech_stage.py",):
             tree = ast.parse((root / filename).read_text())
             calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
             self.assertTrue(any(isinstance(call.func, ast.Name) and call.func.id == "build_speech_units" for call in calls))
@@ -209,10 +209,19 @@ class SpeechUnitTests(unittest.TestCase):
             self.assertTrue({"source_words", "speech_units", "translations", "source_id",
                              "raw_turns", "reconciled_turns", "alignment", "alignment_artifact",
                              "source_language", "alignment_sha256"} <= keys)
+        for filename in ("batch_dubbing/gpu_worker.py", "modal_control/smoke_gpu_worker.py"):
+            tree = ast.parse((root / filename).read_text())
+            calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+            delegated = [call for call in calls if isinstance(call.func, ast.Name)
+                         and call.func.id == "process_audio"]
+            self.assertEqual(len(delegated), 1)
+            self.assertFalse(any(isinstance(call.func, ast.Name) and call.func.id == "infer_chunk"
+                                 for call in calls))
         for filename in ("new_guys_gpu_smoke.json", "new_guys_full_gpu.json"):
             catalog = json.loads((root / "modal_control/catalog" / filename).read_text())
             for job in catalog["jobs"].values():
                 self.assertIn("batch_dubbing/speech_units.py", job["source_files"])
+                self.assertIn("batch_dubbing/speech_stage.py", job["source_files"])
                 self.assertEqual(job["review"]["hardware"], "T4")
                 self.assertEqual(job["review"]["max_containers"], 1)
 

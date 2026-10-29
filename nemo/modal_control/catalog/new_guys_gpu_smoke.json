@@ -41,7 +41,8 @@
         "modal_control/batch_inputs/smoke.wav",
         "modal_control/batch_inputs/smoke.json",
         "new_guys/CRISPR is capable of more than we initially expected _ Jennifer Doudna_ Full Interview_720p_en-US_129kbps.mp4",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/gpu_smoke.json"

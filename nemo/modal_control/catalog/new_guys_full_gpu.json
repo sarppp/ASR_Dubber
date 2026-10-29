@@ -49,7 +49,8 @@
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
         "modal_control/batch_inputs/video_04.wav",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_00.gpu_full.json"
@@ -113,7 +114,8 @@
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
         "modal_control/batch_inputs/video_04.wav",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_01.gpu_full.json"
@@ -177,7 +179,8 @@
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
         "modal_control/batch_inputs/video_04.wav",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_02.gpu_full.json"
@@ -241,7 +244,8 @@
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
         "modal_control/batch_inputs/video_04.wav",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_03.gpu_full.json"
@@ -305,7 +309,8 @@
         "modal_control/batch_inputs/video_02.wav",
         "modal_control/batch_inputs/video_03.wav",
         "modal_control/batch_inputs/video_04.wav",
-        "batch_dubbing/speech_units.py"
+        "batch_dubbing/speech_units.py",
+        "batch_dubbing/speech_stage.py"
       ],
       "success_files": [
         "modal_control/batch_inputs/video_04.gpu_full.json"

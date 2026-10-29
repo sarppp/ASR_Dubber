@@ -16,14 +16,84 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest checkpoint: 2026-10-28 17:22 UTC — code integrated; local regressions passed.**
+**Latest checkpoint: 2026-10-29 05:54 UTC — evaluation prepared and inspected; no new inference released or run.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
-safe-fitting code is now being integrated into shared workers; see the current
+safe-fitting code is integrated into shared workers; see the current
 checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. No new model
 job has run since the released grouping trial.
+
+## Continuation — 2026-10-29
+
+The current user asked to continue and explain the latest point. The general
+timing/fitting implementation is committed and its 229-test result is recorded
+below. It is not yet a validated natural-sounding dub. Automatic faithful
+shortening is still unconfigured; timing failures are explicit diagnostics.
+
+Preparation now uses three frozen excerpts without manual timing/text repairs:
+Bill 325–350 s, Mind 0–30 s, and CRISPR 0–30 s. CRISPR was not part of the previous
+native grouping trial. SHA256 and PCM16/mono/16 kHz headers of the existing source
+WAVs were verified locally; only streamed file reads occurred. These WAVs remain
+available even though historical catalog MP4 paths have moved.
+
+- `source_validation_inputs.json` freezes inputs/hashes/ranges and the German-only
+  target. `validation_config.py` checks the scope and file provenance without
+  models or media transforms. At most three cases, 30 s each, 12 units per case.
+- Shared `batch_dubbing/speech_stage.py` now holds the GPU processing path used by
+  both existing GPU workers and the evaluation. It validates ranges before model
+  imports, keeps excerpt offsets, and caps units before loading Canary. No copied
+  per-video synthesis algorithm is introduced.
+- New GPU/CPU evaluation workers and catalogs passed local checks. Prepared
+  order: GPU smoke on CRISPR, GPU full on all three; CPU smoke on one whole CRISPR
+  utterance, then CPU full on all three. Global concurrency one; no retries.
+- Proposed hardware: T4 + 4 CPU / 32 GiB for speech; CPU-only 2 CPU / 4 GiB for
+  Supertonic. Four stage deadlines of 600 s each. All inference remains remote.
+- Process 85 s of workload source audio, plus repeated 30 s GPU smoke; at most
+  48 utterance translations and 37 synthesis calls including smoke. Full original
+  WAVs (212,616,256 bytes total) are mounted, but only reviewed ranges are processed.
+- Preserve original English words, German text, alignment evidence, raw native
+  WAVs and timing reports. Publish final WAVs only if every requested case fits;
+  no optional video packaging/background separation. Infeasible results remain
+  failures, with native listening evidence downloaded up to 64 MiB per stage.
+- Actual cost is unknown. The controller's embedded historical-rate calculation
+  is a planning estimate, not current verified pricing or a provider billing cap.
+  Build/startup, storage and egress can add cost. No cloud operation has launched.
+
+The final combined regression run on this checkpoint reports **257 passed,
+1 skipped, 229 subtests passed in 15.48 s** (16.052 s outer wall, **56,472 KiB**
+peak child RSS). Same one-core/512 MiB limits and test selection as the older run
+below; the sole skip remains the unavailable MCP dependency. New tests exercise
+scope limits, source mutation, shared-stage delegation, GPU/CPU ordering, offsets,
+voice rejection before allocation, raw transfer hashes, failure publication and
+telemetry. No model or user-media transformation ran.
+
+Prepared controller batch: **`mb-c20afdeffc3ad48fd06e197b60ec1d7b`**.
+
+- Batch specification: `modal_control/catalog/source_naturalness_validation_batch.json`.
+- Job catalog: `modal_control/catalog/source_naturalness_validation.json`.
+- Local full plan copy: `source_validation_release_plan.json` in this investigation
+  directory (ignored generated state, also retained in the controller plan store).
+- `batch-inspect` succeeded. All pinned source/controller hashes matched a second
+  streamed verification; every declared output path was absent.
+- Two dependent jobs, each smoke then full; at most **2,400 total stage seconds**,
+  **5,400 s batch wall limit**, one global container, one T4 at most, zero retries.
+- Controller's historical-rate compute ceiling is **$0.387024** against a $1.00
+  planning allowance. Neither number is a provider-enforced spend cap or a current
+  billing quote; build/startup, storage and egress may be additional.
+- Plan expires **2026-10-29 06:56:19 UTC / 07:56:19 Zurich**. If the user responds
+  later, regenerate and inspect an identical-scope plan; do not interpret expiry
+  as permission to expand inputs/resources/retries or ask for a repeat decision
+  when the user's explicit release already covers the unchanged reviewed scope.
+
+**No release has been received for this batch.** Request the new release required
+by `../AGENTS.md` for this materially different ASR/translation/synthesis experiment.
+The previous consumed grouping plan cannot authorize it. On release, execute only
+the inspected batch through the controller, monitor owned jobs, stop/reconcile owned
+apps afterward and record real billed usage plus actual results. If any stage is
+blocked, preserve diagnostics and seek a separately reviewed next step; do not retry
+or silently relax speaker/timing/voice checks. Continue updating this section.
 
 ## Current implementation checkpoint — 2026-10-28 17:22 UTC
 
@@ -129,7 +199,7 @@ synthesized video, or verified perceptual naturalness.
   regression proving one failed phrase prevents final stitching. No existing
   user media was transformed in these tests.
 - Earlier module checks: 11 edge tests, 13 scheduling tests, 14 mocked renderer
-  tests. An integrated rerun after all worker edits is still required; do not add
+  tests. The combined run below supersedes these partial runs; do not add
   these counts to historical totals as if they were independent runs.
 - Main-agent verification: **25 passed + 28 subtests** for orchestration/rendering;
   **25 passed + 64 subtests** for adapter, worker integration and orchestration.

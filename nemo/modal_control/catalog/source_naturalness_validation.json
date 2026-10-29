@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "source_validation_gpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/validation_gpu_worker.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/validation_gpu_worker.py",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/validation_gpu_worker.py",
+        "batch_dubbing/validation_config.py",
+        "batch_dubbing/speech_stage.py",
+        "batch_dubbing/speech_units.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_voices.py",
+        "nemo_audio.py",
+        "local_subtitles.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "dubbing_naturalness_2026-10-28/source_validation_inputs.json",
+        "modal_control/batch_inputs/video_00.wav",
+        "modal_control/batch_inputs/video_04.wav",
+        "modal_control/batch_inputs/video_01.wav",
+        "modal_control/speaker_timeline.py"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/gpu_full.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/gpu_smoke.json"
+      ],
+      "max_seconds": 600,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "precision": "FP16 ASR/translation on T4; ONNX CPU synthesis",
+        "input_seconds": 85,
+        "max_containers": 1,
+        "max_total_seconds": 1200,
+        "purpose": "Evaluate the shared source-word timing and utterance translation path on two known problem excerpts and one held-out grouping-trial excerpt",
+        "model": "Parakeet TDT 0.6B v3; Canary 1B v2; NeMo multilingual MarbleNet VAD and TitaNet large diarization",
+        "revision": "Parakeet 541d1f99c6b0c3cd0b11a95167540bb8edefd82b; Canary d455706339a6b32e1aa40f82c713a482a0c938e2; nemo_toolkit==2.5.3; VAD/TitaNet revisions resolved by NeMo and not independently pinned",
+        "reason": "Obtain real source-word provenance that old artifacts lack, then check generic corridor reconciliation and ID-bound German translation",
+        "input": "Three SHA256-pinned existing mono PCM16/16kHz WAV files mounted remotely (full files total 212616256 bytes); process only Bill325-350s, Mind0-30s, CRISPR0-30s. Smoke CRISPR0-30s first, then all three serial (85s workload, 115s including smoke). English source, German target only. Maximum12 translated units per case,48 translation calls including repeated smoke; fail if cap exceeded.",
+        "outputs": "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/gpu_smoke.json and gpu_full.json; source words, original and reconciled turns, ID-linked translations, voice hints, diagnostics, timing, provenance; raw alignment receipts committed to cache volume",
+        "quality_tradeoffs": "Automatic ASR/diarization and utterance translation may fail or change meaning. No manual word/timestamp correction, no French translation, no model retry. Source intervals are excerpt-relative with original offsets retained. Unknown voice or ambiguous alignment is explicit. This does not establish listening quality.",
+        "cost_estimate": "Actual cost unknown. One T4 container with4CPU/32GiB, two600s stage deadlines, no retries. Build/startup, storage and egress may add cost. Batch controller estimate uses embedded historical rates and is not a verified provider billing cap.",
+        "hardware": "T4"
+      }
+    },
+    "source_validation_cpu": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/validation_cpu_worker.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/validation_cpu_worker.py",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/validation_cpu_worker.py",
+        "batch_dubbing/validation_config.py",
+        "batch_dubbing/cpu_natural.py",
+        "batch_dubbing/natural_pipeline.py",
+        "batch_dubbing/audio_edges.py",
+        "batch_dubbing/speech_schedule.py",
+        "batch_dubbing/natural_render.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "dubbing_naturalness_2026-10-28/source_validation_inputs.json",
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/gpu_full.json"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/cpu_full/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/cpu_smoke/report.json"
+      ],
+      "max_seconds": 600,
+      "build_timeout_seconds": 1200,
+      "startup_timeout_seconds": 300,
+      "idle_timeout_seconds": 300,
+      "review": {
+        "precision": "ONNX CPU inference,2 intra-op threads/1 inter-op thread",
+        "input_seconds": 85,
+        "max_containers": 1,
+        "max_total_seconds": 1200,
+        "purpose": "Evaluate the shared bounded natural dubbing pipeline on the just-produced source-linked German units",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1",
+        "reason": "Measure native speech, conservative edge padding and whole-turn feasibility on real source-linked inputs; preserve native takes for listening even if a finished timeline cannot be produced",
+        "input": "Exactly derived gpu_full.json from the GPU producer. Smoke the first whole CRISPR source unit, then all units of the three cases serially. Maximum12units per case:1smoke plus at most36workload synthesis calls; no revision provider, retries or extra models. Unknown/unresolved voices stop before inference.",
+        "outputs": "New dubbing_naturalness_2026-10-28/source_validation_2026-10-29/cpu_smoke and cpu_full directories: reports, hash-checked native WAV takes (bounded64MiB per stage), and per-case final WAV only when all its timing constraints pass. No existing media overwritten; no new video packaging, source-audio extraction or background separation locally.",
+        "quality_tradeoffs": "Uses unchanged shared algorithm: native speed first, maximum1.15x, no slowdown, conservative outer-padding removal, no post-tempo trimming. Infeasible translation returns needs_revision and diagnostics; evaluation can fail honestly without a finished dub. Native presets are not voice clones. No semantic guarantee or automatic rewriting.",
+        "cost_estimate": "Actual cost unknown. One CPU container with2CPU/4GiB, two600s stage deadlines, no retries. No local model execution. Build/startup, storage and egress may add cost; no provider-enforced billing cap.",
+        "hardware": "CPU"
+      }
+    }
+  }
+}
