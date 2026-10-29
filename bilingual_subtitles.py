@@ -3,8 +3,9 @@
 
 Input [EN], [DE], and [FR] prefixes are removed automatically. Language labels
 are only added when explicitly requested. Use --tracks for two or more tracks
-in display order. Each language keeps its original text and timing in a fixed
-block of rows. Missing cues leave invisible placeholders, so other languages
+in display order. Each language keeps its original text and start time in a fixed
+block of rows. Finished cues remain for up to 500 ms, bounded by their replacement
+and the end of the original multilingual block. Missing cues leave invisible placeholders, so other languages
 stay in place. Long text wraps within its reserved block without being retimed.
 SRT is the default deliverable. libass measures its plain text at a fixed size
 and rejects overflow instead of shrinking a companion file. Use --ass-preview
@@ -17,7 +18,7 @@ All subtitle outputs use UTF-8 with BOM for reliable player encoding detection.
 
 
 The ``--top`` track is written above the ``--bottom`` track. Cue numbers do not
-need to match. By default, original boundaries are preserved. Approximate
+need to match. Use --hold-ms 0 or --exact-boundaries for original timings. Approximate
 sentence regrouping is available only with --allow-approximate-alignment.
 
 Example:
@@ -39,6 +40,7 @@ import ctypes
 import ctypes.util
 import math
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -590,10 +592,44 @@ def combine_multiple_tracks_exact(tracks: Sequence[Sequence[Cue]]) -> list[Cue]:
 EMPTY_SUBTITLE_ROW = "\u2060"
 
 
+def hold_finished_cues(
+    tracks: Sequence[Sequence[Cue]], *, hold_ms: int = 500,
+) -> list[list[Cue]]:
+    """Extend cue ends without crossing replacements or original all-track gaps.
+
+    Blocks are computed from original intervals, before any extension. Existing
+    overlaps remain intact, but an outgoing cue is never extended over its next
+    cue. Inputs are not modified.
+    """
+    if hold_ms < 0:
+        raise ValueError("Subtitle hold must be nonnegative")
+    if any(c.start_ms < 0 or c.end_ms <= c.start_ms for track in tracks for c in track):
+        raise ValueError("Invalid source cue timing")
+    ordered = [sorted(track, key=lambda c: (c.start_ms, c.end_ms)) for track in tracks]
+    blocks: list[tuple[int, int]] = []
+    for cue in sorted((c for track in ordered for c in track), key=lambda c: c.start_ms):
+        if blocks and cue.start_ms <= blocks[-1][1]:
+            blocks[-1] = (blocks[-1][0], max(blocks[-1][1], cue.end_ms))
+        else:
+            blocks.append((cue.start_ms, cue.end_ms))
+    starts = [start for start, _ in blocks]
+    result = []
+    for track in ordered:
+        held = []
+        for index, cue in enumerate(track):
+            block_end = blocks[bisect_right(starts, cue.start_ms) - 1][1]
+            next_start = track[index + 1].start_ms if index + 1 < len(track) else block_end
+            end = max(cue.end_ms, min(cue.end_ms + hold_ms, next_start, block_end))
+            held.append(Cue(cue.start_ms, end, cue.text))
+        result.append(held)
+    return result
+
+
 def combine_multiple_tracks_fixed(
     tracks: Sequence[Sequence[Cue]], *, font_size: int = 38, width: int = 1100,
+    hold_ms: int = 500,
 ) -> list[Cue]:
-    """Preserve text/timings while reserving a stable block for every language.
+    """Preserve text and starts in stable rows, with a bounded hold at cue ends.
 
     Wrapping inserts line breaks only; it never redistributes words in time.
     Each language gets enough rows for its longest active text across the file.
@@ -603,9 +639,7 @@ def combine_multiple_tracks_fixed(
         raise ValueError("Provide at least two non-empty subtitle tracks")
     if not 1 <= font_size <= 100 or not 1 <= width <= 1200:
         raise ValueError("Invalid fixed-row font size or width")
-    if any(c.start_ms < 0 or c.end_ms <= c.start_ms for track in tracks for c in track):
-        raise ValueError("Invalid source cue timing")
-    tracks = [sorted(track, key=lambda c: (c.start_ms, c.end_ms)) for track in tracks]
+    tracks = hold_finished_cues(tracks, hold_ms=hold_ms)
     boundaries = sorted({t for track in tracks for cue in track for t in (cue.start_ms, cue.end_ms)})
     header = _ass_header(font_size, 100).replace("WrapStyle: 0", "WrapStyle: 2")
     wrapped: dict[str, list[str]] = {"": []}
@@ -983,7 +1017,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Single SRT to shorten naturally (cannot be combined with --top/--bottom)",
     )
     parser.add_argument("--tracks", nargs="+", type=Path,
-                        help="Two or more tracks in fixed display rows; preserve original text and timings")
+                        help="Two or more tracks in fixed display rows; preserve original text and starts")
+    parser.add_argument("--hold-ms", type=int, default=500,
+                        help="Hold finished cues in fixed-row mode up to this many ms (default 500; 0 disables)")
     parser.add_argument("--ass-preview", action="store_true",
                         help="Also save the ASS measurement preview; SRT is the main output")
     parser.add_argument("--allow-approximate-alignment", action="store_true",
@@ -1016,7 +1052,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--exact-boundaries",
         action="store_true",
-        help="Preserve every input boundary instead of grouping sentence fragments",
+        help="Use original timings, disabling holds and approximate alignment",
     )
     parser.add_argument(
         "--max-chars",
@@ -1037,6 +1073,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--font-size must be between 1 and 100")
     if args.max_chars <= 0 or args.min_duration_ms <= 0:
         parser.error("--max-chars and --min-duration-ms must be positive")
+    if args.hold_ms < 0:
+        parser.error("--hold-ms must be nonnegative")
     if args.tracks:
         if len(args.tracks) < 2 or args.input or args.top or args.bottom:
             parser.error("--tracks needs at least two files and cannot use --input/--top/--bottom")
@@ -1054,6 +1092,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    hold_ms = 0 if args.exact_boundaries else args.hold_ms
     if args.tracks:
         output = args.output or args.tracks[0].with_suffix(".multilingual.srt")
     elif args.input:
@@ -1077,7 +1116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 combined = combine_multiple_tracks(tracks, max_chars=args.max_chars,
                                                    min_duration_ms=args.min_duration_ms)
             else:
-                combined = combine_multiple_tracks_fixed(tracks, font_size=args.font_size)
+                combined = combine_multiple_tracks_fixed(tracks, font_size=args.font_size, hold_ms=hold_ms)
             save(combined, fixed=not approximate)
             print(f"Created {output} ({len(combined)} cues)")
             return 0
@@ -1108,11 +1147,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             labeled = [[Cue(c.start_ms, c.end_ms, f"[{label}] {c.text}" if label else c.text)
                         for c in track] for track, label in
                        ((top_cues, args.top_label), (bottom_cues, args.bottom_label))]
-            combined = combine_multiple_tracks_fixed(labeled, font_size=args.font_size)
+            held = hold_finished_cues(labeled, hold_ms=hold_ms)
+            combined = combine_multiple_tracks_fixed(held, font_size=args.font_size, hold_ms=0)
             if args.drop_unpaired:
                 combined = [c for c in combined
                             if all(any(s.start_ms < c.end_ms and s.end_ms > c.start_ms for s in track)
-                                   for track in (top_cues, bottom_cues))]
+                                   for track in held)]
         save(combined, fixed=not approximate)
     except ValueError as exc:
         print(f"Error: {exc}")
