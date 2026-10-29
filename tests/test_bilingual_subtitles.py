@@ -491,13 +491,21 @@ def test_srt_overflow_fails_without_shrinking_an_ass_file_or_replacing_output(tm
     assert not path.with_suffix('.ass').exists()
 
 
-def test_independent_tracks_require_explicit_approximation(tmp_path, crispr_tracks):
+def test_independent_tracks_default_preserves_original_text_and_boundaries(tmp_path, crispr_tracks):
     paths = [tmp_path / f'{i}.srt' for i in range(3)]
     for path, cues in zip(paths, crispr_tracks):
         write_srt(path, cues)
     output = tmp_path / 'combined.srt'
-    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 1
-    assert not output.exists()
+    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 0
+    from bilingual_subtitles import EMPTY_SUBTITLE_ROW
+    cues = parse_srt(output, preserve_lines=True)
+    original_boundaries = {t for track in crispr_tracks for c in track for t in (c.start_ms, c.end_ms)}
+    assert all(c.start_ms in original_boundaries and c.end_ms in original_boundaries for c in cues)
+    assert len({len(c.text.splitlines()) for c in cues}) == 1
+    for cue in cues:
+        expected = ' '.join(c.text for track in crispr_tracks for c in track
+                            if c.start_ms < cue.end_ms and c.end_ms > cue.start_ms)
+        assert cue.text.replace(EMPTY_SUBTITLE_ROW, '').split() == expected.split()
 
 
 def test_aligned_translation_phrases_are_never_split_independently(tmp_path):
@@ -520,3 +528,87 @@ def test_aligned_translation_phrases_are_never_split_independently(tmp_path):
     assert blocks[1].splitlines()[2:] == [track[1].text for track in tracks]
     assert 'transformatrice' not in blocks[1]
     assert 'hofften' not in blocks[0] and 'espérions' not in blocks[0]
+
+
+def test_missing_language_keeps_its_slot_and_real_silent_gaps_stay_empty(tmp_path):
+    from bilingual_subtitles import combine_multiple_tracks_fixed, EMPTY_SUBTITLE_ROW as blank
+    tracks = [[Cue(0, 3000, 'English')], [Cue(1000, 4000, 'Deutsch')],
+              [Cue(2000, 2500, 'Français'), Cue(6000, 7000, 'Encore')]]
+    cues = combine_multiple_tracks_fixed(tracks)
+    assert cues == [Cue(0, 1000, f'English\n{blank}\n{blank}'),
+                    Cue(1000, 2000, f'English\nDeutsch\n{blank}'),
+                    Cue(2000, 2500, 'English\nDeutsch\nFrançais'),
+                    Cue(2500, 3000, f'English\nDeutsch\n{blank}'),
+                    Cue(3000, 4000, f'{blank}\nDeutsch\n{blank}'),
+                    Cue(6000, 7000, f'{blank}\n{blank}\nEncore')]
+    path = tmp_path / 'fixed.srt'
+    write_srt(path, cues)
+    assert parse_srt(path, preserve_lines=True) == cues
+    assert '\n\n\n' not in path.read_text(encoding='utf-8-sig')
+
+
+def test_wrapped_language_reserves_its_maximum_rows_even_when_short_or_absent():
+    from bilingual_subtitles import combine_multiple_tracks_fixed, EMPTY_SUBTITLE_ROW as blank
+    cues = combine_multiple_tracks_fixed([
+        [Cue(0, 1000, 'H'), Cue(1000, 2000, 'H H H H H H')],
+        [Cue(0, 3000, 'HH')]], width=110)
+    assert len({len(c.text.splitlines()) for c in cues}) == 1
+    assert cues[0].text.splitlines()[1:-1] == [blank]
+    assert cues[-1].text.splitlines() == [blank, blank, 'HH']
+    assert all(c.text.splitlines()[-1] == 'HH' for c in cues)
+    assert cues[1].text.replace('\n', ' ').split() == 'H H H H H H HH'.split()
+
+
+def test_four_languages_and_overlapping_source_cues_keep_all_words():
+    from bilingual_subtitles import combine_multiple_tracks_fixed, EMPTY_SUBTITLE_ROW as blank
+    tracks = [[Cue(0, 2000, 'One'), Cue(1000, 3000, 'two')],
+              [Cue(0, 3000, 'Eins')], [Cue(500, 2500, 'Un')], [Cue(2000, 3000, 'Bir')]]
+    for cue in combine_multiple_tracks_fixed(tracks):
+        assert len(cue.text.splitlines()) == 4
+        for line, track in zip(cue.text.splitlines(), tracks):
+            expected = ' '.join(c.text for c in track if c.start_ms < cue.end_ms and c.end_ms > cue.start_ms)
+            assert line.replace(blank, '') == expected
+
+
+def test_real_srt_renderer_keeps_baselines_when_any_language_disappears(tmp_path):
+    import shutil
+    import subprocess
+    from bilingual_subtitles import combine_multiple_tracks_fixed, write_subtitles
+    if not shutil.which('ffmpeg'):
+        pytest.skip('ffmpeg is required for the real SRT rendering check')
+    tracks = [[Cue(0, 3000, 'H'), Cue(4000, 5000, 'H')],
+              [Cue(0, 2000, 'HH'), Cue(3000, 5000, 'HH')],
+              [Cue(0, 1000, 'HHH'), Cue(2000, 5000, 'HHH')]]
+    path = tmp_path / 'fixed.srt'
+    write_subtitles(path, combine_multiple_tracks_fixed(tracks))
+    rendered = subprocess.run([
+        'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=5:r=1',
+        '-vf', f"subtitles={path}:force_style='Fontname=DejaVu Sans,Fontsize=38,PlayResX=1280,PlayResY=720,MarginV=22,Outline=0,Shadow=0'",
+        '-frames:v', '5', '-threads', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-'],
+        check=True, capture_output=True, timeout=30).stdout
+    frame_bytes = 1280 * 720
+    assert len(rendered) == 5 * frame_bytes
+    rows = []
+    for index in range(5):
+        frame = rendered[index * frame_bytes:(index + 1) * frame_bytes]
+        occupied = [y for y in range(720) if max(frame[y*1280:(y+1)*1280]) > 100]
+        runs = []
+        for y in occupied:
+            if not runs or y > runs[-1][-1] + 1:
+                runs.append([y])
+            else:
+                runs[-1].append(y)
+        rows.append([(run[0], run[-1]) for run in runs])
+    assert len(rows[0]) == 3
+    assert rows[1] == rows[0][:2]       # French ends: English/German do not move.
+    assert rows[2] == rows[0][::2]      # German ends: English/French do not move.
+    assert rows[3] == rows[0][1:]       # English ends: German/French do not move.
+    assert rows[4] == rows[0]          # All return to exactly the same positions.
+
+
+def test_explicit_height_limit_is_not_silently_relaxed_for_fixed_rows(tmp_path):
+    paths = [_write(tmp_path / f'{i}.srt', '1\n00:00:00,000 --> 00:00:03,000\n' + 'Long phrase ' * 10)
+             for i in range(3)]
+    output = tmp_path / 'fixed.srt'
+    assert main(['--tracks', *map(str, paths), '--max-height-percent', '5', '-o', str(output)]) == 1
+    assert not output.exists()
