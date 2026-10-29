@@ -496,7 +496,7 @@ def test_zero_hold_preserves_original_text_and_boundaries(tmp_path, crispr_track
     for path, cues in zip(paths, crispr_tracks):
         write_srt(path, cues)
     output = tmp_path / 'combined.srt'
-    assert main(['--tracks', *map(str, paths), '--hold-ms', '0', '-o', str(output)]) == 0
+    assert main(['--tracks', *map(str, paths), '--hold-ms', '0', '--font-size', '28', '-o', str(output)]) == 0
     from bilingual_subtitles import EMPTY_SUBTITLE_ROW
     cues = parse_srt(output, preserve_lines=True)
     original_boundaries = {t for track in crispr_tracks for c in track for t in (c.start_ms, c.end_ms)}
@@ -670,3 +670,27 @@ def test_negative_hold_is_rejected():
         hold_finished_cues([[Cue(0, 100, 'a')]], hold_ms=-1)
     with pytest.raises(SystemExit):
         main(['--tracks', 'a.srt', 'b.srt', '--hold-ms', '-1'])
+
+
+@pytest.mark.parametrize('mode', ['tracks', 'top-bottom'])
+def test_default_twenty_percent_cap_rejects_reserved_rows_without_replacing_output(tmp_path, mode):
+    paths = [tmp_path / f'{i}.srt' for i in range(3 if mode == 'tracks' else 2)]
+    for path in paths:
+        write_srt(path, [Cue(0, 2000, 'Long phrase ' * 20)])
+    output = tmp_path / 'out.srt'
+    output.write_text('previous subtitle')
+    args = ['--tracks', *map(str, paths)] if mode == 'tracks' else ['--top', str(paths[0]), '--bottom', str(paths[1])]
+    assert main([*args, '-o', str(output)]) == 1
+    assert output.read_text() == 'previous subtitle'
+
+
+def test_compact_fixed_rows_fit_twenty_percent_with_original_words_and_holds(tmp_path, crispr_tracks):
+    from bilingual_subtitles import combine_multiple_tracks_fixed, hold_finished_cues, EMPTY_SUBTITLE_ROW, validate_srt_layout
+    cues = combine_multiple_tracks_fixed(crispr_tracks, font_size=28)
+    validate_srt_layout(cues, font_size=28, max_height_percent=20)
+    held = hold_finished_cues(crispr_tracks)
+    for cue in cues:
+        expected = ' '.join(c.text for track in held for c in track
+                            if c.start_ms < cue.end_ms and c.end_ms > cue.start_ms)
+        assert cue.text.replace(EMPTY_SUBTITLE_ROW, '').split() == expected.split()
+    assert len({len(c.text.splitlines()) for c in cues}) == 1
