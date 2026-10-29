@@ -491,12 +491,12 @@ def test_srt_overflow_fails_without_shrinking_an_ass_file_or_replacing_output(tm
     assert not path.with_suffix('.ass').exists()
 
 
-def test_independent_tracks_default_preserves_original_text_and_boundaries(tmp_path, crispr_tracks):
+def test_zero_hold_preserves_original_text_and_boundaries(tmp_path, crispr_tracks):
     paths = [tmp_path / f'{i}.srt' for i in range(3)]
     for path, cues in zip(paths, crispr_tracks):
         write_srt(path, cues)
     output = tmp_path / 'combined.srt'
-    assert main(['--tracks', *map(str, paths), '-o', str(output)]) == 0
+    assert main(['--tracks', *map(str, paths), '--hold-ms', '0', '-o', str(output)]) == 0
     from bilingual_subtitles import EMPTY_SUBTITLE_ROW
     cues = parse_srt(output, preserve_lines=True)
     original_boundaries = {t for track in crispr_tracks for c in track for t in (c.start_ms, c.end_ms)}
@@ -534,7 +534,7 @@ def test_missing_language_keeps_its_slot_and_real_silent_gaps_stay_empty(tmp_pat
     from bilingual_subtitles import combine_multiple_tracks_fixed, EMPTY_SUBTITLE_ROW as blank
     tracks = [[Cue(0, 3000, 'English')], [Cue(1000, 4000, 'Deutsch')],
               [Cue(2000, 2500, 'Français'), Cue(6000, 7000, 'Encore')]]
-    cues = combine_multiple_tracks_fixed(tracks)
+    cues = combine_multiple_tracks_fixed(tracks, hold_ms=0)
     assert cues == [Cue(0, 1000, f'English\n{blank}\n{blank}'),
                     Cue(1000, 2000, f'English\nDeutsch\n{blank}'),
                     Cue(2000, 2500, 'English\nDeutsch\nFrançais'),
@@ -563,14 +563,15 @@ def test_four_languages_and_overlapping_source_cues_keep_all_words():
     from bilingual_subtitles import combine_multiple_tracks_fixed, EMPTY_SUBTITLE_ROW as blank
     tracks = [[Cue(0, 2000, 'One'), Cue(1000, 3000, 'two')],
               [Cue(0, 3000, 'Eins')], [Cue(500, 2500, 'Un')], [Cue(2000, 3000, 'Bir')]]
-    for cue in combine_multiple_tracks_fixed(tracks):
+    for cue in combine_multiple_tracks_fixed(tracks, hold_ms=0):
         assert len(cue.text.splitlines()) == 4
         for line, track in zip(cue.text.splitlines(), tracks):
             expected = ' '.join(c.text for c in track if c.start_ms < cue.end_ms and c.end_ms > cue.start_ms)
             assert line.replace(blank, '') == expected
 
 
-def test_real_srt_renderer_keeps_baselines_when_any_language_disappears(tmp_path):
+@pytest.mark.parametrize('hold_ms', [0, 500])
+def test_real_srt_renderer_keeps_baselines_when_any_language_disappears(tmp_path, hold_ms):
     import shutil
     import subprocess
     from bilingual_subtitles import combine_multiple_tracks_fixed, write_subtitles
@@ -580,16 +581,16 @@ def test_real_srt_renderer_keeps_baselines_when_any_language_disappears(tmp_path
               [Cue(0, 2000, 'HH'), Cue(3000, 5000, 'HH')],
               [Cue(0, 1000, 'HHH'), Cue(2000, 5000, 'HHH')]]
     path = tmp_path / 'fixed.srt'
-    write_subtitles(path, combine_multiple_tracks_fixed(tracks))
+    write_subtitles(path, combine_multiple_tracks_fixed(tracks, hold_ms=hold_ms))
     rendered = subprocess.run([
-        'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=5:r=1',
+        'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=6:r=4',
         '-vf', f"subtitles={path}:force_style='Fontname=DejaVu Sans,Fontsize=38,PlayResX=1280,PlayResY=720,MarginV=22,Outline=0,Shadow=0'",
-        '-frames:v', '5', '-threads', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-'],
+        '-frames:v', '24', '-threads', '1', '-pix_fmt', 'gray', '-f', 'rawvideo', '-'],
         check=True, capture_output=True, timeout=30).stdout
     frame_bytes = 1280 * 720
-    assert len(rendered) == 5 * frame_bytes
+    assert len(rendered) == 24 * frame_bytes
     rows = []
-    for index in range(5):
+    for index in range(24):
         frame = rendered[index * frame_bytes:(index + 1) * frame_bytes]
         occupied = [y for y in range(720) if max(frame[y*1280:(y+1)*1280]) > 100]
         runs = []
@@ -600,10 +601,13 @@ def test_real_srt_renderer_keeps_baselines_when_any_language_disappears(tmp_path
                 runs[-1].append(y)
         rows.append([(run[0], run[-1]) for run in runs])
     assert len(rows[0]) == 3
-    assert rows[1] == rows[0][:2]       # French ends: English/German do not move.
-    assert rows[2] == rows[0][::2]      # German ends: English/French do not move.
-    assert rows[3] == rows[0][1:]       # English ends: German/French do not move.
-    assert rows[4] == rows[0]          # All return to exactly the same positions.
+    assert rows[6] == rows[0][:2]       # French ends: English/German do not move.
+    assert rows[10] == rows[0][::2]      # German ends: English/French do not move.
+    assert rows[14] == rows[0][1:]       # English ends: German/French do not move.
+    assert rows[16] == rows[0]          # All return to exactly the same positions.
+    assert rows[4] == (rows[0] if hold_ms else rows[0][:2])
+    assert rows[5] == rows[4]           # Held French remains at 1.25 seconds.
+    assert all(not row for row in rows[20:])  # The entire block clears at 5 seconds.
 
 
 def test_explicit_height_limit_is_not_silently_relaxed_for_fixed_rows(tmp_path):
@@ -612,3 +616,57 @@ def test_explicit_height_limit_is_not_silently_relaxed_for_fixed_rows(tmp_path):
     output = tmp_path / 'fixed.srt'
     assert main(['--tracks', *map(str, paths), '--max-height-percent', '5', '-o', str(output)]) == 1
     assert not output.exists()
+
+
+def test_hold_is_bounded_by_replacement_and_original_block_end():
+    from bilingual_subtitles import hold_finished_cues
+    tracks = [[Cue(0, 1000, 'old'), Cue(1200, 1800, 'new'), Cue(3100, 3500, 'later')],
+              [Cue(0, 2200, 'other')], [Cue(500, 600, 'brief')]]
+    original = [list(track) for track in tracks]
+    assert hold_finished_cues(tracks) == [
+        [Cue(0, 1200, 'old'), Cue(1200, 2200, 'new'), Cue(3100, 3500, 'later')],
+        [Cue(0, 2200, 'other')], [Cue(500, 1100, 'brief')]]
+    assert tracks == original
+    assert hold_finished_cues(tracks, hold_ms=0) == original
+
+
+def test_hold_preserves_overlaps_and_never_bridges_even_a_one_ms_silence():
+    from bilingual_subtitles import hold_finished_cues
+    tracks = [[Cue(500, 700, 'nested'), Cue(0, 1000, 'long'), Cue(900, 1200, 'next')],
+              [Cue(0, 1400, 'other'), Cue(1401, 2000, 'after silence')]]
+    assert hold_finished_cues(tracks) == [
+        [Cue(0, 1000, 'long'), Cue(500, 900, 'nested'), Cue(900, 1400, 'next')],
+        [Cue(0, 1400, 'other'), Cue(1401, 2000, 'after silence')]]
+
+
+@pytest.mark.parametrize('mode', ['tracks', 'top-bottom'])
+@pytest.mark.parametrize('timing_args,expected_end', [([], 1500), (['--hold-ms', '100'], 1100),
+                                                    (['--exact-boundaries'], 1000)])
+def test_cli_holds_finished_text_without_changing_words_or_starts(tmp_path, mode, timing_args, expected_end):
+    from bilingual_subtitles import EMPTY_SUBTITLE_ROW as blank
+    top, bottom, output = [tmp_path / name for name in ('top.srt', 'bottom.srt', 'out.srt')]
+    write_srt(top, [Cue(0, 1000, 'Hello'), Cue(1700, 2500, 'Next')])
+    write_srt(bottom, [Cue(0, 3000, 'Hallo')])
+    args = ['--tracks', str(top), str(bottom)] if mode == 'tracks' else ['--top', str(top), '--bottom', str(bottom)]
+    assert main([*args, *timing_args, '-o', str(output)]) == 0
+    cues = parse_srt(output, preserve_lines=True)
+    assert cues[0] == Cue(0, expected_end, 'Hello\nHallo')
+    assert cues[1] == Cue(expected_end, 1700, f'{blank}\nHallo')
+    assert cues[2].start_ms == 1700 and cues[2].text == 'Next\nHallo'
+    assert cues[-1].end_ms == 3000
+
+
+def test_drop_unpaired_uses_held_visibility(tmp_path):
+    top, bottom, output = [tmp_path / name for name in ('top.srt', 'bottom.srt', 'out.srt')]
+    write_srt(top, [Cue(0, 1000, 'Hello')])
+    write_srt(bottom, [Cue(0, 2000, 'Hallo')])
+    assert main(['--top', str(top), '--bottom', str(bottom), '--drop-unpaired', '-o', str(output)]) == 0
+    assert parse_srt(output, preserve_lines=True) == [Cue(0, 1500, 'Hello\nHallo')]
+
+
+def test_negative_hold_is_rejected():
+    from bilingual_subtitles import hold_finished_cues
+    with pytest.raises(ValueError, match='nonnegative'):
+        hold_finished_cues([[Cue(0, 100, 'a')]], hold_ms=-1)
+    with pytest.raises(SystemExit):
+        main(['--tracks', 'a.srt', 'b.srt', '--hold-ms', '-1'])
