@@ -16,7 +16,7 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The longer-sentence probe completed; user liked its audio. CRISPR0–74.24s comparison is now prepared, not released. Nemotron is excluded.**
+**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The longer-sentence probe completed; user liked its audio. CRISPR0–74.24s comparison has completed; listening page is ready. German native sequence is8.391973s longer than the reference. Nemotron was excluded.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
@@ -25,7 +25,80 @@ checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. The most recent
 completed model job is the six-sample longer-sentence probe recorded below.
 
-## Current next test: CRISPR opening, 2026-10-29
+## Released CRISPR result: 2026-10-29
+
+The user explicitly said **"release it"** for the prepared CRISPR opening scope.
+The unchanged controller plan completed successfully with four synthesis calls,
+nine internal chunks, no retries, no GPU and no hosted APIs. Scope/source hashes
+were verified before execution; no implementation code changed during this run.
+`crispr_native/scope.json` and its prepared status remain the frozen historical
+review record; `authorization.json` and `result.json` record release/outcome.
+
+- Plan `mb-c06b3c66dd33827ecddf49e9f1430990`; batch
+  `2026-10-29-302cec5f41b9`, child `2026-10-29-8b76542f60d8`.
+- Smoke app `ap-1FykRIyk09Ves7495sk5zt`, workload
+  `ap-sAx8AaTQL1MoDl1s5Dx3ki`. Smoke completed before workload. Both apps are
+  stopped with zero tasks; final container inventory is empty. Initial inventory
+  was also empty. During workload inventory showed one owned container.
+- One CPU container at a time,2CPU/4GiB; cached Supertonic3/F1, speed1.0,
+  eightsteps. Reported worker time7.584282s smoke plus38.188083s workload,
+  total45.772364s. Cloud resource samples peaked at732.99MiB RSS and197%CPU
+  (abouttwo cores), below configured limits. These are sampled cloud metrics,
+  not local WSL consumption or guaranteed instantaneous maxima.
+- Actual Modal report: smoke$0.00047785 plus workload$0.00372044 =
+  **$0.00419829 total**, about0.4198US cents, below the$0.10 target.
+  `crispr_native/billing_initial.json` contains both owned-app rows. No OpenRouter,
+  ASR, translation or extra-model requests occurred. No new image/model download.
+
+Measured raw durations (caption windows are per-language references, not original
+acoustic activity or a verified semantic alignment):
+
+| Block | Raw native seconds | Caption window seconds | Difference |
+|---|---:|---:|---:|
+| English0 |18.599184|18.000000|+0.599184|
+| English1 |47.481088|50.400000|−2.918912|
+| German0 |22.591156|18.640000|+3.951156|
+| German1 |53.680816|49.240000|+4.440816|
+
+The full English listening sequence is **71.920272s**, German **82.631973s**,
+versus74.24s reference. Thus English ends2.319728s earlier and German8.391973s
+later when preserving whole native speech and the caption lead/between-block/tail
+gaps. Keeping German raw clips at their original German caption starts would
+cause a2.231156s overlap between blocks. The strict report therefore records a
+mismatch; no aligned timeline is claimed or produced. This is direct evidence
+that native1.0 speech alone does not meet the requested timing requirement.
+
+Artifacts and verification:
+
+- Open **`crispr_native/review.html`**: original English and older German-dub
+  video references stop at74.24s; new native English/German audio stays complete.
+  Only one player runs at a time. Text and caption-window differences are shown.
+  All four media URLs resolve to existing local files. Browser playback has not
+  been independently tested. No video extraction, transcoding or subtitle burn-in.
+- New audio is in `crispr_native/trial/workload/native_en.wav` and
+  `native_de.wav`; all four raw clips and successful reports remain alongside.
+  Workload transferred52,374,288audio bytes, within63MiB. The first English clip
+  is reused from smoke, not synthesized twice.
+- An independent stdlib RIFF/sample verifier checked format3 FLOAT32 mono44100,
+  finite samples, full-file and raw-sample hashes, expected text/input identity,
+  every copied native byte slice, sequence placement, and exact zero-filled
+  between-block/edge gaps. No sample cuts, stretch, fades or normalization.
+- Verification and page generation used oneCPU/512MiB,1.596s wall and93,764KiB
+  peak RSS (~91.6MiB). `crispr_native/artifact_verification.json` records checks.
+  The controller used the previously proven1MiB stack andMALLOC_ARENA_MAX2;
+  no local initialization failure or retry occurred.
+- `crispr_native/result.json` summarizes this run; controller event logs retain
+  model execution, resource samples, app IDs and stage timings. Original videos,
+  subtitle files, previous experiments and frozen inputs remain unchanged.
+
+Listening quality and pronounced-word completeness remain unjudged for this
+CRISPR run. Existing German wording defects were retained. Internal source
+pauses were not acoustically measured or matched, and background audio was not
+mixed into the generated tracks. Do not describe this as a finished synchronized
+cinematic dub. The next intervention needs duration/pause-aware synthesis or
+faithful wording adaptation; do not speed up or trim these successful raw outputs.
+
+## Preparation history: CRISPR opening, 2026-10-29
 
 The user said the preceding tests were already good, reports enabling DeepInfra
 in OpenRouter, and requested trying the approach on the CRISPR video in

@@ -3,7 +3,26 @@
 Prepared 2026-10-29. The user liked the preceding long-sentence test and selected
 the opening74seconds of the CRISPR interview in `new_guys/crispr`.
 The exact interval is0.00–74.24seconds so the last German caption is complete.
-This scope is prepared, not released or executed.
+The user released this scope and execution completed successfully. Frozen
+`scope.json`/`release_plan.json` preserve the reviewed preparation;
+`authorization.json` and `result.json` record the actual release and result.
+
+
+## Completed result
+
+Open [the listening comparison](review.html). Original/older-dub references cover
+0–74.24seconds. The new English sequence lasts71.920272seconds and German
+82.631973seconds. All raw samples were retained at1.0, so the timing difference
+remains visible. German would overlap by2.231156seconds if both raw blocks were
+placed at their original German caption starts; the strict timing check does not
+claim an aligned result.
+
+Four calls/nine internal chunks completed, with smoke reused, no retries and
+no GPU/ASR/translation calls. Actual Modal cost: **$0.00419829**. Both owned apps
+stopped and final container inventory was empty. Independent byte/hash checks
+passed; local verification/page generation used one CPU and peaked near91.6MiB.
+Listening preference, pronunciation and original acoustic pause matching still
+need evaluation. Full records and app IDs are in the parent HANDOFF.md.
 
 ## Inputs and outputs
 
