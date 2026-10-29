@@ -25,6 +25,53 @@ checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. No new model
 job has run since the released grouping trial.
 
+## Released cheap probe result: 2026-10-29
+
+The user explicitly said **"release it"**. The four-sample CPU probe completed
+successfully; no additional experiment or synthesis retry was performed.
+
+- Completed plan `mb-27ff16e38bd0c0357c18c081130a7225`; batch run
+  `2026-10-29-c7c932e1a5f7`, child `2026-10-29-ee49b9f6c1b5`.
+- Smoke app `ap-5i4V9oe1Y2PeIiPSW7M43Z`: one English question.
+  Workload app `ap-aHjezhCllUClmpMYbJ4UFF`: German question, English answer,
+  German answer. Both apps completed; post-run container inventory was empty.
+  Smoke completed before the workload app started; no GPU, build, download or
+  extra model run was used.
+- Native WAV durations: English question2.716735s, German question3.204354s;
+  English answer2.368435s, German answer2.647075s. All four SHA256 digests and
+  mono44100Hz FLOAT32 WAV data-frame counts were verified. Files are in
+  `cheap_native_trial/smoke/sample_0.wav` and
+  `cheap_native_trial/workload/sample_{1,2,3}.wav`.
+- Both stages explicitly report synthesis speed1.0/playback1.0. Worker elapsed
+  time totals7.686567s; controller stage wall time totals22.517628s. These are
+  execution measurements, not verified billable runtime. Equal speed did not
+  yield equal English/German clip durations. Raw file duration includes native
+  edge silence; this test does not measure original speaker activity or establish
+  exact speech/pause agreement, intelligibility or listening preference.
+- Billing was queried using `modal billing report --for today --resolution h
+  --json`. The initial response had no rows for either owned app; a subsequent
+  refresh reported smoke$0.00007033 and workload$0.00014066, totaling
+  **$0.00021099 (0.021099US cents)** for these two apps, well below$0.10.
+  This is the provider's reported cost, not the unrelated workspace daily total.
+  The earlier runtime-based estimate$0.00093 is superseded by the billing report.
+  Saved evidence:
+  `cheap_native_result.json`, `cheap_native_billing.json`, and
+  `cheap_native_containers_after.json`.
+
+There was one local controller-launch error before any cloud attempt:
+`.venv/bin/python` lacked `dotenv`; original batch
+`2026-10-29-adcf275ca4a3` failed before a process-start event. The correct existing
+`./modal-control` launcher uses the benchmark `.runner` environment. A fresh
+single-use plan was prepared only after verifying every original source,
+configuration and limit was identical; the actual user release was retained.
+`cheap_native_release_recovery.json` records zero cloud attempts before this
+local repair. Do not delete consumed receipts or count it as a paid/model retry.
+For future execution use `./modal-control`, not the lightweight test `.venv`.
+
+The following preparation checkpoint is retained as history. Its original plan
+ID was consumed by the local prelaunch error; use the completed IDs above when
+checking results. No further inference is currently released.
+
 ## Latest budget and speed-default checkpoint: 2026-10-29
 
 The user rejected the $1–$2 initial allowance and requested the cheapest $0.10
