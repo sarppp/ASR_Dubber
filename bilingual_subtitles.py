@@ -1026,8 +1026,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="Opt in to timing-only alignment of independently translated tracks")
     parser.add_argument("--font-size", type=int, default=38,
                         help="Fixed SRT measurement size at 720p (default 38); player controls display size")
-    parser.add_argument("--max-height-percent", type=float, default=None,
-                        help="Optional height cap; default allows the reserved rows at the reference font size")
+    parser.add_argument("--max-height-percent", type=float, default=20,
+                        help="Hard rendered height cap at the reference font size (default 20 percent)")
     parser.add_argument("--top", type=Path, help="Bilingual mode: SRT shown on top")
     parser.add_argument(
         "--bottom", type=Path, help="Bilingual mode: SRT shown underneath"
@@ -1067,7 +1067,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Minimum duration for generated chunks in milliseconds (default: 1300)",
     )
     args = parser.parse_args(argv)
-    if args.max_height_percent is not None and not 1 <= args.max_height_percent <= 100:
+    if not 1 <= args.max_height_percent <= 100:
         parser.error("--max-height-percent must be between 1 and 100")
     if not 1 <= args.font_size <= 100:
         parser.error("--font-size must be between 1 and 100")
@@ -1099,13 +1099,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         output = args.output or args.input.with_name(f"{args.input.stem}.chunked.srt")
     else:
         output = args.output or args.top.with_name(f"{args.top.stem}.bilingual.srt")
-    def save(cues: Sequence[Cue], *, fixed: bool = False) -> None:
-        height = args.max_height_percent
-        if height is None:
-            rows = max((len(c.text.split("\n")) for c in cues), default=1)
-            height = max(20, math.ceil(rows * args.font_size / 720 * 100) + 2) if fixed else 20
+    def save(cues: Sequence[Cue]) -> None:
         write_subtitles(output, cues, font_size=args.font_size,
-                        max_height_percent=height, ass_preview=args.ass_preview)
+                        max_height_percent=args.max_height_percent, ass_preview=args.ass_preview)
 
     try:
         if args.tracks:
@@ -1117,7 +1113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                    min_duration_ms=args.min_duration_ms)
             else:
                 combined = combine_multiple_tracks_fixed(tracks, font_size=args.font_size, hold_ms=hold_ms)
-            save(combined, fixed=not approximate)
+            save(combined)
             print(f"Created {output} ({len(combined)} cues)")
             return 0
         if args.input:
@@ -1153,7 +1149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 combined = [c for c in combined
                             if all(any(s.start_ms < c.end_ms and s.end_ms > c.start_ms for s in track)
                                    for track in held)]
-        save(combined, fixed=not approximate)
+        save(combined)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
