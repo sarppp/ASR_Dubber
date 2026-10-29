@@ -1,6 +1,8 @@
 # Nemotron and longer-sentence dubbing checks
 
-Checked 2026-10-29. Preparation only: no new inference or audio upload.
+Checked 2026-10-29. Research/preparation below; the subsequently released
+synthesis completed. The first OpenRouter upload returned HTTP404 because all
+providers were ignored by account settings. See HANDOFF.md for measured results.
 
 ## Selected route
 

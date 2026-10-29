@@ -16,16 +16,96 @@ The investigation establishes several implementation and text defects. It does
 **not** establish that the candidate now sounds natural. Separate code correctness,
 timing feasibility, intelligibility, translation fidelity, and human preference.
 
-**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The released cheap probe completed; the longer-sentence and OpenRouter tests are being prepared, not released.**
+**Latest requirement: 2026-10-29 — 1.0x playback, original talking and silence durations first; emotional performance later. The longer-sentence probe completed under release; the first OpenRouter request was blocked by account provider settings.**
 The user explicitly requires a general automatic solution across videos and
 languages, not manually corrected timestamps or individually rewritten phrases.
 They also request periodic updates to this handoff. The new source-timing and
 safe-fitting code is integrated into shared workers; see the current
 checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. The most recent
-completed model job is the four-sample cheap probe recorded below.
+completed model job is the six-sample longer-sentence probe recorded below.
 
-## Current continuation: longer sentences and hosted Nemotron, 2026-10-29
+## Released transition result: 2026-10-29
+
+The user explicitly said **"Release it"** for `transition_release_scope.json`.
+Synthesis completed; the hosted ASR stage is blocked, not complete. Original
+frozen scope/plan files remain historical records, not edited to claim success.
+`transition_result.json` summarizes the measured outcome and evidence paths.
+
+- Completed plan `mb-fdcdbce255830df0dbd4ecd2f7dff4d3`; batch
+  `2026-10-29-631e6e626154`, child `2026-10-29-9dcafdce8ea3`.
+  Smoke app `ap-GJUz8AYLB4uWlMwCMvTiVv`, workload
+  `ap-4EWDTUmW1FsfLv3FN3epof`. Both stopped with zero tasks; no owned
+  containers remain. Unrelated pre-existing `scan-train` was left untouched.
+- Six synthesis calls/eight expected internal chunks, cached CPU only,
+  speed1.0/playback1.0. Combined reported worker time24.19096134s. Smoke
+  output405,560bytes; workload output25,291,552bytes, within reviewed caps.
+- Raw durations: EN short2.298776s, long28.790884s, short2.716735s;
+  DE short2.925714s, long31.159320s, short2.995374s. Full sequences:
+  **English34.606395s, German37.880408s**. Both long passages contain73
+  requested words; German raw audio is2.368435s/8.2263% longer. Raw durations
+  include native silence. This is not measured voiced-speech duration or a
+  naturalness verdict. Equal speed does not imply equal cross-language duration.
+- `prepare_transition_manifest` independently verified actual WAV metadata,
+  every raw/sequence digest, full native byte slices, fixture order, schedule
+  and exactly0.4seconds of inserted zeros at each join. No raw samples were
+  cut, stretched, faded or normalized. Internal0.3s chunk silence remains;
+  native edge silence is additional. Original-video timing was not measured.
+- Audio: `sentence_transition_trial/workload/sequence_en.wav` and
+  `sequence_de.wav`, plus all six raw samples. Reports retain the complete
+  fixture, seeds, sample hashes and source-slice hashes. The smoke short is
+  copied into workload without a seventh synthesis call.
+- Actual Modal billing refresh reports **$0.00206333 total**:
+  smoke$0.00019839 plus workload$0.00186494 (about0.2063US cents).
+  Initial billing had no rows, then refreshed. This is owned-app usage, not
+  the account daily total. `transition_modal_billing_refresh.json` is evidence.
+
+OpenRouter outcome:
+
+- Official catalog availability and rate were rechecked successfully before
+  execution. Existing Budget_App `OPEN_ROUTER` credential was read only into
+  process memory and sent to the intended OpenRouter endpoint; no secret was
+  copied to configuration, command arguments, source or reports.
+- Only English34.606395s was uploaded. The first request returned HTTP404 in
+  3.293060s: **"All providers have been ignored."** Response metadata identifies
+  `failed_routing_step: Filter by Ignored Providers`, with one initial endpoint.
+  The previously verified endpoint is DeepInfra. This is an OpenRouter provider
+  preference restriction; using its hosted backend does not require a separate
+  DeepInfra billing account.
+- The adapter stopped immediately. German was not uploaded; no retry, fallback
+  or account/provider-setting change occurred. No transcript, word timestamps,
+  generation ID or usage-cost receipt was returned. Therefore word retention
+  remains unverified and OpenRouter cost is **unreported**, not asserted zero.
+- Exact request manifest `transition_nemotron_manifest.json`, SHA256
+  `1a0ed8c7a6b7a52b7fcc47d80e49ab2e9d7308d5976c10ba8af5d0cb6629ac7c`.
+  Raw failure and audit report are in `sentence_transition_trial/nemotron/`.
+- Next unblock: user reviews OpenRouter provider/privacy settings to permit
+  DeepInfra for this model/account, or chooses another separately reviewed route.
+  Do not change account-wide provider preferences silently. No-retry release is
+  consumed; an additional hosted attempt needs a newly bounded authorization.
+  Reuse the saved audio rather than resynthesizing it.
+
+Local launch repair (no extra inference):
+
+- Original plan `mb-3cf1b6b0f31da2434a0bcb701a93737f`, batch
+  `2026-10-29-44189134f98c`, failed during local Modal SDK initialization with
+  `can't start new thread` under512MiB address space. App
+  `ap-12dOXESNGbgJEdhyTxgudQ` stopped; AppGetLayout returned an empty layout,
+  no functions were created, and task count was zero. No billing row is present.
+- Kept oneCPU/512MiB, reduced local thread stacks to1MiB and set
+  `MALLOC_ARENA_MAX=2`; this removes excessive virtual-memory reservations without
+  raising the safety limit. Fresh single-use plan was compared against the old
+  plan: scope, sources, catalog and controller hashes all identical; only
+  creation/expiry changed. Original user release was retained. See
+  `transition_local_recovery.json` and `transition_failed_app_layout.json`.
+- A standalone initial inventory command lacked `.env` loading; this was repaired
+  using existing dotenv setup. It launched no job. No paid/model retry was used.
+
+No source implementation changed during this run. The existing325-test result
+remains the code checkpoint; successful real synthesis and artifact verification
+are additional evidence, not a substitute for listening or source alignment.
+
+## Preparation history: longer sentences and hosted Nemotron, 2026-10-29
 
 The user requested longer English/German sentences and short/long transitions,
 then asked about NVIDIA Nemotron 3.5 Transcribe. They initially selected preparing
