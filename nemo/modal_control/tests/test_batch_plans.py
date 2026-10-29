@@ -19,6 +19,37 @@ class BatchTests(unittest.TestCase):
   if steps is None:steps=[dict(id=x,job=x,catalog=str(self.catalog),cpu_cores=1,memory_mib=1024,max_attempts=1) for x in self.jobs]
   spec=dict(version=1,steps=steps,max_parallel=2,max_gpu_parallel=2,max_resource_seconds=100,max_wall_seconds=30,estimated_cost_ceiling_usd=10);spec.update(kw);self.spec.write_text(json.dumps(spec))
  def prepare(self):return prepare_batch(self.store,self.spec)
+ def resource_worker(self,cpu,memory):
+  self.worker.write_text(f"@app.function(gpu='T4',cpu={cpu},memory={memory},max_containers=1,retries=0,timeout=5)\ndef work(): pass\n")
+ def resource_step(self,cpu=2,memory=4096):
+  self.save([dict(id='a',job='a',catalog=str(self.catalog),cpu_cores=cpu,memory_mib=memory)])
+ def test_bounded_resource_pairs_plan_and_estimate_upper_limits(self):
+  self.resource_worker('(0.5, 2)','(1024, 4096)');self.resource_step()
+  payload=self.prepare()['payload'];step=payload['steps'][0]
+  self.assertEqual((step['cpu_cores'],step['memory_mib']),(2,4096))
+  self.assertEqual(payload['estimated_compute_ceiling_usd'],round(10*(.000164+2*.0000131+4*.00000222),6))
+ def test_bounded_pairs_cannot_underdeclare_either_upper_limit(self):
+  self.resource_worker('(1, 2)','(1024, 4096)')
+  for cpu,memory in [(1,4096),(2,1024),(3,4096),(2,8192)]:
+   with self.subTest(cpu=cpu,memory=memory):
+    self.resource_step(cpu,memory)
+    with self.assertRaisesRegex(ValueError,'does not match worker'):self.prepare()
+ def test_scalar_and_pair_resources_can_be_mixed(self):
+  for cpu,memory in [('2','(1024, 4096)'),('(0.5, 2)','4096'),('(2, 2)','(4096, 4096)'),('2','4096')]:
+   with self.subTest(cpu=cpu,memory=memory):
+    self.resource_worker(cpu,memory);self.resource_step();self.prepare()
+ def test_resource_pairs_reject_invalid_or_unbounded_values(self):
+  invalid=['(3, 2)','(None, 2)','(1, None)','(0, 2)','(-1, 2)','(1, 0)',
+           '(True, 2)','(1, True)','(False, 2)','(1, False)','(1e309, 1e309)',
+           '(1, 1e309)','(float("nan"), 2)','(1, float("inf"))','(1,)',
+           '()','(1, 2, 3)','("1", 2)','(1, "2")','((1, 2), 2)',
+           '[1, 2]','(1, ...)','(1, resource_limit)', '('+'9'*400+', 2)']
+  for field in ('cpu','memory'):
+   for value in invalid:
+    with self.subTest(field=field,value=value):
+     self.resource_worker(value if field=='cpu' else '2',value if field=='memory' else '4096')
+     self.resource_step()
+     with self.assertRaises(ValueError):self.prepare()
  def fake_stage(self,store,rid,job,smoke,env,cmd):
   files=job['smoke_success_files' if smoke else 'success_files'];out=[]
   for path in files:

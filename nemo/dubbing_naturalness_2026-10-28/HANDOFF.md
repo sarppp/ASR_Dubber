@@ -25,6 +25,65 @@ checkpoint below before relying on older experiment-only descriptions. Existing
 videos, subtitles, and generated audio have not been overwritten. No new model
 job has run since the released grouping trial.
 
+## Latest budget and speed-default checkpoint: 2026-10-29
+
+The user rejected the $1–$2 initial allowance and requested the cheapest $0.10
+test. A much smaller CPU-only baseline probe is now prepared, not released or
+run. This does not replace the researched architecture with an unsupported claim
+that Supertonic provides duration/pause conditioning.
+
+New verified finding: the cached, RECORD-verified `supertonic==1.3.1` wheel sets
+`DEFAULT_SPEED=1.05` in `config.py:202`; `pipeline.py:158` inherits it, and
+`core.py:507` divides predicted duration by that speed before generating audio.
+Both `cpu_natural.py` and `naturalness_worker.py` previously omitted the argument.
+Historical samples therefore used internal speed1.05 (about4.76% shorter predicted
+duration than1.0), even though later playback was labelled native. This does not
+explain all large timing failures. Both calls now explicitly pass `speed=1.0`;
+new reports disclose this and the unchanged automatic chunking/300ms pause
+defaults. Historical evidence files remain untouched. The API has no target
+duration or source-pause-timeline parameter.
+
+Prepared cheapest probe:
+
+- `batch_dubbing/cheap_native_probe.py` and `cheap_native_worker.py`;
+  frozen `cheap_native_inputs.json`, `cheap_native_batch.json`, and
+  `modal_control/catalog/cheap_native_probe.json`.
+- Reuses successful trial image `im-40qUTZlx5ttgX1nwrQdvyw` and the existing
+  pinned model cache at revision `3cadd1ee6394adea1bd021217a0e650ede09a323`.
+  No apt/pip build, new model download, GPU, VAD/ASR model or translation API.
+  A missing cache/image fails; there is no rebuild or fallback.
+- Four unchanged existing texts: English Bill cue129 and German116 (question),
+  English130 and German117 (answer). M2 question/M1 answer. First English text
+  is the smoke call; only its successful matching report allows the other three.
+  This is a native-speed baseline, not a comparison to acoustically measured
+  original speech. Existing translation defects remain visible.
+- Explicit speed1.0, eight steps, fixed random seed. Enforce one text chunk per
+  sample and zero wrapper-inserted silence. No waveform fitting, trimming or
+  video packaging. Four WAVs maximum,12seconds each,8MiB transfer perstage.
+- One CPU container at a time, CPU request/limit2, RAM request/hardlimit4GiB,
+  two ONNX threads, no retries;90s function,30s startup,2s scale-down. Controller
+  stage deadline120s includes client startup; two stages total240s and batchwall300s.
+  Controller now accepts literal resource pairs and estimates cost from upper
+  limits. Source/model cache presence has not been checked through a cloud job.
+- Public base-rate calculation:240s×(2×$0.0000131+4×$0.00000222)=$0.0084192.
+  With24s shutdown/cancellation allowance and16MiB worst paid transfer, about
+  $0.00989. Approximately one cent estimated, with substantial room below the
+  requested ten cents. This is not a verified provider-enforced currency cap;
+  cancellation/billing overrun is not impossible. Do not call it a guaranteed
+  invoice ceiling or silently increase spending after failure.
+- Local generated review plan: `cheap_native_release_plan.json`, ID
+  `mb-51cfdc453423af285674f0fe046f7d28`, expires2026-10-29T08:41:51UTC.
+  The earlier same-task plan `mb-a953479028bcb004bcce3f555f055fd5` is superseded
+  after a controller documentation edit changed its pinned hash. Reprepare an
+  expired plan from the unchanged reviewed specification; no inference released.
+
+Final local checks: **331 passed,1 skipped,465 subtests passed**;17.58s pytest,
+17.907s outer wall,83,772KiB peak child RSS (about81.8MiB),one core,512MiB address
+space. The13 probe tests include failure/partial-artifact preservation, explicit
+settings, cache-only loading, resource caps and smoke ordering. No live model,
+network inference, video or existing audio processing ran. Full long-form timing
+and naturalness remain unverified. The old1.15x catalog stays disabled.
+
 ## Strict timing implementation checkpoint: 2026-10-29
 
 The user approved the researched direction: adapt wording and condition synthesis

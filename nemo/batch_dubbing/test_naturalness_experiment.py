@@ -1,4 +1,5 @@
 """Validate the frozen experimental scope without importing Modal or a model."""
+import ast
 import copy
 import json
 from pathlib import Path
@@ -61,6 +62,27 @@ class ExperimentTests(unittest.TestCase):
                 data["excerpts"][0]["start"] += .1
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 build_jobs(data)
+
+    def test_worker_uses_explicit_speed_and_discloses_unchanged_chunk_defaults(self):
+        tree = ast.parse((ROOT / "batch_dubbing/naturalness_worker.py").read_text())
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == "synthesize"]
+        self.assertEqual(len(calls), 1)
+        keywords = {item.arg: item.value for item in calls[0].keywords}
+        self.assertEqual(ast.literal_eval(keywords["speed"]), 1.0)
+        self.assertNotIn("max_chunk_length", keywords)
+        self.assertNotIn("silence_duration", keywords)
+        report_fields = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                report_fields.update({key.value: value for key, value in zip(node.keys, node.values)
+                                      if isinstance(key, ast.Constant) and isinstance(key.value, str)})
+        self.assertEqual(ast.literal_eval(report_fields["synthesis_speed"]), 1.0)
+        chunking = ast.literal_eval(report_fields["chunking"])
+        self.assertEqual(chunking["max_chunk_length"], 300)
+        self.assertEqual(chunking["silence_duration_seconds"], .3)
+        self.assertEqual(ast.literal_eval(report_fields["timing_conditioning"]),
+                         {"target_duration": False, "internal_pause_timeline": False})
 
     def test_catalog_passes_controller_static_validation(self):
         catalog = json.loads((ROOT / "modal_control/catalog/naturalness_native_grouping.json").read_text())

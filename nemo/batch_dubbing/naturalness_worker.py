@@ -53,7 +53,7 @@ def synthesize(data, smoke=False):
             phrase = job["phrase"]
             text = phrase["text"].translate(str.maketrans({'„': '"', '“': '"', '”': '"', '–': '-', '—': '-', '…': '...'}))
             before = time.monotonic()
-            wav, _ = model.synthesize(text, voice_style=model.get_voice_style(job["voice"]), lang="de")
+            wav, _ = model.synthesize(text, voice_style=model.get_voice_style(job["voice"]), lang="de", speed=1.0)
             wav = np.asarray(wav, dtype=np.float32).squeeze()
             if wav.ndim != 1 or not wav.size or not np.isfinite(wav).all():
                 raise ValueError("Invalid raw synthesis output")
@@ -75,6 +75,11 @@ def synthesize(data, smoke=False):
                 "revision": REVISION, "package": PACKAGE, "hardware": "CPU", "cpu": 2,
                 "memory_mib": 4096, "max_containers": 1, "smoke": smoke,
                 "input_snapshot": data,
+                "synthesis_speed": 1.0,
+                "chunking": {"max_chunk_length": 300, "silence_duration_seconds": 0.3,
+                             "policy": "supertonic_1.3.1_defaults_unchanged"},
+                "timing_conditioning": {"target_duration": False, "internal_pause_timeline": False},
+                "synthesis_limitations": "Explicit speed 1.0 does not establish natural pace or match source duration/pauses; automatic chunks retain the package's fixed inter-chunk silence.",
                 "calls": len(rows), "wall_seconds": time.monotonic() - started,
                 "processing": "Native synthesized speech only; no fit, trim, slowdown, subtitle rewrite or packaging",
                 "grouping_candidate": {"max_seconds": 20, "max_characters": 500, "meaningful_gap": .25},

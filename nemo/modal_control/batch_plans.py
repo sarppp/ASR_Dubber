@@ -13,6 +13,22 @@ def batch_identity(payload):
 def _absolute(job, path):
     return str((Path(job['cwd']) / path).resolve())
 
+def _resource_upper_limit(value, field):
+    """Use the configured upper limit of a literal (request, limit) pair."""
+    if not isinstance(value, tuple):
+        return value
+    if len(value) != 2:
+        raise ValueError(f'Worker {field} must be a (request, limit) pair')
+    request, limit = value
+    try:
+        positive(request, f'worker {field} request')
+        positive(limit, f'worker {field} limit')
+    except OverflowError:
+        raise ValueError(f'Worker {field} pair must contain finite numbers') from None
+    if request > limit:
+        raise ValueError(f'Worker {field} request must not exceed its limit')
+    return limit
+
 def prepare_batch(store, spec_path, ttl_seconds=3600):
     positive(ttl_seconds, 'ttl_seconds')
     if ttl_seconds > 3600:
@@ -67,6 +83,8 @@ def prepare_batch(store, spec_path, ttl_seconds=3600):
                     actual_memory = ast.literal_eval(args['memory'])
                 except (KeyError, ValueError, TypeError):
                     raise ValueError('Batch workers must declare literal CPU and memory limits')
+                actual_cpu = _resource_upper_limit(actual_cpu, 'cpu')
+                actual_memory = _resource_upper_limit(actual_memory, 'memory')
                 if actual_cpu != cpu or actual_memory != memory:
                     raise ValueError('Declared CPU or memory does not match worker')
         catalogs[catalog_path] = digest(catalog_path)
@@ -98,8 +116,8 @@ def prepare_batch(store, spec_path, ttl_seconds=3600):
         seen[name] = outputs
         worst_seconds += 2 * job['max_seconds'] * attempts
         # Pinned public rates used for a transparent planning estimate, not a
-        # provider-enforced spending cap. Four requested CPU cores are charged
-        # conservatively as four physical cores here.
+        # provider-enforced spending cap. Resource pairs use their upper limits,
+        # with CPU cores conservatively charged as physical cores here.
         seconds = 2 * job['max_seconds'] * attempts
         gpu_rate = 0.000164 if job['review']['hardware'] == 'T4' else 0
         estimated_ceiling += seconds * (gpu_rate + cpu * 0.0000131 + memory / 1024 * 0.00000222)

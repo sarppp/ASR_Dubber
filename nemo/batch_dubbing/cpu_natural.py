@@ -75,7 +75,7 @@ def synthesize_natural(data, seconds, voices, *, language="de", output_format="m
     def generate(unit, text):
         voice = voices[unit["speaker"]]["voice"]
         text = text.translate(str.maketrans({'„': '"', '“': '"', '”': '"', '–': '-', '—': '-', '…': '...'}))
-        audio, predicted = model.synthesize(text, voice_style=model.get_voice_style(voice), lang=language)
+        audio, predicted = model.synthesize(text, voice_style=model.get_voice_style(voice), lang=language, speed=1.0)
         audio = np.asarray(audio, dtype=np.float32).squeeze()
         if audio.ndim != 1:
             raise ValueError("Expected mono speech")
@@ -89,7 +89,13 @@ def synthesize_natural(data, seconds, voices, *, language="de", output_format="m
     def persist():
         report.update(model=MODEL, revision=REVISION, sample_rate=44100, seconds=seconds,
                       native_artifact_directory=str(destination), scope=scope,
-                      worker_wall_seconds=time.monotonic() - started)
+                      worker_wall_seconds=time.monotonic() - started,
+                      synthesis_speed=1.0,
+                      chunking={"max_chunk_length": 120 if language == "ko" else 300,
+                                "silence_duration_seconds": 0.3,
+                                "policy": "supertonic_1.3.1_defaults_unchanged"},
+                      timing_conditioning={"target_duration": False, "internal_pause_timeline": False},
+                      synthesis_limitations="Explicit speed 1.0 does not establish natural pace or match source duration/pauses; automatic chunks retain the package's fixed inter-chunk silence.")
         temporary = destination / "worker-report.json.tmp"
         temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         temporary.replace(destination / "report.json")

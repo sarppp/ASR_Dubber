@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "cheap_native_probe": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/cheap_native_worker.py"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/cheap_native_worker.py",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/cheap_native_worker.py",
+        "batch_dubbing/cheap_native_probe.py",
+        "dubbing_naturalness_2026-10-28/cheap_native_inputs.json"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/cheap_native_trial/workload/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/cheap_native_trial/smoke/report.json"
+      ],
+      "max_seconds": 120,
+      "build_timeout_seconds": 30,
+      "startup_timeout_seconds": 45,
+      "idle_timeout_seconds": 100,
+      "review": {
+        "purpose": "Cheapest bilingual native-speed baseline after discovering implicit Supertonic speed1.05",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1; cached image im-40qUTZlx5ttgX1nwrQdvyw",
+        "precision": "ONNX CPU inference; raw FLOAT32 WAV, 44100Hz",
+        "reason": "Verify actual synthesis at explicit1.0 before spending on duration-conditioned model integration. This model does not provide native target-duration or internal-pause conditioning.",
+        "input": "Four unchanged short texts from frozen Bill Ackman review: EN cue129, DE116, EN130, DE117; two corresponding sentences perlanguage. M2question/M1answer presets. Smoke onlyEN129; workload remaining3samples. Fixedseed20261029,speed1.0,eightsteps. No sourcevideo upload, ASR, VAD, translation API or modeldownload. Subtitletimes are provenance only, not speech targets.",
+        "input_seconds": 5.6,
+        "outputs": "New cheap_native_trial/smoke and /workload: four untrimmed native WAVs total, max12s each, max8MiB perstage; reports include text,voices,speed,hashes,duration,qualitylimitations. Partial valid audio/report retained if synthesis fails. No video packaging or publication.",
+        "quality_tradeoffs": "Only a speed-baseline smoke experiment, not proof of cinematic dubbing, translated meaning or exact speech/pause timing. Existing German wording remains unchanged. Cachedimage/cache absence causes failure, no rebuild/download/fallback/retry. Presetvoices are not clones. Strict1.0 synthesis can still sound unnatural.",
+        "cost_estimate": "2026-10-29 public base rates: CPU $0.0000131/core/s and RAM $0.00000222/GiB/s. Two120s controller stages at upper2CPU/4GiB = $0.0084192. Including24s shutdown/cancellation allowance and16MiB worst transfer = about$0.00989. Budgettarget$0.10 leaves about9c headroom. Pinnedexistingimage means no build; modelcacheonly,no downloads. Not a verified provider-enforced dollar cap; billing/cleanup overrun remains possible. Abort on cache miss; no automatic spending increase.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 240,
+        "max_synthesis_calls_including_smoke": 4
+      }
+    }
+  }
+}

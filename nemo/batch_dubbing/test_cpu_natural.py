@@ -55,7 +55,7 @@ class CpuNaturalTests(unittest.TestCase):
 
     def test_renderer_failure_is_reported_and_native_audio_survives(self):
         fake_model = SimpleNamespace(sample_rate=44100, get_voice_style=lambda voice: voice,
-            synthesize=lambda *args, **kwargs: (audio()["samples"], [1.2]))
+            synthesize=Mock(return_value=(audio()["samples"], [1.2])))
         tts = Mock(return_value=fake_model)
         packages = {
             "numpy": SimpleNamespace(float32="float32", asarray=lambda x, **kwargs: FakeArray(x)),
@@ -75,6 +75,16 @@ class CpuNaturalTests(unittest.TestCase):
             self.assertEqual(saved["error"], "sample overflow")
             self.assertTrue(list(directory.glob("raw*.wav")))
             self.assertEqual(tts.call_args.kwargs["intra_op_num_threads"], 2)
+            fake_model.synthesize.assert_called_once()
+            self.assertEqual(fake_model.synthesize.call_args.kwargs["speed"], 1.0)
+            self.assertNotIn("max_chunk_length", fake_model.synthesize.call_args.kwargs)
+            self.assertNotIn("silence_duration", fake_model.synthesize.call_args.kwargs)
+            self.assertEqual(saved["synthesis_speed"], 1.0)
+            self.assertEqual(saved["chunking"]["max_chunk_length"], 300)
+            self.assertEqual(saved["chunking"]["silence_duration_seconds"], .3)
+            self.assertFalse(saved["timing_conditioning"]["target_duration"])
+            self.assertFalse(saved["timing_conditioning"]["internal_pause_timeline"])
+            self.assertIn("does not establish natural pace", saved["synthesis_limitations"])
 
 
 if __name__ == "__main__":
