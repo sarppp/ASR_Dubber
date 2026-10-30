@@ -60,13 +60,15 @@ def _check_source_unit_count(units, limit):
 
 
 def process_audio(source_path, seconds, *, offset_seconds=0, target_languages=('de', 'fr'),
-                  commit_artifacts=None, max_source_units=10000):
+                  commit_artifacts=None, max_source_units=10000, transcribe_only=False):
     """Process one source WAV range serially; returned timestamps are crop-relative.
 
     Model imports and inference occur only when called in a released T4 worker.
     ``commit_artifacts`` optionally persists a mounted cache volume at the ASR
     checkpoint; workers also commit on exit. No Modal app is constructed here.
     """
+    if type(transcribe_only) is not bool:
+        raise ValueError('transcribe_only must be Boolean')
     _check_source_unit_count([], max_source_units)
     source_path, seconds, offset_seconds, target_languages = validate_request(
         source_path, seconds, offset_seconds=offset_seconds, target_languages=target_languages)
@@ -185,6 +187,14 @@ def process_audio(source_path, seconds, *, offset_seconds=0, target_languages=('
             del model
             gc.collect()
             torch.cuda.empty_cache()
+            if transcribe_only:
+                timings['worker_seconds'] = time.monotonic() - started
+                return {'status': 'complete', 'duration_seconds': seconds,
+                        'source_words': source_words, 'source_units': [u.to_dict() for u in source_units],
+                        'source_id': source_id, 'source_language': 'en', 'voices': voices,
+                        'english': english, 'raw_turns': turns, 'turns': reconciled_turns,
+                        'alignment': alignment, 'timings': timings, 'gpu': gpu,
+                        'translation_performed': False}
             utterance_audio = {}
             for index, unit in enumerate(source_units):
                 if unit.source_end - unit.source_start > 30:
