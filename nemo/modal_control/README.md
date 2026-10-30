@@ -138,7 +138,7 @@ The dashboard is loopback-only and read-only. Alerts are local dashboard/databas
 
 SQLite is the authoritative durable record (WAL, FULL synchronous); JSONL is an additional export. There is no automatic deletion/retention policy. Export evidence and back up `.state` with `backup`, which uses SQLite's backup API; copying a live SQLite file alone can miss WAL data. Disk exhaustion or host loss still requires operational backups. Artifacts are captured after completion; interrupted workers may leave only logs, not complete audio. Existing cloud volume stores model caches, not an off-machine backup of this controller.
 
-Resource samples are observations, not billed GPU seconds. Actual billing, account quotas, container-internal logs not emitted by the attached command, and unrelated apps' stdout are not collected by this version. No fabricated cost estimates are shown. To supervise another project, add its job to the catalog and emit `MC_EVENT {"kind":"worker_ready"}` only after its container entrypoint starts.
+Resource samples are observations, not billed GPU seconds. Account quotas, container-internal logs not emitted by the attached command, and unrelated apps' stdout are not collected. No fabricated cost estimates are shown. To supervise another project, add its job to the catalog and emit `MC_EVENT {"kind":"worker_ready"}` only after its container entrypoint starts.
 
 ## Checks
 
@@ -178,3 +178,32 @@ python3 -m unittest discover -s modal_control/tests -v
 ```
 
 Tests cover smoke rejection, success verification, missing readiness, stale artifacts, source changes, secret redaction, owned-app cancellation, deadlines and persisted events. `/metrics` exposes Prometheus run-state gauges and an alert counter; `/api/overview` and `/api/runs/ID/events` expose recorded evidence.
+
+
+## Posted billing at launch and during runs
+
+Every released single job or batch attempts a billing snapshot **before the first
+worker launches**, then every two minutes and after shutdown. The CLI prints
+credits used, cash charged, and the change from the starting snapshot. The
+dashboard and `status` expose the latest observation; each run keeps timestamped
+`billing_snapshot` events and JSON artifacts, including failure/unavailable states.
+
+These are posted Modal figures, not a live meter or a spending cap. Workspace
+changes can include unrelated work. Owned-app cost is selected by recorded app
+IDs, including a batch's child jobs, rather than by matching descriptions. A
+missing credit field, unavailable CLI, or failed request is shown as unknown;
+remaining credits are never calculated from an assumed plan allowance. Month
+rollovers do not produce a misleading cross-month delta.
+
+Install the controller dependencies into its own environment:
+
+```sh
+uv venv modal_control/.state/runtime
+uv pip install --python modal_control/.state/runtime/bin/python -r modal_control/requirements.txt
+```
+
+The launcher uses that environment, or `MODAL_CONTROL_PYTHON` when explicitly set.
+Billing uses the controller's Modal CLI by default, independently of older worker
+CLIs. A catalog can specify `billing_command` as an argument list when it needs a
+separate compatible CLI. Credentials are loaded from the catalog's `env_file` in
+memory and are not saved in billing artifacts.

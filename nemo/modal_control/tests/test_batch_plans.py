@@ -6,6 +6,8 @@ from modal_control.batch_plans import prepare_batch, show_batch, run_batch
 
 class BatchTests(unittest.TestCase):
  def setUp(self):
+  billing_patch = patch('modal_control.billing.BillingMonitor.read', side_effect=RuntimeError('offline test'))
+  billing_patch.start(); self.addCleanup(billing_patch.stop)
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name);self.store=Store(self.root/'state')
   self.worker=self.root/'worker.py';self.worker.write_text("@app.function(gpu='T4',cpu=1,memory=1024,max_containers=1,retries=0,timeout=5)\ndef work(): pass\n")
   self.input=self.root/'source.txt';self.input.write_text('original')

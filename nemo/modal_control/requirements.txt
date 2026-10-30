@@ -1,3 +1,6 @@
 # MCP API matches the existing prod-control integration.
 mcp>=2,<3
 python-dotenv>=1,<2
+
+# Billing summary and report JSON support.
+modal>=1.6.3,<2

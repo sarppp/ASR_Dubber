@@ -154,6 +154,7 @@ CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);""")
             "runs": runs,
             "alerts": alerts,
             "state_root": str(self.root),
+            "billing": json.loads((self.root / "latest_billing.json").read_text()) if (self.root / "latest_billing.json").exists() else None,
         }
 
     def get(self, rid):
@@ -479,6 +480,8 @@ def _run_approved_job(store, catalog_path, name, plan=None):
         except BlockingIOError:
             store.state(rid, "failed", reason="Another supervisor owns this job")
             return rid, 1
+        from .billing import BillingMonitor
+        billing = BillingMonitor(store, rid, catalog).start()
         try:
             try:
                 stage(store, rid, job, True, env, modal_command)
@@ -533,6 +536,8 @@ def _run_approved_job(store, catalog_path, name, plan=None):
             store.alert(rid, "run_failed", str(e))
             store.state(rid, status, error=str(e))
             return rid, 1
+        finally:
+            billing.finish()
 
 
 def recover(store, catalog_path):

@@ -13,6 +13,8 @@ from modal_control.core import (
 
 class ControllerTests(unittest.TestCase):
     def setUp(self):
+        billing_patch = patch('modal_control.billing.BillingMonitor.read', side_effect=RuntimeError('offline test'))
+        billing_patch.start(); self.addCleanup(billing_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

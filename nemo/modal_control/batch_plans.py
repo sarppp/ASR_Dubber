@@ -296,6 +296,8 @@ def run_batch(store, plan_id, confirmation, approval_message):
     steps = {s['id']: s for s in payload['steps']}
     pending = list(steps)
     running = {}
+    from .billing import BillingMonitor
+    billing = BillingMonitor(store, batch_run, load_catalog(payload["steps"][0]["catalog_path"])).start()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=scope['max_parallel']) as pool:
             while pending or running:
@@ -341,3 +343,6 @@ def run_batch(store, plan_id, confirmation, approval_message):
         store.alert(batch_run, 'batch_failed', str(exc))
         store.state(batch_run, 'failed', error=str(exc), results=results, pending=pending)
         return batch_run, 1
+
+    finally:
+        billing.finish()
