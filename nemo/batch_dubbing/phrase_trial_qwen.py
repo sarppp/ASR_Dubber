@@ -50,7 +50,7 @@ def synthesize_qwen(data, seconds, *, emit, commit):
                       voice_assignments=voices, load_seconds=load_seconds,
                       worker_wall_seconds=time.monotonic()-started,
                       speech_text_basis='Adjacent German phrase translations joined by source utterance',
-                      timing_conditioning='Natural delivery instruction; measured fit afterward, maximum 1.15x tempo',
+                      timing_conditioning='Brisk delivery with source-duration instruction; measured fit afterward, maximum 1.15x tempo',
                       semantic_quality_verified=False, listening_review_complete=False)
         (destination / 'worker-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
         commit()
@@ -67,9 +67,12 @@ def synthesize_qwen(data, seconds, *, emit, commit):
         def generate(unit, text):
             before = time.monotonic()
             voice = voices[unit['speaker']]['voice']
+            target_seconds = unit['source_end'] - unit['source_start']
             waves, sr = model.generate_custom_voice(
                 text=text, language='German', speaker=voice,
-                instruct='Speak clearly in a calm, natural documentary interview style. Use a conversational pace.',
+                instruct=('Speak clearly in German at a brisk, fluent interview pace. '
+                          f'Aim to finish this text in about {target_seconds:.1f} seconds. '
+                          'Preserve every word. Avoid dramatic pauses and drawn-out syllables.'),
                 max_new_tokens=1440)
             torch.cuda.synchronize()
             audio = waves[0].detach().cpu().numpy() if torch.is_tensor(waves[0]) else np.asarray(waves[0])
