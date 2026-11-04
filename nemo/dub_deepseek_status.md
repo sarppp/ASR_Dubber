@@ -187,6 +187,16 @@ To reach true 1.0x, the compressor must be a different component:
 - a dedicated rewriting model small enough to fit beside Tower, or
 - accept a small speed-up (1.05-1.10) for the few lines that overshoot.
 
+Implemented and passing
+- tests/test_dubbing_gate.py — 13 tests: guards (number, negation, 40% shrink, repetition loop), sentence grouping (.?! and 6-cue cap), SRT monotonicity/overlap/text, merge_segments never crossing a finished sentence, fake-TTS convergence, honest failure when the voice ignores the budget, original kept when a candidate drops a number, and L2 report-driven selection (only the failing sentences re-adapted).
+- tests/test_subtitle_pipeline.py — 3 tests, updated.
+- tools/check_dubbing.py --offline → runs all 16 in seconds, no GPU.
+L2 (measure-then-adapt) — built, with a real-run verdict
+- dub.py now writes fit_report.json: segment index, span, measured speech seconds, required tempo.
+- Pipeline re-adapts exactly the failing sentences and retries once.
+- Found and fixed a real cache bug: the checkpoint only checked that the clip file existed, not that the text was unchanged — an edited sentence silently reused its old take. Edited entries are now dropped before the retry.
+Where it stands — the loop runs, but it doesn't converge, because Tower ignores the character budget: asked for 143 chars it returned 183; asked for 41 it returned 48. Second pass went 1.07→1.13, 1.21→1.27. Prompt-only length control isn't enough for true 1.0×; it needs a length-controllable MT or a dedicated compressor, or accept ~1.05–1.10 on a few lines.
+
 ## Known translation issues (Tower, not the pipeline)
 
 - `viskales Gefühl` → should be `viszerales`.
