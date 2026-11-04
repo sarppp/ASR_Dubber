@@ -100,6 +100,40 @@ to `dub.py` (segment index, span, actual speech seconds, required tempo), then:
 
 Two dub passes should converge; the guard stays at 1.0×.
 
+## Testing plan
+
+Here's how I'd test it, cheapest and most decisive first.
+L0 — offline, seconds, no models (extend tests/test_subtitle_pipeline.py)
+- guards: number dropped, negation dropped, 40% shrink, repetition loop → all must reject and keep the original.
+- sentence grouping: every group ends on .?! or hits the 6-cue/30 s cap.
+- SRT integrity: monotonic times, no overlaps, cue text joined == sentence text, no cue > 84 chars.
+- merge_segments never joins across a completed sentence.
+- report: every block has before/after ratio and text.
+L1 — fake TTS, no GPU (the one that would have caught our bug)
+- stub the voice as duration = f(text) with a deliberately pessimistic rate; run gate → adapt → gate.
+- assert: converges within 2 passes, final ratio ≤ 1.0, and the loop stops if it can't.
+- add a stub whose rate varies per sentence by ±20% — that mimics Qwen and would expose the estimate problem immediately.
+L2 — measure-then-adapt loop (what I recommend building next, and testing)
+- dub.py writes fit_report.json with measured speech seconds per segment.
+- test: fake report where 3 of 10 segments need 1.05–1.19×; pipeline re-adapts exactly those, second pass passes, unrelated segments untouched (TTS cache reused).
+L3 — round-trip ASR on the real dub (automatic meaning check, no human)
+- take final_dub.mp4, strip audio, transcribe the German with Ultra again.
+- compare to the adapted SRT: WER, and numbers/names must survive exactly.
+- back-translate that German to English with Tower and compare to the source English (embedding similarity or COMET) — this measures whether adaptation kept the meaning, which is your hard requirement.
+- this is the test that catches "shortened into nonsense", not just "fits the time".
+L4 — timing/onset assertions (cheap, on the wav)
+- for each segment: speech_seconds / span ≤ 1.0, and onset within ±60 ms of the cue start — that's the "cuts the sound at the beginning" bug, measurable with ffmpeg/wave alone.
+- no gap < 0.2 s between segments (choppiness).
+L5 — listening, small and blind
+- 6 clips × 3 versions (Tower plain, adapted, Ling reference) shuffled, rubric 1–5 on meaning / fluency / sync / naturalness.
+- clips chosen for failure modes: a number sentence ("14 years"), a negation, a name ("Douda, CRISPR"), a long compound, fast speech, and one with music (demucs on).
+Practical shape — one harness tools/check_dubbing.py with flags:
+--offline          L0+L1, ~5 s, no GPU
+--clip X --smoke   L2+L3+L4 on a 15 s clip, ~1 min
+--batch dir/       runs the 6-clip matrix, writes metrics.json
+Metrics to keep per sentence: span, measured speech, tempo, chars before/after, WER after round-trip, back-translation similarity. Then regressions become numbers, not impressions.
+My suggestion: implement L0+L1 now (fast, no models), then L2 with the fit_report.json change, since that also fixes the open timing problem. L3 is the one that actually proves "meaning preserved" and is worth doing right after.
+
 ## How to run
 
 ```bash
