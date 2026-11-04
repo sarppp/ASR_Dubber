@@ -164,7 +164,8 @@ def merge_segments(
         #     or sentence is incomplete and hard cap not yet reached
         if (seg["speaker"] == current["speaker"]
                 and 0 <= gap <= gap_sec
-                and (within_soft_cap or (not sentence_done and within_hard_cap))):
+                and not sentence_done
+                and (within_soft_cap or within_hard_cap)):
             current["end"]  = seg["end"]
             current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
             current["subsegments"].append({"start": seg["start"], "end": seg["end"]})

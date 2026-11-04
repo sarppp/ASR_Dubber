@@ -54,6 +54,7 @@ nemo/*
 !nemo/local_sentence_pipeline.py
 !nemo/parakeet_ultra.py
 !nemo/subtitle_combine.py
+!nemo/dub_deepseek_status.md
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock

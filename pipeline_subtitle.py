@@ -46,6 +46,7 @@ from local_mt import (  # noqa: E402
     DUB_MAX_SPEED,
     TTS_CHARS_PER_SECOND,
     OllamaTranslator,
+    group_sentences,
 )
 
 SUBTITLE_PY = NEMO_CODE_DIR / ".venv-local-asr" / "bin" / "python"
@@ -154,104 +155,104 @@ def _rate(language: str) -> float:
                  or TTS_CHARS_PER_SECOND.get(language, 12.0))
 
 
+def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
+    """Sentence groups as cue index ranges, same rules as local_mt."""
+    from local_mt import MAX_SENTENCE_CUES, MAX_SENTENCE_SECONDS
+
+    spans: list[tuple[int, int]] = []
+    begin = 0
+    for index, cue in enumerate(cues):
+        text = (cue.get("text") or "").strip()
+        span = float(cues[index]["end"]) - float(cues[begin]["start"])
+        done = (bool(re.search(r"[.!?]$", text))
+                or index - begin + 1 >= MAX_SENTENCE_CUES
+                or span >= MAX_SENTENCE_SECONDS)
+        if done:
+            spans.append((begin, index))
+            begin = index + 1
+    if begin < len(cues):
+        spans.append((begin, len(cues) - 1))
+    return spans
+
+
 def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
            translator: OllamaTranslator, *,
-           target: float = 1.0, merge_gap: float = 1.0, merge_max_dur: float = 10.0,
-           max_sentences: int | None = None) -> tuple[Path, list[dict]]:
-    """Steps 3-4: gate every block at `target` tempo, adapt only the failures.
+           target: float = 1.0, max_sentences: int | None = None
+           ) -> tuple[Path, list[dict], Path]:
+    """Steps 3-4: gate whole sentences at `target` tempo, adapt the failures.
 
-    Target 1.0 means the voice speaks at its natural pace: the wording has to
-    get shorter, the audio is never sped up.
+    Target 1.0 means the voice speaks at its natural pace: the wording gets
+    shorter, the audio is never sped up. The unit is a complete sentence, which
+    is exactly what the dub synthesises (one cue per sentence).
     """
     cps = _rate(language)
-    target_cues = _parse_srt(srt)
-    source_cues = _parse_srt(source_srt)
-    blocks = _block_cues(target_cues, merge_gap, merge_max_dur)
-    source_blocks = _block_cues(source_cues, merge_gap, merge_max_dur)
+    target_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(srt)]
+    source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
+    groups = _sentence_spans(target_cues)
     if max_sentences:
-        blocks = blocks[:max_sentences]
+        groups = groups[:max_sentences]
 
+    aim = target * 0.92  # the real TTS runs a few percent longer than the estimate
     _banner(f"Step 2/4 — Gate + adaptation ({language}, {cps:.1f} chars/s, "
-            f"target {target:.2f}x)")
-    rows: list[dict] = []
-    out_cues: list[tuple[float, float, str]] = []
-    over_after = []
+            f"target {target:.2f}x, aim {aim:.2f}x)")
 
-    for index, block in enumerate(blocks, 1):
-        start, end = block[0][0], block[-1][1]
+    rows: list[dict] = []
+    spoken: list[tuple[float, float, str]] = []
+    over: list[int] = []
+
+    for number, (first, last) in enumerate(groups, 1):
+        start, end = target_cues[first]["start"], target_cues[last]["end"]
         span = max(0.01, end - start)
-        text = " ".join(t for _, _, t in block).strip()
+        text = " ".join((c["text"] or "").strip() for c in target_cues[first:last + 1]).strip()
+        source_text = " ".join((c["text"] or "").strip()
+                               for c in source_cues[first:last + 1]).strip()
         before = len(text) / cps / span
-        row = {"index": index, "start": round(start, 3), "end": round(end, 3),
+        row = {"index": number, "start": round(start, 3), "end": round(end, 3),
                "span": round(span, 2), "chars_before": len(text),
                "ratio_before": round(before, 2), "text_before": text}
 
-        if before > target:
-            source_text = (" ".join(t for _, _, t in source_blocks[index - 1]).strip()
-                           if index - 1 < len(source_blocks) else text)
-            adapted = text
-            ratio = before
-            # Two bounded passes: the model overshoots on the first try.
+        adapted, ratio = text, before
+        if before > aim:
+            # Re-translate from the source with a budget: asking a translation
+            # model to "rewrite this German" makes it switch language and loop.
             for _attempt in range(2):
-                budget = max(12, int(len(adapted) * (target / ratio) * 0.93))
+                budget = max(12, int(len(adapted) * (aim / ratio) * 0.95))
                 candidate = translator.translate_sentence(
                     source_text, source_language, language, max_chars=budget)
                 candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
-                candidate_ratio = len(candidate) / cps / span if candidate else ratio
-                if candidate and candidate_ratio < ratio and not _preservation_problem(
-                        text, candidate, language):
-                    adapted, ratio = candidate, candidate_ratio
-                if ratio <= target:
+                if not candidate:
                     break
-            adapted = re.sub(r"\s+", " ", adapted).strip().strip('"')
-            problem = _preservation_problem(text, adapted, language) if adapted else "empty"
+                candidate_ratio = len(candidate) / cps / span
+                if candidate_ratio < ratio and not _preservation_problem(text, candidate, language):
+                    adapted, ratio = candidate, candidate_ratio
+                if ratio <= aim:
+                    break
+            problem = _preservation_problem(text, adapted, language)
             if problem:
                 row["kept_original"] = problem
-                print(f"   [{index:02d}] {before:.2f}x  adaptation rejected ({problem}); "
-                      f"keeping the full meaning")
-                adapted = text
-                row.update(chars_after=len(text), text_after=text,
-                           ratio_after=round(before, 2))
+                print(f"   [{number:02d}] {before:.2f}x  adaptation rejected "
+                      f"({problem}); keeping the full meaning")
+                adapted, ratio = text, before
             else:
-                row.update(chars_after=len(adapted), text_after=adapted,
-                           ratio_after=round(len(adapted) / cps / span, 2))
-                print(f"   [{index:02d}] {before:.2f}x -> {len(adapted)} chars "
-                      f"({len(adapted) / cps / span:.2f}x)")
-        else:
-            adapted = text
-            row.update(chars_after=len(text), text_after=text,
-                       ratio_after=round(before, 2))
-            print(f"   [{index:02d}] {before:.2f}x  fits")
+                print(f"   [{number:02d}] {before:.2f}x -> {len(adapted)} chars "
+                      f"({ratio:.2f}x)")
 
-        if row["ratio_after"] > target:
-            over_after.append(row["index"])
-
-        # Put the (possibly shorter) text back on this block's cues by duration.
-        spans = [max(0.01, e - s) for s, e, _ in block]
-        if len(block) == 1:
-            out_cues.append((start, end, adapted))
-            rows.append(row)
-            continue
-        total = sum(spans)
-        words = adapted.split()
-        cursor = 0
-        for position, (cue_start, cue_end, _) in enumerate(block):
-            share = spans[position] / total
-            take = len(words) - cursor if position == len(block) - 1 else max(
-                1, round(len(words) * share))
-            chunk = " ".join(words[cursor:cursor + take])
-            cursor += take
-            if chunk:
-                out_cues.append((cue_start, cue_end, chunk))
+        if ratio > target:
+            over.append(number)
+        row.update(chars_after=len(adapted), text_after=adapted,
+                   ratio_after=round(ratio, 2))
         rows.append(row)
+        spoken.append((start, end, adapted))
 
-    if over_after:
-        print(f"   ⚠️  {len(over_after)} block(s) still above {target:.2f}x after one "
-              f"adaptation pass: {over_after}")
+    if over:
+        print(f"   ⚠️  {len(over)} sentence(s) still above {target:.2f}x: {over}")
 
     adapted_path = srt.with_name(srt.stem + ".adapted.srt")
-    adapted_path.write_text(_render_srt(out_cues), encoding="utf-8-sig")
-    return adapted_path, rows
+    adapted_path.write_text(_render_srt(spoken), encoding="utf-8-sig")
+    dub_path = srt.with_name(srt.stem.replace(".adapted", "") + ".dub.srt")
+    dub_path.write_text(_render_srt(spoken), encoding="utf-8-sig")
+    print(f"   dub script: {len(spoken)} complete sentences -> {dub_path.name}")
+    return adapted_path, rows, dub_path
 
 
 def _stage_video(video: Path, workdir: Path) -> Path:
@@ -409,14 +410,13 @@ def run(args) -> int:
     if target_srt is None:
         sys.exit(f"❌  No {target} subtitle was produced for {video.name}")
 
-    adapted_srt, rows = _adapt(
+    adapted_srt, rows, dub_srt = _adapt(
         target_srt, subtitles[source], source, target, OllamaTranslator(),
-        target=args.fit_target, merge_gap=args.merge_gap,
-        merge_max_dur=args.merge_max_dur, max_sentences=args.max_sentences)
+        target=args.fit_target, max_sentences=args.max_sentences)
     _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
                              nemo_dir / f"{base}.adaptation.md", rows, args.fit_target)
 
-    dub_workdir = _dub(args, video, adapted_srt, base, target)
+    dub_workdir = _dub(args, video, dub_srt, base, target)
 
     _banner("Step 4/4 — Finalize + gather outputs")
     run_label = _derive_run_label(source, target, video=video,
