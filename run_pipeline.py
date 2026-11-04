@@ -312,12 +312,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--translator", default=None,
                    choices=["tower", "gemma", "tower-7b", "canary"],
                    help="subtitle-dubbing translator (default: tower = tower-plus-2b)")
+    p.add_argument("--fit-target", type=float, default=1.0, metavar="X",
+                   help=("subtitle-dubbing tempo budget; 1.0 = natural pace, the wording "
+                         "is shortened instead (default: 1.0)"))
+    p.add_argument("--max-sentences", type=int, default=None, metavar="N",
+                   help="subtitle-dubbing: keep only the first N sentence blocks")
     return p
 
 
 def main():
     p = build_parser()
     args = p.parse_args()
+    if args.pipeline == "subtitle-dubbing":
+        # Cinema-style: the wording is adapted, the voice is never sped up.
+        args.max_speed = 1.0
     if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
         p.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
 

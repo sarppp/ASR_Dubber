@@ -108,7 +108,8 @@ def _slice_chunk(source: wave.Wave_read, cache: Path, start: float, end: float) 
 
 
 def run(plan: list[dict], source_language: str, report: Path,
-        asr_model: str | None = None, translator: str | None = None) -> None:
+        asr_model: str | None = None, translator: str | None = None,
+        fit_budget: bool = True) -> None:
     import torch
     from batch_subtitles import probe_duration, srt_stats
 
@@ -189,6 +190,7 @@ def run(plan: list[dict], source_language: str, report: Path,
             else:
                 rows = translate_cues(
                     cues, source_language, language, translator_client,
+                    fit_budget=fit_budget,
                     progress=lambda n, total, text: print(f"  {video.name} [{language}] "
                                                           f"{n}/{total} {text!r}", flush=True))
             rows_by_language[language] = rows

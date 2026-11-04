@@ -141,7 +141,8 @@ def render_srt(segments: list[dict]) -> bytes:
 
 
 def run_local_jobs(plan: list[dict], source_language: str, report: Path,
-                   asr_model: str | None = None, translator: str | None = None) -> None:
+                   asr_model: str | None = None, translator: str | None = None,
+                   fit_budget: bool = True) -> None:
     """Local backend.
 
     Default: one ASR pass (parakeet-ultra) + whole-sentence translation
@@ -155,7 +156,8 @@ def run_local_jobs(plan: list[dict], source_language: str, report: Path,
     if translator != "canary":
         from local_sentence_pipeline import run as run_sentence_pipeline
 
-        return run_sentence_pipeline(plan, source_language, report, asr_model, translator)
+        return run_sentence_pipeline(plan, source_language, report, asr_model,
+                                     translator, fit_budget=fit_budget)
 
     from batch_subtitles import extract_audio, probe_duration, srt_stats
     import torch

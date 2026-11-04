@@ -16,7 +16,7 @@ def _args(**overrides) -> SimpleNamespace:
         input_file=None, input_dir=None, output_dir=None,
         target_lang="de", language="en", trim=0, whisper_model="base",
         subtitle_languages=None, asr_model=None, translator=None,
-        skip_dub=False, run_mode="full",
+        skip_dub=False, run_mode="full", fit_target=1.0, max_sentences=None,
         tts_engine="supertonic", supertonic_voice="M1", qwen_mode="clone",
         no_demucs=False, max_speed=1.15, min_speed=1.0,
         merge_gap=1.0, merge_max_dur=10.0,
@@ -55,7 +55,12 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
                 (work / f"{stem}{suffix}").write_text("multi", encoding="utf-8")
         return 0
 
+    class _Translator:
+        def adapt_sentence(self, text, language, max_chars):
+            return " ".join(text.split()[:max(1, max_chars // 6)])
+
     monkeypatch.setattr(ps, "_run", fake_run)
+    monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
     monkeypatch.setattr(ps, "_detect_source_language", lambda *a, **k: "en")
     monkeypatch.setattr(ps, "_find_video", lambda **k: video)
     monkeypatch.setattr(ps, "_validate_translated_srt", lambda *a, **k: None)
@@ -69,7 +74,7 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
     dub = calls[1]
     assert "dub.py" in dub[1]
     assert "--language" in dub and dub[dub.index("--language") + 1] == "de"
-    assert dub[dub.index("--language") - 1].endswith("talk.nemo.de.srt")
+    assert dub[dub.index("--language") - 1].endswith("talk.nemo.de.adapted.srt")
 
     # with --input-file the video folder wins, same as the legacy runner
     out = video.parent
@@ -86,16 +91,30 @@ def test_subtitle_command_uses_backend_local_and_selected_models(tmp_path, monke
     nemo_dir.mkdir()
     seen = {}
 
+    class _Translator:
+        def adapt_sentence(self, text, language, max_chars):
+            return text
+
+    monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
+
     def fake_run(cmd, cwd=None, label=None, env=None):
         if "batch_subtitles.py" in cmd[1]:
             seen["cmd"] = [str(c) for c in cmd]
             work = Path(cmd[cmd.index("--input-dir") + 1])
             for lang in ("en", "de"):
-                (work / f"talk.nemo.{lang}.srt").write_text("1\n", encoding="utf-8")
+                (work / f"talk.nemo.{lang}.srt").write_text(
+                    "1\n00:00:00,000 --> 00:00:02,000\n"
+                    + ("Hallo Welt" if lang == "de" else "Hello world") + "\n",
+                    encoding="utf-8")
             (work / "talk.multi.srt").write_text("m", encoding="utf-8")
         return 0
 
+    class _Translator:
+        def adapt_sentence(self, text, language, max_chars):
+            return " ".join(text.split()[:max(1, max_chars // 6)])
+
     monkeypatch.setattr(ps, "_run", fake_run)
+    monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
     monkeypatch.setattr(ps, "_detect_source_language", lambda *a, **k: "en")
     monkeypatch.setattr(ps, "_find_video", lambda **k: video)
     monkeypatch.setattr(ps, "_validate_translated_srt", lambda *a, **k: None)

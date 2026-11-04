@@ -130,16 +130,37 @@ class OllamaTranslator:
         text = clean_output(payload.get("response") or "")
         return text.split("\n\n")[0].strip().strip('"').strip()
 
-    def translate_sentence(self, text: str, source: str, target: str) -> str:
+    def translate_sentence(self, text: str, source: str, target: str,
+                           max_chars: int | None = None) -> str:
         prompt = (
             f"You are a professional subtitle translator from "
             f"{LANG_NAMES.get(source, source)} ({source}) to "
             f"{LANG_NAMES.get(target, target)} ({target}).\n\n"
             f"Translate this complete sentence. Keep names, numbers, negation and "
-            f"facts. Do not add commentary. Answer with the translation only, on one line.\n\n"
-            f"{text}"
+            f"facts. Do not add commentary. Answer with the translation only, on one line."
         )
-        return self.generate(prompt)
+        if max_chars:
+            prompt += (f"\nThe translation must be spoken aloud in the same time as the "
+                       f"original, so use at most about {max_chars} characters. Keep every "
+                       f"fact; compress the wording, never drop information.")
+        return self.generate(prompt + f"\n\n{text}")
+
+    def adapt_sentence(self, text: str, language: str, max_chars: int) -> str:
+        """Compress an already translated line into a hard character budget.
+
+        Cinema-style adaptation: same facts, shorter wording. It must not add
+        information and must not drop a verb, number or negation.
+        """
+        prompt = (
+            f"You are a dubbing adapter for {LANG_NAMES.get(language, language)} "
+            f"({language}).\n\n"
+            f"Rewrite the line below so it can be spoken at a natural pace inside its "
+            f"subtitle timing. Use at most {max_chars} characters.\n"
+            f"Rules: keep every fact, name, number and negation; never invent content; "
+            f"remove filler words and redundant clauses; prefer shorter verbs and "
+            f"contractions. Answer with the rewritten line only, one line, no quotes."
+        )
+        return self.generate(prompt + f"\n\n{text}", num_predict=300)
 
     def unload(self) -> None:
         body = {"model": self.model, "keep_alive": 0}
@@ -153,9 +174,24 @@ class OllamaTranslator:
             pass
 
 
+# Measured with supertonic M1 on the review clips: characters of subtitles the
+# voice speaks per second. Used to give the translator a duration budget.
+TTS_CHARS_PER_SECOND = {"de": 11.6, "fr": 12.3, "en": 13.5}
+DEFAULT_CHARS_PER_SECOND = 12.0
+DUB_MAX_SPEED = 1.15
+EDGE_CLEANUP = 0.97
+
+
+def speech_budget(span: float, language: str) -> int:
+    """Characters that fit `span` seconds once the dub may speed up to 1.15x."""
+    cps = float(os.getenv("SUBTITLE_TTS_CPS") or TTS_CHARS_PER_SECOND.get(
+        language, DEFAULT_CHARS_PER_SECOND))
+    return max(20, int(span * cps * DUB_MAX_SPEED * EDGE_CLEANUP * 0.95))
+
+
 def translate_cues(cues: list[dict], source: str, target: str,
                    translator: OllamaTranslator | None = None,
-                   progress=None) -> list[dict]:
+                   progress=None, fit_budget: bool = True) -> list[dict]:
     """Translate cue-level subtitles sentence-by-sentence. Returns new cues.
 
     Each sentence is translated whole and then cut back onto its cues, so the
@@ -169,7 +205,11 @@ def translate_cues(cues: list[dict], source: str, target: str,
         if not sentence:
             out.extend(group)
             continue
-        translated = translator.translate_sentence(sentence, source, target)
+        budget = None
+        if fit_budget:
+            span = float(group[-1].get("end", 0.0)) - float(group[0].get("start", 0.0))
+            budget = speech_budget(span, target)
+        translated = translator.translate_sentence(sentence, source, target, max_chars=budget)
         weights = [max(1, len((c.get("text") or "").strip())) for c in group]
         pieces = split_translation(translated, weights) if translated else None
         if pieces is None:

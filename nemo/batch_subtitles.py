@@ -181,6 +181,10 @@ def main() -> None:
     parser.add_argument("--asr-model", default=None,
                         help="Local ASR model (default: parakeet-ultra). "
                              "Also: canary, parakeet-v3, parakeet-v2, qwen3-asr")
+    parser.add_argument("--no-fit-budget", action="store_true",
+                        help="Do not give the translator a duration budget. By default "
+                             "each sentence is limited to what the dub can speak inside "
+                             "its cue timing at 1.15x.")
     parser.add_argument("--translator", default=None,
                         choices=["tower", "gemma", "tower-7b", "canary"],
                         help="Local translator (default: tower = tower-plus-2b). "
@@ -209,7 +213,8 @@ def main() -> None:
         if args.backend == "local":
             from local_subtitles import run_local_jobs
             run_local_jobs(plan, args.source_language, report,
-                           asr_model=args.asr_model, translator=args.translator)
+                           asr_model=args.asr_model, translator=args.translator,
+                           fit_budget=not args.no_fit_budget)
         else:
             import modal
             os.environ["NEMO_GPU"] = args.gpu

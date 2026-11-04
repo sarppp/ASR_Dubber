@@ -101,6 +101,14 @@ uv run python run_pipeline.py --target-lang fr            # default
 uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
 ```
 
+Subtitle-dubbing inserts a gate + adaptation pass before the dub, because German
+spoken at a natural pace needs ~1.2x the English slot: `--fit-target 1.0` (the
+default) forbids speeding the voice up, so failing blocks are re-translated from
+the source with a character budget until they fit. `--max-sentences N` limits a
+run to the first N sentence blocks. Use `--tts-engine qwen` for the cloned
+voice; `supertonic` enforces the same 1.0x rule but its lower speech rate leaves
+more blocks over budget.
+
 ## Legacy Canary path
 
 `--translator canary` restores the old behaviour: Canary translates the audio

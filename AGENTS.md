@@ -56,10 +56,20 @@ deleted.
 
 - **`--pipeline subtitle-dubbing` (default)**: generates the subtitles with the
   flow above (`pipeline_subtitle.py` → `batch_subtitles.py --backend local`),
-  then hands the target-language SRT to `qwen3-tts/dub.py`. The target comes
-  from `--target-lang` as always; `--tts-engine`, voices, speeds and merge
-  flags are unchanged. Subtitle languages default to source + target;
+  runs the step 3 gate + step 4 adaptation, then hands the adapted
+  target-language SRT to `qwen3-tts/dub.py`. The target comes from
+  `--target-lang` as always; `--tts-engine`, voices, speeds and merge flags are
+  unchanged. Subtitle languages default to source + target;
   `--subtitle-languages` overrides that (the target is always kept).
+
+  Natural pace is the goal: `--fit-target 1.0` means the dub may not speed the
+  voice up at all, so the **wording** is shortened (cinema-style adaptation)
+  instead. The adapter re-translates from the source English with a character
+  budget derived from the cue span; it never rewrites the German in place (a
+  translation model asked to "rewrite this" can switch language). Two bounded
+  passes per block, and every adaptation is rejected if it drops a number, a
+  negation, gets suspiciously short or starts repeating. `--max-sentences N`
+  limits a run to the first N sentence blocks.
 - **`--pipeline legacy-dubbing`**: the previous NeMo → Canary/Gemma path,
   unchanged. Keep it working, but do not make it the default again.
 
