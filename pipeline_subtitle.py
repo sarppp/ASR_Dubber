@@ -212,6 +212,7 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
                "ratio_before": round(before, 2), "text_before": text}
 
         adapted, ratio = text, before
+        rejected_reason = None
         if before > aim:
             # Re-translate from the source with a budget: asking a translation
             # model to "rewrite this German" makes it switch language and loop.
@@ -223,11 +224,15 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
                 if not candidate:
                     break
                 candidate_ratio = len(candidate) / cps / span
-                if candidate_ratio < ratio and not _preservation_problem(text, candidate, language):
+                problem = _preservation_problem(text, candidate, language)
+                if problem:
+                    rejected_reason = rejected_reason or problem
+                elif candidate_ratio < ratio:
                     adapted, ratio = candidate, candidate_ratio
                 if ratio <= aim:
                     break
-            problem = _preservation_problem(text, adapted, language)
+            problem = (None if adapted != text
+                       else rejected_reason or _preservation_problem(text, adapted, language))
             if problem:
                 row["kept_original"] = problem
                 print(f"   [{number:02d}] {before:.2f}x  adaptation rejected "
