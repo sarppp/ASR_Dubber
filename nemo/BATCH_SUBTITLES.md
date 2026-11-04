@@ -64,14 +64,20 @@ existing target subtitle, or other model output is placed in the prompt.
 
 ## Requirements
 
-- **Ultra** needs torch >= 2.8, while `.venv-local-asr` pins torch 2.6.0+cu124.
-  The loader therefore uses the local Docker image `ultra-asr:local`
-  (pytorch 2.8.0-cuda12.8 + moondream) and only runs in-process when `moondream`
-  is importable. Build it from `new_guys/crispr/ultra_trial/Dockerfile`; the
-  model lives in the `ultra_hf` volume.
+- **Ultra** runs in-process in `.venv-local-asr` (torch 2.8.0+cu128 + `moondream`
+  2.6.1). Its weights are taken from the local Hugging Face cache
+  (`~/.cache/huggingface/hub/models--moondream--parakeet-ultra`); no download and
+  no network call happens at run time. The `ultra-asr:local` Docker image (built
+  from `new_guys/crispr/ultra_trial/Dockerfile`, weights in the `ultra_hf`
+  volume) is only a fallback for environments where `moondream` is not
+  importable. Photon's usage telemetry is stubbed off by
+  `parakeet_ultra._offline_moondream()`.
 - **Tower** needs the Ollama container with `tower-plus-2b:latest` registered
   (`translate-gemma/setup_tower.sh`, `translate-gemma/Modelfile.tower-plus-2b`).
   One model loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`), `OLLAMA_KEEP_ALIVE=0`.
+- The NeMo cache is resolved from `$NEMO_CACHE_DIR`, `$TORCH_HOME` or `$HOME`
+  (it used to be hardcoded to `/root/.cache/torch/NeMo`, which broke non-root
+  runs).
 - GPU access is required. The local backend does not upload media and does not
   invoke Modal.
 

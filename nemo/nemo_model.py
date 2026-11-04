@@ -9,6 +9,7 @@ instead of the local nemo.py file.
 import gc
 import importlib
 import logging
+import os
 import shutil
 import sys
 import time
@@ -202,9 +203,24 @@ def _disable_cuda_graphs_in_decoder(model) -> None:
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
+def _nemo_cache_base() -> Path:
+    """NeMo's HF-hub cache root, resolved for the current user.
+
+    Hardcoding /root broke every non-root run: torch then failed to create its
+    cache and NeMo fell back to a slow CPU load.
+    """
+    override = os.getenv("NEMO_CACHE_DIR")
+    if override:
+        return Path(override).expanduser()
+    torch_home = os.getenv("TORCH_HOME")
+    if torch_home:
+        return Path(torch_home).expanduser() / "NeMo"
+    return Path.home() / ".cache" / "torch" / "NeMo"
+
+
 def _clear_nemo_cache(model_name: str) -> bool:
     """Delete the NeMo HF-hub cache for model_name so it re-downloads cleanly."""
-    base = Path("/root/.cache/torch/NeMo")
+    base = _nemo_cache_base()
     if not base.exists():
         return False
     # model_name is e.g. "nvidia/canary-qwen-2.5b" → org="nvidia", slug="canary-qwen-2.5b"

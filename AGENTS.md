@@ -32,10 +32,14 @@ Model rules for this pipeline:
 - Keep `--translator canary` (old in-pass Canary translation) and
   `--translator gemma` (TranslateGemma) selectable, but do not make them the
   default again without being asked.
-- The pipeline is local by design: local GPU, `ultra-asr:local` Docker image for
-  Ultra, Ollama container for MT. It is an explicit exception to the
-  Modal-for-everything rule; do not move its media or models to Modal unless the
-  user asks.
+- The pipeline is local by design: local GPU, `.venv-local-asr` (torch 2.8 +
+  `moondream`) for Parakeet Ultra, Ollama for MT. The `ultra-asr:local` Docker
+  image is only a fallback when `moondream` is not importable. It is an explicit
+  exception to the Modal-for-everything rule; do not move its media or models to
+  Modal unless the user asks.
+- Nothing in this pipeline may talk to a vendor API. moondream/kestrel posts
+  usage telemetry to `api.moondream.ai`; `parakeet_ultra._offline_moondream()`
+  stubs it out and that must stay in place.
 - Never copy old outputs into a review folder. Regenerate and ship only the
   fresh files, so a stale file cannot be mistaken for a new result.
 

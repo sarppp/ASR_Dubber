@@ -200,7 +200,7 @@ selectable but are not defaults. Details and known limits:
 ### Supported ASR Models & Auto-Selection
 
 The pipeline automatically selects the best ASR model based on the source language:
-* **Parakeet Ultra** (`moondream/parakeet-ultra`): the default for subtitle generation (see above). Needs torch >= 2.8, so it runs through the local `ultra-asr:local` Docker image.
+* **Parakeet Ultra** (`moondream/parakeet-ultra`): the default for subtitle generation (see above). Runs in-process in `.venv-local-asr` (torch 2.8.0+cu128 + moondream); the `ultra-asr:local` Docker image is only a fallback.
 * **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for all languages in local execution of `run_pipeline.py`. Extremely fast with word-level timestamps.
 * **Parakeet v2** (`nvidia/parakeet-tdt-0.6b-v2`): English-only alternative to v3. Available if preferred via `--nemo-model parakeet-v2`.
 * **Qwen3-ASR 1.7B** (`Qwen/Qwen3-ASR-1.7B`): The default model for non-EN languages in Docker/remote execution (overridden via `NEMO_MODEL_MULTI=qwen3-asr`). Supports 30+ languages with higher accuracy than Parakeet for non-English content.

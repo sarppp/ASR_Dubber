@@ -44,11 +44,20 @@ def resolve_mt_model(translator: str | None) -> str:
     return MT_MODELS.get(translator, translator)
 
 
+def resolve_asr_model(model_name: str | None) -> str:
+    """Map a short name (``parakeet-v3``) to the HF id the loaders expect."""
+    from nemo_audio import ASR_MODELS
+
+    if not model_name:
+        return DEFAULT_ASR_MODEL
+    return ASR_MODELS.get(model_name.lower(), model_name)
+
+
 def load_asr(model_name: str):
-    """Load any supported ASR model. Returns (model, loader_kind)."""
+    """Load any supported ASR model."""
     from nemo_model import _load_model
 
-    return _load_model(model_name, precision="fp32", device="cuda")
+    return _load_model(resolve_asr_model(model_name), precision="fp32", device="cuda")
 
 
 def transcribe_chunk(model, model_name: str, audio: Path, source_language: str) -> list[dict]:
@@ -103,7 +112,7 @@ def run(plan: list[dict], source_language: str, report: Path,
     import torch
     from batch_subtitles import probe_duration, srt_stats
 
-    asr_model = asr_model or DEFAULT_ASR_MODEL
+    asr_model = resolve_asr_model(asr_model)
     mt_model = resolve_mt_model(translator)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")

@@ -1,19 +1,21 @@
 """Parakeet Ultra support (moondream/parakeet-ultra).
 
 Ultra is a transformers/kestrel model, not a NeMo one, so it cannot be loaded
-by the NeMo code path. It also needs torch >= 2.8 while the NeMo environment
-pins 2.6, so loading it in-process is not always possible.
+by the NeMo code path. It needs torch >= 2.8; `.venv-local-asr` now runs torch
+2.8.0+cu128, so in-process loading is the normal path.
 
 Two execution paths, chosen automatically:
 
-  1. in-process, when `moondream` is importable (e.g. inside the ultra-asr
-     container);
+  1. in-process, when `moondream` is importable (the installed environment);
   2. otherwise, by running the transcription inside the local Docker image
      (`ultra-asr:local`, built from ultra_trial/Dockerfile). Still fully local,
      no network, no API.
 
 Either way the model returns word-level timestamps, so the existing
 `_words_to_segs` cutter produces subtitle-sized cues.
+
+Photon posts usage telemetry to api.moondream.ai; `_offline_moondream()` stubs
+the reporter so the pipeline never contacts a vendor endpoint.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ from pathlib import Path
 log = logging.getLogger("parakeet_ultra")
 
 ULTRA_ALIASES = {"parakeet-ultra", "parakeet_ultra", "moondream/parakeet-ultra"}
+ULTRA_MODEL_ID = "moondream/parakeet-ultra"
 DOCKER_IMAGE = os.getenv("ULTRA_DOCKER_IMAGE", "ultra-asr:local")
 HF_VOLUME = os.getenv("ULTRA_HF_VOLUME", "ultra_hf")
 
@@ -39,10 +42,40 @@ def _is_parakeet_ultra(model_name: str) -> bool:
 
 def _moondream_available() -> bool:
     try:
+        _offline_moondream()
         import moondream  # noqa: F401
         return True
     except Exception:
         return False
+
+
+def _offline_moondream() -> None:
+    """Keep Photon off the network.
+
+    moondream/kestrel posts usage telemetry to api.moondream.ai; the base URL is
+    whitelisted so an env override is ignored. Inference is fully local and the
+    weights come from the local HF cache, so the upload is disabled after import
+    by stubbing the reporter's flush loop and startup validation.
+    """
+    try:
+        from kestrel import photon as _photon
+    except Exception:  # moondream not installed: Docker path handles it
+        return
+
+    async def _no_op_loop(self) -> None:
+        return None
+
+    async def _no_op_flush(self, *, rotate: bool = True):
+        return None
+
+    async def _no_op_validate(self) -> bool:
+        return False
+
+    reporter = _photon.PhotonReporter
+    reporter._telemetry_loop = _no_op_loop
+    reporter._flush_window = _no_op_flush
+    reporter.validate_api_key = _no_op_validate
+
 
 
 class UltraDockerModel:
@@ -90,8 +123,11 @@ class UltraInProcessModel:
     """Keeps one Photon session open for repeated chunk calls."""
 
     def __init__(self, model_id: str):
+        _offline_moondream()
         import moondream as md
 
+        # Callers may use the pipeline alias; Photon needs the full HF id.
+        model_id = ULTRA_MODEL_ID if _is_parakeet_ultra(model_id) else model_id
         self.model_id = model_id
         self._ctx = md.photon(model_id)
         self._speech = self._ctx.__enter__()
@@ -169,9 +205,10 @@ def _main() -> None:
     parser = argparse.ArgumentParser(description="Transcribe with Parakeet Ultra")
     parser.add_argument("--audio", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--model", default="moondream/parakeet-ultra")
+    parser.add_argument("--model", default=ULTRA_MODEL_ID)
     args = parser.parse_args()
 
+    _offline_moondream()
     import moondream as md
 
     with md.photon(args.model) as speech:
