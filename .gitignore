@@ -86,6 +86,16 @@ translate-gemma/*
 !translate-gemma/pyproject.toml
 !translate-gemma/uv.lock
 
+# crispr auto_trial: keep the step code and its README, never the media/artifacts
+!nemo/new_guys/
+nemo/new_guys/*
+!nemo/new_guys/crispr/
+nemo/new_guys/crispr/*
+!nemo/new_guys/crispr/auto_trial/
+nemo/new_guys/crispr/auto_trial/*
+!nemo/new_guys/crispr/auto_trial/steps.py
+!nemo/new_guys/crispr/auto_trial/README.md
+
 # Whisper
 whisper/*
 !whisper/detect_language.py
