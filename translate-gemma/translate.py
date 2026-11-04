@@ -4,7 +4,8 @@
 --source-lang / --src — source language code (default: SOURCE_LANG_CODE env or en).
 --target-lang / --tgt — target language code (default: TARGET_LANG_CODE env or fr).
 --chunk-size — subtitles per request (default: CHUNK_SIZE env or 10).
---model — Ollama model name (default: TRANSLATE_MODEL env or translategemma:4b).
+--model — Ollama model name (default: TRANSLATE_MODEL env or tower-plus-2b:latest).
+           Use translategemma:4b to run the Gemma translator instead.
 --ollama-host — base URL of the Ollama server (default: OLLAMA_HOST env or http://127.0.0.1:11434).
 --ollama-bin — executable used when starting Ollama natively (default: OLLAMA_BIN env or ollama).
 --ollama-docker-image — Docker image for auto-start (default: OLLAMA_DOCKER_IMAGE env or ollama/ollama).
@@ -13,6 +14,7 @@
 --no-auto-ollama — skip auto-start; require Ollama to be running already.
 
 uv run python translate.py --input "Que pouvons-nous encore manger.srt" --source-lang fr --target-lang de
+uv run python translate.py -i film.srt --source-lang en --target-lang de --model translategemma:4b
 
 """
 
@@ -31,6 +33,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from ollama import Client
+
+from translate_utils import DEFAULT_MODEL, generate as _generate
 
 
 def _get_vram_mib() -> int | None:
@@ -221,8 +225,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=os.getenv("TRANSLATE_MODEL", "translategemma:4b"),
-        help="Ollama model name (default: translategemma:4b)",
+        default=os.getenv("TRANSLATE_MODEL", DEFAULT_MODEL),
+        help=f"Ollama model name (default: {DEFAULT_MODEL}; "
+             f"use translategemma:4b for the Gemma translator)",
     )
     parser.add_argument(
         "--ollama-host",
@@ -441,16 +446,10 @@ def translate_chunk(chunk_subs, client: Client, model_name: str, src_lang: str, 
     print(f"Sending {len(chunk_subs)} lines to {model_name} ({src_lang} -> {tgt_lang})...")
 
     try:
-        response = client.generate(
-            model=model_name,
-            prompt=prompt,
-            options={
-                "temperature": 0.1,
-                "num_ctx": 2048, 
-            },
+        raw_output = _generate(
+            client, model_name, prompt,
+            {"temperature": 0.1, "num_ctx": 2048},
         )
-
-        raw_output = response["response"].replace("<|endoftext|>", "").strip()
         results = {}
         
         # Bulletproof parser looking for [1], 1., or <1> at the start of lines

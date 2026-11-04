@@ -21,8 +21,85 @@ LANG_MAP = {
     'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese',
 }
 
-MODEL_NAME   = os.getenv("TRANSLATE_MODEL", "translategemma:4b")
+# Tower-Plus-2B is the default translator. TranslateGemma stays available as
+# an opt-in alternative: TRANSLATE_MODEL=translategemma:4b (or --model).
+DEFAULT_MODEL = "tower-plus-2b:latest"
+MODEL_NAME   = os.getenv("TRANSLATE_MODEL", DEFAULT_MODEL)
 CHUNK_SIZE   = int(os.getenv("CHUNK_SIZE", 15))
+
+# ── Model families ────────────────────────────────────────────────────────────
+# Both Tower-Plus and TranslateGemma are Gemma-architecture models whose GGUF
+# ships without a chat template (Ollama falls back to `{{ .Prompt }}`), so the
+# turn markers have to be added by hand. Without them the model just continues
+# the raw text instead of translating it.
+_GEMMA_TURN = "<bos><start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n"
+_GEMMA_STOP = ["<end_of_turn>", "<eos>"]
+
+MODEL_FAMILIES = {
+    "tower":         {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
+    "translategemma": {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
+    "gemma":         {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
+}
+
+
+def model_family(model_name: str) -> dict | None:
+    """Return the prompt spec for a model name, or None for template-free models."""
+    base = (model_name or "").split(":")[0].lower()
+    for key, spec in MODEL_FAMILIES.items():
+        if key in base:
+            return spec
+    return None
+
+
+def apply_chat_template(prompt: str, model_name: str) -> str:
+    family = model_family(model_name)
+    return prompt if family is None else family["template"].format(prompt=prompt)
+
+
+def clean_output(text: str) -> str:
+    """Strip control tokens and template remnants a GGUF may leak."""
+    text = text or ""
+    for marker in ("<|endoftext|>", "<end_of_turn>", "<bos>", "<eos>"):
+        text = text.replace(marker, "")
+    text = re.sub(r"<[^>]{1,60}>", "", text)
+    return text.strip()
+
+
+def generate(client: Client, model_name: str, prompt: str, options: dict) -> str:
+    """Single Ollama call with the model family's template and stop tokens."""
+    family = model_family(model_name) or {}
+    opts = dict(options)
+    if family.get("stop"):
+        opts["stop"] = family["stop"]
+    response = client.generate(
+        model=model_name,
+        prompt=apply_chat_template(prompt, model_name),
+        options=opts,
+    )
+    return clean_output(response["response"])
+
+
+def split_sentence_translation(text: str, weights: list[int]) -> list[str] | None:
+    """Cut a sentence translation onto its source fragments by character weight.
+
+    Same rule the Ling pipeline uses: each fragment gets a share of the words
+    proportional to its share of the source characters. Returns None when the
+    translation has fewer words than fragments (caller then falls back).
+    """
+    words = text.split()
+    if not words or len(words) < len(weights):
+        return None
+    total = sum(weights)
+    pieces, prev, cumulative = [], 0, 0.0
+    for index, weight in enumerate(weights):
+        cumulative += weight
+        target = round(len(words) * cumulative / total)
+        low = prev + 1
+        high = len(words) - (len(weights) - index - 1)
+        boundary = min(max(target, low), high)
+        pieces.append(" ".join(words[prev:boundary]))
+        prev = boundary
+    return pieces
 
 # ── Regex ─────────────────────────────────────────────────────────────────────
 # Handles ALL common model output formats:
@@ -261,12 +338,8 @@ def translate_chunk_sentences(chunk_subs, src_code: str, tgt_code: str,
               f"({total_dur:.1f}s) to {MODEL_NAME} ({src_code}->{tgt_code})...", flush=True)
 
         try:
-            response = client.generate(
-                model=MODEL_NAME,
-                prompt=prompt,
-                options={"temperature": 0.1, "num_ctx": 4096},
-            )
-            raw = response['response'].replace('<|endoftext|>', '').strip()
+            raw = generate(client, MODEL_NAME, prompt,
+                           {"temperature": 0.1, "num_ctx": 4096})
             for line in raw.split("\n"):
                 line = line.strip()
                 if not line:
@@ -290,8 +363,75 @@ def translate_chunk_sentences(chunk_subs, src_code: str, tgt_code: str,
 
 
 def _translate_single_group(group: list, src_code: str, tgt_code: str,
-                              client: Client) -> dict[int, str]:
-    """Translate one pre-formed sentence group. Returns {index: translated_text}."""
+                            client: Client, model_name: str | None = None) -> dict[int, str]:
+    """Translate one sentence whole, then cut it back onto its fragments.
+
+    This is the flow validated against Ling: the model sees one complete
+    sentence (never a fragment), and the cue boundaries are produced
+    deterministically by split_sentence_translation. Asking a small model to
+    return N pre-split lines makes it invent line breaks and drop lines.
+    """
+    model_name = model_name or MODEL_NAME
+    src_name = LANG_MAP.get(src_code, src_code)
+    tgt_name = LANG_MAP.get(tgt_code, tgt_code)
+
+    speaker_map: dict[int, str] = {}
+    contents: list[str] = []
+    for sub in group:
+        match = re.match(r'(\[Speaker\s+\d+\])\s*(.*)', sub.text or "", re.DOTALL)
+        if match:
+            speaker_map[sub.index] = match.group(1)
+            content = match.group(2)
+        else:
+            speaker_map[sub.index] = ""
+            content = sub.text or ""
+        contents.append(content.replace('\n', ' ').replace('|', ' ').strip())
+
+    sentence = " ".join(c for c in contents if c).strip()
+    if not sentence:
+        return {}
+
+    total_dur = (group[-1].end.ordinal - group[0].start.ordinal) / 1000.0
+    prompt = (
+        f"You are a professional subtitle translator from {src_name} ({src_code}) "
+        f"to {tgt_name} ({tgt_code}).\n\n"
+        f"Translate this complete sentence. Keep names, numbers, negation and facts. "
+        f"Do not add commentary. Answer with the translation only, on one line.\n\n"
+        f"{sentence}"
+    )
+
+    print(f"Sending sentence [{group[0].index}–{group[-1].index}] "
+          f"({total_dur:.1f}s) to {model_name} ({src_code}->{tgt_code})...", flush=True)
+
+    try:
+        translated = generate(client, model_name, prompt,
+                              {"temperature": 0.1, "num_ctx": 4096})
+    except Exception as exc:
+        print(f"\n💥 OLLAMA ERROR: {exc}")
+        translated = ""
+
+    translated = re.sub(r'^\s*\[?\d+[\].:\-]\s*', '', translated).strip().strip('"').strip()
+    if not translated:
+        print(f"   ⚠️  Empty translation for [{group[0].index}–{group[-1].index}]")
+        return _translate_group_lines(group, src_code, tgt_code, client, model_name)
+
+    pieces = split_sentence_translation(translated, [max(1, len(c)) for c in contents])
+    if pieces is None:
+        print(f"   ⚠️  Translation shorter than {len(group)} fragments — "
+              f"falling back to line-by-line")
+        return _translate_group_lines(group, src_code, tgt_code, client, model_name)
+
+    results: dict[int, str] = {}
+    for sub, piece in zip(group, pieces):
+        tag = speaker_map.get(sub.index, "")
+        results[sub.index] = f"{tag} {piece}".strip() if tag else piece
+    return results
+
+
+def _translate_group_lines(group: list, src_code: str, tgt_code: str,
+                           client: Client, model_name: str | None = None) -> dict[int, str]:
+    """Fallback: ask the model for N [index]-prefixed lines. Returns {index: text}."""
+    model_name = model_name or MODEL_NAME
     total_dur = (group[-1].end.ordinal - group[0].start.ordinal) / 1000.0
     n = len(group)
     src_name = LANG_MAP.get(src_code, src_code)
@@ -335,15 +475,11 @@ def _translate_single_group(group: list, src_code: str, tgt_code: str,
         )
 
     print(f"Sending {n} line(s) [{group[0].index}–{group[-1].index}] "
-          f"({total_dur:.1f}s) to {MODEL_NAME} ({src_code}->{tgt_code})...", flush=True)
+          f"({total_dur:.1f}s) to {model_name} ({src_code}->{tgt_code})...", flush=True)
 
     try:
-        response = client.generate(
-            model=MODEL_NAME,
-            prompt=prompt,
-            options={"temperature": 0.1, "num_ctx": 4096},
-        )
-        raw = response['response'].replace('<|endoftext|>', '').strip()
+        raw = generate(client, model_name, prompt,
+                       {"temperature": 0.1, "num_ctx": 4096})
         results: dict[int, str] = {}
         for line in raw.split("\n"):
             line = line.strip()
@@ -384,7 +520,8 @@ def _translate_single_group(group: list, src_code: str, tgt_code: str,
 
 
 def translate_group_with_retry(group: list, src_code: str, tgt_code: str,
-                                client: Client, retries: int = 3) -> dict[int, str]:
+                                client: Client, retries: int = 3,
+                                model_name: str | None = None) -> dict[int, str]:
     """
     Translate a pre-formed sentence group with retry.
 
@@ -396,7 +533,7 @@ def translate_group_with_retry(group: list, src_code: str, tgt_code: str,
     best: dict[int, str] = {}
 
     for attempt in range(1, retries + 1):
-        result = _translate_single_group(group, src_code, tgt_code, client)
+        result = _translate_single_group(group, src_code, tgt_code, client, model_name)
         best.update(result)
         missing = sorted(expected - best.keys())
         if not missing:

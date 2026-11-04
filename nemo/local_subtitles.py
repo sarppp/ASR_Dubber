@@ -1,4 +1,10 @@
-"""Sequential Canary inference for small local GPUs, with chunk checkpoints."""
+"""Sequential local inference for small local GPUs, with chunk checkpoints.
+
+Default backend: one ASR pass (parakeet-ultra) plus whole-sentence translation
+(tower-plus-2b) via ``local_sentence_pipeline``, ending in the combined
+multi-language SRT/ASS. The legacy Canary in-pass translation path is still here
+and is selected with ``translator="canary"``.
+"""
 
 from __future__ import annotations
 
@@ -134,7 +140,23 @@ def render_srt(segments: list[dict]) -> bytes:
     return "\n".join(blocks).encode("utf-8")
 
 
-def run_local_jobs(plan: list[dict], source_language: str, report: Path) -> None:
+def run_local_jobs(plan: list[dict], source_language: str, report: Path,
+                   asr_model: str | None = None, translator: str | None = None) -> None:
+    """Local backend.
+
+    Default: one ASR pass (parakeet-ultra) + whole-sentence translation
+    (tower-plus-2b), then a combined multi-language SRT/ASS.
+
+    Pass translator="canary" for the old behaviour: Canary translating the
+    audio directly, one SRT per language, no combined file.
+    """
+    asr_model = asr_model or os.getenv("ASR_MODEL", "parakeet-ultra")
+    translator = translator or os.getenv("TRANSLATOR", "tower")
+    if translator != "canary":
+        from local_sentence_pipeline import run as run_sentence_pipeline
+
+        return run_sentence_pipeline(plan, source_language, report, asr_model, translator)
+
     from batch_subtitles import extract_audio, probe_duration, srt_stats
     import torch
 

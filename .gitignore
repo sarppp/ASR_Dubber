@@ -49,6 +49,10 @@ nemo/*
 !nemo/nemo_model.py
 !nemo/nemo_audio.py
 !nemo/qwen3_asr.py
+!nemo/local_mt.py
+!nemo/local_sentence_pipeline.py
+!nemo/parakeet_ultra.py
+!nemo/subtitle_combine.py
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock
@@ -74,6 +78,9 @@ translate-gemma/*
 !translate-gemma/translate.py
 !translate-gemma/translate_diarize.py
 !translate-gemma/translate_utils.py
+!translate-gemma/Modelfile.tower-plus-2b
+!translate-gemma/setup_tower.sh
+!translate-gemma/test_tower_flow.py
 !translate-gemma/.python-version
 !translate-gemma/pyproject.toml
 !translate-gemma/uv.lock

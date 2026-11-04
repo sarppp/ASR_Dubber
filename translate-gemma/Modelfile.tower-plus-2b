@@ -1,0 +1,16 @@
+FROM ./Tower-Plus-2B.Q4_K_M.gguf
+
+# Tower-Plus-2B ships without a chat template, so Ollama would send the raw
+# prompt and the model would continue the text instead of translating.
+# translate_utils.apply_chat_template() also adds these markers; keeping them
+# here makes the model correct for any other Ollama client too.
+TEMPLATE """<bos><start_of_turn>user
+{{ .Prompt }}<end_of_turn>
+<start_of_turn>model
+"""
+
+PARAMETER stop "<end_of_turn>"
+PARAMETER stop "<eos>"
+PARAMETER temperature 0.1
+PARAMETER top_p 0.9
+PARAMETER num_ctx 4096

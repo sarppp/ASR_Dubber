@@ -178,6 +178,13 @@ def main() -> None:
     parser.add_argument("--jobs", type=int, default=2, help="Maximum simultaneous Modal GPU calls (default: 2)")
     parser.add_argument("--gpu", choices=["T4", "A10G", "A100", "L4"], default="T4", help="Modal GPU type (default: T4)")
     parser.add_argument("--dry-run", action="store_true", help="List planned outputs without contacting Modal")
+    parser.add_argument("--asr-model", default=None,
+                        help="Local ASR model (default: parakeet-ultra). "
+                             "Also: canary, parakeet-v3, parakeet-v2, qwen3-asr")
+    parser.add_argument("--translator", default=None,
+                        choices=["tower", "gemma", "tower-7b", "canary"],
+                        help="Local translator (default: tower = tower-plus-2b). "
+                             "gemma = translategemma:4b, canary = old in-pass translation")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
@@ -201,7 +208,8 @@ def main() -> None:
     try:
         if args.backend == "local":
             from local_subtitles import run_local_jobs
-            run_local_jobs(plan, args.source_language, report)
+            run_local_jobs(plan, args.source_language, report,
+                           asr_model=args.asr_model, translator=args.translator)
         else:
             import modal
             os.environ["NEMO_GPU"] = args.gpu

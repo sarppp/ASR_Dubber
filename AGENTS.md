@@ -3,6 +3,49 @@
 These instructions apply to this repository and all subdirectories, including
 `nemo`, `qwen3-tts`, and the translation pipeline.
 
+## Subtitle pipeline: the current default (2026-11)
+
+This is the agreed way to produce EN/DE/FR subtitles. It is the default for the
+production runner (`nemo/batch_subtitles.py`) and for the trial container under
+`nemo/new_guys/crispr/ultra_trial/`.
+
+1. **ASR once per video**: `parakeet-ultra` (`moondream/parakeet-ultra`) with
+   word timestamps, in the source language only.
+2. **Cue packing** from those word timestamps: max 10 words / 5 s / 80 chars.
+3. **Sentence grouping**, then **translate each whole sentence** with
+   `tower-plus-2b:latest` over the local Ollama container. Never translate
+   per-cue fragments: fragment input is what produced invented subjects and
+   "transformatrice"-class errors.
+4. **Deterministic split** of the sentence translation back onto the original cue
+   boundaries, so every language keeps identical timings.
+5. **Always** finish by writing the combined file: one SRT and one ASS carrying
+   all languages, one cue with one line per language (EN/DE/FR), house style
+   `DejaVu Sans 28`, 1280x720, `\N` between languages, UTF-8 **with BOM**.
+   A subtitle run without the combined file is not finished.
+
+Model rules for this pipeline:
+
+- The model may see **only the source-language text**. Never put a reference
+  translation, an existing target subtitle, or another model's output in the
+  prompt.
+- One model loaded at a time on the 6 GB GPU; unload before loading the next.
+- Keep `--translator canary` (old in-pass Canary translation) and
+  `--translator gemma` (TranslateGemma) selectable, but do not make them the
+  default again without being asked.
+- The pipeline is local by design: local GPU, `ultra-asr:local` Docker image for
+  Ultra, Ollama container for MT. It is an explicit exception to the
+  Modal-for-everything rule; do not move its media or models to Modal unless the
+  user asks.
+- Never copy old outputs into a review folder. Regenerate and ship only the
+  fresh files, so a stale file cannot be mistaken for a new result.
+
+The trial pieces (`ultra_trial/Dockerfile`, `pipeline.py`,
+`test_production_flow.py`, `cli_test*`, `out/`, `review/`) are **temporary**.
+They exist to develop and check the flow; the production path is
+`nemo/local_sentence_pipeline.py` + `nemo/batch_subtitles.py`. When the trial
+code and production code disagree, production wins and the trial is updated or
+deleted.
+
 ## Modal controller and batch release
 
 - Use the Modal controller for all Modal work. Before a batch starts, present
