@@ -65,7 +65,8 @@ def _stream_proc(proc: subprocess.Popen, log_file: "Path | None" = None) -> int:
     return proc.returncode
 
 
-def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None, env: "dict | None" = None) -> None:
+def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None,
+         env: "dict | None" = None, check: bool = True) -> int:
     _banner(label)
     print(f"   cwd : {cwd}")
     print(f"   cmd : {' '.join(str(c) for c in cmd)}\n", flush=True)
@@ -73,8 +74,11 @@ def _run(cmd: list, cwd: Path, label: str, log_file: "Path | None" = None, env: 
     rc = _stream_proc(proc, log_file)
     if rc != 0:
         print(f"\n❌  {label} failed (exit {rc})", flush=True)
-        sys.exit(rc)
+        if check:
+            sys.exit(rc)
+        return rc
     print(f"\n✅  {label} done", flush=True)
+    return 0
 
 
 def _python(venv_py: Path, fallback_dir: Path) -> list:

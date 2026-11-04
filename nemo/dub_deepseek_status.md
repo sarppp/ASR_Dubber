@@ -145,6 +145,48 @@ Artifacts of a run: `<clip>.adaptation.json/.md` (per sentence: span, ratio
 before/after, text before/after), `<clip>.nemo.<lang>.dub.srt` (what was spoken),
 `<clip>.multi.srt/.ass` (viewing), `end_product/<label>/final_dub.mp4`.
 
+
+## Test harness status (2026-11-04, later)
+
+```bash
+python3 tools/check_dubbing.py --offline     # L0 + L1, seconds, no GPU
+```
+
+| Level | State |
+|---|---|
+| L0 guards / SRT integrity / merge boundaries / report | implemented, passing |
+| L1 fake TTS convergence + honest failure | implemented, passing |
+| L2 fit report + re-adapt loop | implemented, tested offline; real run does not converge yet |
+| L3 round-trip ASR (meaning) | not implemented |
+| L4 timing/onset assertions | not implemented |
+| L5 blind listening | manual, not started |
+
+Files: `tests/test_dubbing_gate.py` (13 tests), `tests/test_subtitle_pipeline.py`
+(3 tests), `tools/check_dubbing.py`.
+
+### L2 result on the real 120 s clip (Qwen)
+
+1. First dub: 3 sentences over 1.0x (1.04, 1.07, 1.21).
+2. `dub.py` wrote `fit_report.json` with measured seconds per segment.
+3. Pipeline re-adapted exactly those three from the source with a budget.
+4. Second dub: **worse** — 1.13, 1.27, 1.26.
+
+Two things surfaced:
+
+- **Cache bug (fixed).** `dub.py`'s checkpoint only checked that the clip file
+  existed, not that the text was unchanged, so an edited line re-used its old
+  take. The pipeline now drops the checkpoint entries (and clips) for edited
+  sentences before the retry.
+- **Tower ignores the budget.** Asked for 143 characters it returned 183
+  (28% over); asked for 41 it returned 48. Prompt-only length control is not
+  reliable on a translation model, so the measure loop cannot converge.
+
+To reach true 1.0x, the compressor must be a different component:
+
+- a length-controllable MT (vLLM/transformers build, not this GGUF prompt), or
+- a dedicated rewriting model small enough to fit beside Tower, or
+- accept a small speed-up (1.05-1.10) for the few lines that overshoot.
+
 ## Known translation issues (Tower, not the pipeline)
 
 - `viskales Gefühl` → should be `viszerales`.

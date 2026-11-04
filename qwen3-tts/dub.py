@@ -26,6 +26,7 @@ import argparse
 import logging
 import math
 import queue as _queue
+import json
 import re
 import subprocess
 import sys
@@ -38,6 +39,16 @@ from typing import Dict, List, Optional, Tuple
 from tqdm import tqdm
 
 log = logging.getLogger(__name__)
+
+
+def _needed_seconds(message: str):
+    match = re.search(r"needs ([0-9.]+)s", message or "")
+    return float(match.group(1)) if match else None
+
+
+def _required_tempo(message: str):
+    match = re.search(r"required tempo ([0-9.]+)", message or "")
+    return float(match.group(1)) if match else None
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 from dub_srt import (
@@ -347,6 +358,8 @@ Examples:
 
     fit_pool    = ThreadPoolExecutor(max_workers=1)
     fit_futures: List = []
+    fit_report: List[dict] = []
+    fit_report_lock = threading.Lock()
 
     # ── Shared TTS Managers (one model instance per mode) ─────────────────────
     # Instead of each worker loading its own model, we use shared managers.
@@ -374,10 +387,23 @@ Examples:
         # No clone refs but in clone mode - will fallback to custom lazily
         clone_broken_global = True
 
-    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
+    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float,
+                seg_index: int = -1) -> None:
         # The safe fitter measures speech after edge cleanup. Native short
         # speech stays native even when a small end allowance is available.
-        fitted = speed_fit(raw_out, available_dur, max_speed=args.max_speed, min_speed=args.min_speed)
+        try:
+            fitted = speed_fit(raw_out, available_dur, max_speed=args.max_speed,
+                               min_speed=args.min_speed)
+        except Exception as exc:
+            with fit_report_lock:
+                fit_report.append({
+                    "index": seg_index, "start": round(start, 3), "end": round(end, 3),
+                    "span": round(max(0.01, end - start), 3),
+                    "needed": _needed_seconds(str(exc)),
+                    "tempo": _required_tempo(str(exc)),
+                    "error": str(exc),
+                })
+            raise
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
@@ -446,7 +472,7 @@ Examples:
                                 log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
                 if ok and raw_out.exists():
-                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end)
+                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end, i)
                     with fit_lock:
                         fit_futures.append(fut)
 
@@ -489,6 +515,14 @@ Examples:
             fit_errors.append(exc)
             log.error(f"Speech could not fit safely: {exc}")
     fit_pool.shutdown(wait=True)
+
+    if fit_report:
+        report_path = Path(args.workdir) / "fit_report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps({"max_speed": args.max_speed,
+                                           "segments": sorted(fit_report, key=lambda r: r["start"])},
+                                          ensure_ascii=False, indent=1), encoding="utf-8")
+        log.info(f"Fit report → {report_path}")
 
     if fit_errors or worker_exceptions or len(final_files) != len(segments):
         log.error("Dubbing incomplete; refusing to publish a track with missing speech. "

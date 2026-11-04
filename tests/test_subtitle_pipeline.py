@@ -41,7 +41,7 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(cmd, cwd=None, label=None, env=None):
+    def fake_run(cmd, cwd=None, label=None, env=None, check=True):
         calls.append([str(c) for c in cmd])
         if "batch_subtitles.py" in cmd[1]:
             work = Path(cmd[cmd.index("--input-dir") + 1])
@@ -74,7 +74,7 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
     dub = calls[1]
     assert "dub.py" in dub[1]
     assert "--language" in dub and dub[dub.index("--language") + 1] == "de"
-    assert dub[dub.index("--language") - 1].endswith("talk.nemo.de.adapted.srt")
+    assert dub[dub.index("--language") - 1].endswith("talk.nemo.de.dub.srt")
 
     # with --input-file the video folder wins, same as the legacy runner
     out = video.parent
@@ -97,7 +97,7 @@ def test_subtitle_command_uses_backend_local_and_selected_models(tmp_path, monke
 
     monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
 
-    def fake_run(cmd, cwd=None, label=None, env=None):
+    def fake_run(cmd, cwd=None, label=None, env=None, check=True):
         if "batch_subtitles.py" in cmd[1]:
             seen["cmd"] = [str(c) for c in cmd]
             work = Path(cmd[cmd.index("--input-dir") + 1])

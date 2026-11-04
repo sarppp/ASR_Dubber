@@ -346,11 +346,82 @@ def _render_srt(cues: list[tuple[float, float, str]]) -> str:
     return "\n".join(lines)
 
 
-def _dub(args, video: Path, srt: Path, base: str, target: str) -> Path:
+def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
+                       language: str, rows: list[dict], report_path: Path,
+                       translator: OllamaTranslator, target: float) -> list[float]:
+    """Step 4b: re-adapt only the sentences the real TTS measured as too long."""
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    failing = [seg for seg in payload.get("segments", [])
+               if (seg.get("tempo") or 0) > target]
+    if not failing:
+        return []
+
+    source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
+    spans = _sentence_spans(source_cues)
+    cps = _rate(language)
+    changed_starts: list[float] = []
+    _banner(f"Step 3b/4 — Re-adapt {len(failing)} sentence(s) with measured durations")
+    for seg in failing:
+        index = seg.get("index")
+        if not index or index < 1 or index > len(rows):
+            continue
+        row = rows[index - 1]
+        current = row["text_after"]
+        tempo = seg.get("tempo") or target
+        budget = max(12, int(len(current) * (target / tempo) * 0.95))
+        first, last = spans[index - 1]
+        source_text = " ".join((c["text"] or "").strip()
+                               for c in source_cues[first:last + 1]).strip()
+        candidate = translator.translate_sentence(
+            source_text, source_language, language, max_chars=budget)
+        candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
+        if not candidate:
+            continue
+        problem = _preservation_problem(current, candidate, language)
+        if problem:
+            print(f"   [{index:02d}] measured {tempo:.2f}x — candidate rejected ({problem})")
+            continue
+        row["text_after"] = candidate
+        row["ratio_measured"] = round(tempo, 2)
+        row["chars_after"] = len(candidate)
+        changed_starts.append(float(row["start"]))
+        print(f"   [{index:02d}] measured {tempo:.2f}x -> {len(candidate)} chars "
+              f"(budget {budget})")
+    if not changed_starts:
+        return []
+
+    spoken = [(row["start"], row["end"], row["text_after"]) for row in rows]
+    dub_srt.write_text(_render_srt(spoken), encoding="utf-8-sig")
+    adapted = dub_srt.with_name(dub_srt.stem.replace(".dub", ".adapted") + ".srt")
+    adapted.write_text(_render_srt(spoken), encoding="utf-8-sig")
+    return changed_starts
+
+
+def _invalidate_fit_cache(dub_workdir: Path, starts: list[float], tol: float = 0.05) -> None:
+    """Drop cached fitted clips for edited sentences.
+
+    dub.py's checkpoint validates only that the clip file exists, not that the
+    text is unchanged, so a re-adapted line would otherwise reuse the old take.
+    """
+    for checkpoint in dub_workdir.rglob("checkpoint.json"):
+        try:
+            entries = json.loads(checkpoint.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        keep = []
+        for entry in entries:
+            if any(abs(float(entry.get("start", -99)) - start) < tol for start in starts):
+                Path(entry.get("clip", "")).unlink(missing_ok=True)
+            else:
+                keep.append(entry)
+        checkpoint.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+
+
+def _dub(args, video: Path, srt: Path, base: str, target: str) -> tuple[Path, int]:
     dub_workdir = QWEN_DIR / "output" / "dub" / base
     if args.skip_dub:
         print("⏭️  Skipping dub (--skip-dub)")
-        return dub_workdir
+        return dub_workdir, 0
 
     print(f"📄 Using SRT : {srt}")
     _validate_translated_srt(srt, target)
@@ -379,8 +450,8 @@ def _dub(args, video: Path, srt: Path, base: str, target: str) -> Path:
     cmd += ["--tts-workers", str(args.tts_workers), "--tts-devices", args.tts_devices]
 
     _banner(f"Step 3/4 — Dubbing into {target} with {args.tts_engine}")
-    _run(cmd, cwd=str(QWEN_DIR), label=f"Dubbing ({args.tts_engine})")
-    return dub_workdir
+    rc = _run(cmd, cwd=str(QWEN_DIR), label=f"Dubbing ({args.tts_engine})", check=False)
+    return dub_workdir, rc
 
 
 def run(args) -> int:
@@ -421,7 +492,22 @@ def run(args) -> int:
     _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
                              nemo_dir / f"{base}.adaptation.md", rows, args.fit_target)
 
-    dub_workdir = _dub(args, video, dub_srt, base, target)
+    dub_workdir, rc = _dub(args, video, dub_srt, base, target)
+    if rc != 0:
+        report = dub_workdir / "fit_report.json"
+        if report.exists():
+            changed = _adapt_from_report(
+                dub_srt, subtitles[source], source, target, rows, report,
+                OllamaTranslator(), args.fit_target)
+            if changed:
+                _invalidate_fit_cache(dub_workdir, changed)
+                _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
+                                         nemo_dir / f"{base}.adaptation.md", rows,
+                                         args.fit_target)
+                dub_workdir, rc = _dub(args, video, dub_srt, base, target)
+    if rc != 0:
+        print("❌  Dubbing still does not fit at natural pace; see the fit report.")
+        sys.exit(rc)
 
     _banner("Step 4/4 — Finalize + gather outputs")
     run_label = _derive_run_label(source, target, video=video,

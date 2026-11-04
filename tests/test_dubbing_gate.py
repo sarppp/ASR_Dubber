@@ -46,7 +46,8 @@ class FakeTranslator:
         if self.ignore_budget:
             return text
         budget = max_chars or 40
-        words, out = [], []
+        numbers = re.findall(r"\d+", text)
+        out = list(numbers)
         i = 0
         while len(" ".join(out)) < budget:
             out.append(f"wort{i}")
@@ -157,6 +158,51 @@ def test_adapt_keeps_original_when_candidate_loses_a_number(tmp_path):
     _adapted, rows, _dub = _adapt_case(tmp_path, NumberDropper(), cues)
     assert rows[0].get("kept_original")
     assert rows[0]["text_after"] == rows[0]["text_before"]
+
+
+# ── L2: measure-then-adapt using the dub's fit report ───────────────────────
+
+def _rows_and_files(tmp_path, count=10):
+    cues = [(i * 2.0, i * 2.0 + 1.9, f"Deutscher Satz Nummer {i + 1} bleibt hier.")
+            for i in range(count)]
+    dub = write_srt(tmp_path / "clip.nemo.de.dub.srt", cues)
+    source = write_srt(tmp_path / "clip.nemo.en.srt",
+                       [(a, b, f"English sentence number {i + 1}.") for i, (a, b, _) in enumerate(cues)])
+    rows = [{"index": i + 1, "start": a, "end": b, "text_after": t,
+             "text_before": t, "span": b - a, "ratio_before": 1.0, "ratio_after": 1.0,
+             "chars_before": len(t), "chars_after": len(t)}
+            for i, (a, b, t) in enumerate(cues)]
+    return dub, source, rows
+
+
+def test_report_readapts_only_the_failing_sentences(tmp_path):
+    import json
+    dub, source, rows = _rows_and_files(tmp_path)
+    report = tmp_path / "fit_report.json"
+    report.write_text(json.dumps({"max_speed": 1.0, "segments": [
+        {"index": 2, "tempo": 1.15, "span": 1.9},
+        {"index": 5, "tempo": 1.08, "span": 1.9},
+        {"index": 9, "tempo": 1.19, "span": 1.9},
+    ]}), encoding="utf-8")
+
+    changed = ps._adapt_from_report(dub, source, "en", "de", rows, report,
+                                    FakeTranslator(), target=1.0)
+    assert len(changed) == 3, changed
+    touched = [row["index"] for row in rows if row.get("ratio_measured")]
+    assert touched == [2, 5, 9], touched
+    untouched = [row for row in rows if row["index"] not in (2, 5, 9)]
+    assert all(row["text_after"] == row["text_before"] for row in untouched)
+    assert len(ps._parse_srt(dub)) == 10
+
+
+def test_report_without_failures_changes_nothing(tmp_path):
+    import json
+    dub, source, rows = _rows_and_files(tmp_path)
+    report = tmp_path / "fit_report.json"
+    report.write_text(json.dumps({"max_speed": 1.0, "segments": [
+        {"index": 3, "tempo": 1.0, "span": 1.9}]}), encoding="utf-8")
+    assert ps._adapt_from_report(dub, source, "en", "de", rows, report,
+                                 FakeTranslator(), target=1.0) == []
 
 
 if __name__ == "__main__":
