@@ -50,6 +50,27 @@ They exist to develop and check the flow; the production path is
 code and production code disagree, production wins and the trial is updated or
 deleted.
 
+### Dubbing on top of these subtitles
+
+`run_pipeline.py` has two modes:
+
+- **`--pipeline subtitle-dubbing` (default)**: generates the subtitles with the
+  flow above (`pipeline_subtitle.py` → `batch_subtitles.py --backend local`),
+  then hands the target-language SRT to `qwen3-tts/dub.py`. The target comes
+  from `--target-lang` as always; `--tts-engine`, voices, speeds and merge
+  flags are unchanged. Subtitle languages default to source + target;
+  `--subtitle-languages` overrides that (the target is always kept).
+- **`--pipeline legacy-dubbing`**: the previous NeMo → Canary/Gemma path,
+  unchanged. Keep it working, but do not make it the default again.
+
+```bash
+uv run python run_pipeline.py --target-lang fr                 # subtitle-dubbing
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+```
+
+Subtitle-dubbing keeps its working files in `<input>/.subtitle_dub/<base>/`, so
+a rerun reuses the ASR cache and does not re-translate.
+
 ## Modal controller and batch release
 
 - Use the Modal controller for all Modal work. Before a batch starts, present

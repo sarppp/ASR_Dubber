@@ -197,6 +197,16 @@ selectable but are not defaults. Details and known limits:
 `nemo/BATCH_SUBTITLES.md`. The `nemo/new_guys/crispr/ultra_trial/` container is a
 **temporary** scaffold for this work.
 
+Dubbing consumes these subtitles: `run_pipeline.py` defaults to
+`--pipeline subtitle-dubbing`, which produces the target subtitles with Ultra +
+Tower and then dubs them with the existing TTS step. The old NeMo +
+Canary/Gemma flow is `--pipeline legacy-dubbing`.
+
+```bash
+uv run python run_pipeline.py --target-lang fr                  # subtitle-dubbing (default)
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+```
+
 ### Supported ASR Models & Auto-Selection
 
 The pipeline automatically selects the best ASR model based on the source language:

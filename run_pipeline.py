@@ -4,9 +4,19 @@ run_pipeline.py — Master runner for the ASR dubbing pipeline
 =============================================================
 Place in ASR/ root. Runs all three steps end-to-end.
 
+Pipeline modes:
+  --pipeline subtitle-dubbing  (default) Parakeet Ultra + Tower subtitles, then dub
+  --pipeline legacy-dubbing    NeMo + Canary/Gemma in-pass translation (old flow)
+
 Usage:
 # Basic — auto-detects source lang, processes next unprocessed video
 uv run python run_pipeline.py --target-lang fr
+
+# Old flow
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+
+# Only some subtitle languages (target is always included)
+uv run python run_pipeline.py --target-lang fr --subtitle-languages en fr
 
 # With trim (first 30s only)
 uv run python run_pipeline.py --target-lang fr --trim 30
@@ -210,9 +220,11 @@ def _append_timing_summary(run_dir: Path, pipeline_log: Path) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="ASR dubbing pipeline: NeMo → Gemma translate → Supertonic CPU (Qwen optional)",
+        description=("Dubbing pipeline. Default: Parakeet Ultra + Tower subtitles "
+                     "→ dub in --target-lang. --pipeline legacy-dubbing is the old "
+                     "NeMo + Canary/Gemma flow."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--target-lang",    default=None,
@@ -285,6 +297,26 @@ def main():
                    help="VRAM reserve for NeMo chunk estimation (default: 1.5)")
     p.add_argument("--safety-factor",  default=None, type=float, metavar="F",
                    help="VRAM safety multiplier for NeMo chunking (default: 0.85)")
+    # ── Pipeline selection (subtitle-first is the default) ───────────────────
+    p.add_argument("--pipeline", default="subtitle-dubbing",
+                   choices=["subtitle-dubbing", "legacy-dubbing"],
+                   help=("subtitle-dubbing (default): Parakeet Ultra + Tower subtitles, "
+                         "then dub in --target-lang. legacy-dubbing: NeMo + Canary/Gemma "
+                         "in-pass translation, the old flow."))
+    p.add_argument("--subtitle-languages", nargs="+", default=None,
+                   metavar="LANG",
+                   help=("Languages to subtitle in subtitle-dubbing (default: source + target). "
+                         "Known: en de fr."))
+    p.add_argument("--asr-model", default=None,
+                   help="subtitle-dubbing ASR model (default: parakeet-ultra)")
+    p.add_argument("--translator", default=None,
+                   choices=["tower", "gemma", "tower-7b", "canary"],
+                   help="subtitle-dubbing translator (default: tower = tower-plus-2b)")
+    return p
+
+
+def main():
+    p = build_parser()
     args = p.parse_args()
     if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
         p.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
@@ -305,6 +337,11 @@ def main():
             p.error("--target-lang is required unless --run-mode transcribe")
         # For transcribe-only runs, target == source (resolved later once source is known)
         args.target_lang = args.language or "same"
+
+    if args.pipeline == "subtitle-dubbing":
+        from pipeline_subtitle import run as run_subtitle_pipeline
+
+        return run_subtitle_pipeline(args)
 
     # ── Apply input/output dir overrides (local vars, no global mutation) ─────
     nemo_dir = _DEFAULT_NEMO_DIR

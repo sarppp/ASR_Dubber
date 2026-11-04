@@ -89,6 +89,18 @@ uv pip install --python .venv-local-asr/bin/python \
   --index-strategy unsafe-best-match -r local-asr-requirements.txt
 ```
 
+## Dubbing these subtitles
+
+`run_pipeline.py` defaults to `--pipeline subtitle-dubbing`: it runs this subtitle
+flow for source + target, then passes `<video>.nemo.<target>.srt` to
+`qwen3-tts/dub.py`. The old NeMo + Canary/Gemma path is
+`--pipeline legacy-dubbing`.
+
+```bash
+uv run python run_pipeline.py --target-lang fr            # default
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+```
+
 ## Legacy Canary path
 
 `--translator canary` restores the old behaviour: Canary translates the audio

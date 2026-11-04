@@ -5,6 +5,7 @@
 !/.gitignore
 !/README.md
 !/run_pipeline.py
+!/pipeline_subtitle.py
 !/pipeline_paths.py
 !/pipeline_utils.py
 !/Dockerfile
