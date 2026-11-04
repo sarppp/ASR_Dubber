@@ -55,6 +55,21 @@ sentence, span = first cue start → last cue end, text = full sentence. In
 addition `qwen3-tts/dub_srt.py::merge_segments` no longer merges past a completed
 sentence.
 
+## How I fixed the "rewrite the German → returns English → loops" problem
+
+1. Stopped rewriting the target text. The adapter no longer says "rewrite this German line". It goes back to the source English sentence and translates it again with a character budget:
+translate_sentence(source_english, "en", "de", max_chars=budget)
+A translation model asked to "rewrite" was re-translating, and its language followed the instruction rather than the input — that's how English came out.
+2. Budget instead of a vague goal. budget = chars_now × (target/ratio) × 0.95, recomputed after each pass. Two bounded passes; it stops as soon as the block is under the aim.
+3. Guards that reject bad candidates and keep the original, so meaning can't silently disappear:
+- missing number,
+- missing negation (nicht/kein/nie/ohne, pas/rien, not/never),
+- shorter than 55% of the original,
+- longer than 2× the original,
+- repetition loop (trigram variety < ⅓) — this is what catches und manchmal, und manchmal….
+A rejected line keeps its full meaning and is marked in adaptation.md instead of being silently replaced.
+4. Sentence-level dub script (fixes the other thing you noticed): the dub now gets one cue per complete sentence, and merge_segments no longer merges past a finished sentence — so the voice starts at a sentence start, not on "ist, dass …".
+
 ## Measurements (120 s clip, target DE, Qwen clone, `--max-sentences 10`)
 
 | Run | Total wall | Blocks failing the 1.0× guard |
