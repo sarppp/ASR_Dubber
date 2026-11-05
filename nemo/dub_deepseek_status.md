@@ -195,7 +195,112 @@ L2 (measure-then-adapt) — built, with a real-run verdict
 - dub.py now writes fit_report.json: segment index, span, measured speech seconds, required tempo.
 - Pipeline re-adapts exactly the failing sentences and retries once.
 - Found and fixed a real cache bug: the checkpoint only checked that the clip file existed, not that the text was unchanged — an edited sentence silently reused its old take. Edited entries are now dropped before the retry.
-Where it stands — the loop runs, but it doesn't converge, because Tower ignores the character budget: asked for 143 chars it returned 183; asked for 41 it returned 48. Second pass went 1.07→1.13, 1.21→1.27. Prompt-only length control isn't enough for true 1.0×; it needs a length-controllable MT or a dedicated compressor, or accept ~1.05–1.10 on a few lines.
+
+## 2026-11-05 — the diagnosis above was wrong
+
+Everything above concluded that the loop could not converge "because Tower
+ignores the character budget". That was the wrong cause. The translator was
+blamed for a bug in the **measurement**. Two constants were wrong.
+
+### 1. The gate's speech rate was ~1.9× too low
+
+The gate estimated speech duration from characters using a hard-coded
+**11.6 chars/s** for German. Qwen actually speaks German at **~19 chars/s**.
+So the gate believed every line was 1.4–1.6× too long, shortened text that
+already fitted its slot, and lost meaning while doing it.
+
+Measured on the real 120 s run (`qwen3-tts/output/dub/CRISPR-120s/`), from
+the `*_natural_fit_*.json` sidecars — `raw_seconds` is how long the voice
+spoke, `target_seconds` is the slot it had:
+
+| dub segment | gate estimate | MEASURED speech/slot |
+|---|---|---|
+| 2 | 1.41× | 0.885 |
+| 3 | 1.59× | 0.925 |
+| 5 | 1.15× | 0.882 |
+| 6 | 1.34× | 0.903 |
+| 7 | 1.16× | 0.731 |
+| 8 | 1.10× | 0.710 |
+| 10 | 0.94× | 0.915 |
+
+Overshoot across all 12 synthesised segments: **median 0.882, max 0.948,
+0 of 12 over 1.0**. The dub was already inside its slots. Every segment the
+gate rejected actually fitted.
+
+The independent TTS bench (`nemo/new_guys/crispr/tts_bench_2026-11-04/`)
+agrees:
+
+| engine | EN | DE | FR |
+|---|---|---|---|
+| Qwen3-TTS 0.6B | 16.78 | 22.36 | 19.94 |
+| Supertonic 3 | 15.58 | 14.82 | 16.16 |
+| Audio8 0.6B | 14.55 | 12.96 | 18.15 |
+
+### 2. A pure characters-per-second rate is also wrong
+
+Every synthesised segment carries a **fixed startup overhead** — the voice
+needs a moment to start and the model adds a pause. A short line pays it in
+full, so short lines are spoken disproportionately slowly. The gate
+under-estimated them by more than a second, which is exactly where the dub
+failed.
+
+Measured model, fitted by least squares on the real run:
+
+```
+speech_seconds = 1.16 + characters / 18.98
+```
+
+It predicts the measured speech within **0.45 s** across eight segments and
+identifies **all four** segments that failed, with 0 false positives and
+0 false negatives. A pure rate model is off by more than a second on short
+lines.
+
+With the corrected rate the gate flags **4/10** blocks instead of 10/10,
+and those four sit at 0.95–1.06×.
+
+### The translator probes agreed with the wrong diagnosis
+
+Tower, Ling, Gemini and Haiku all return the **same output** for budgets
+143 / 100 / 80 chars. That looks like "no model can shorten". It is real,
+but it was never the blocker — the budget was computed from a constant that
+was 1.9× too low. Two things follow:
+
+1. With the correct rate the gate rejects almost nothing, so the unreliable
+   shortening path is rarely taken.
+2. Where shortening *is* needed, `{"text": "..."}` JSON output plus a
+   **word** budget (not a character budget) is the technique that measurably
+   works: 15 words returned for a 14-word budget, versus 190–247 chars for a
+   143-char budget (1.4–1.7× over).
+
+## What works now (branch `feature/natural-pace-dubbing`)
+
+- **Per-engine measured rates + self-calibration** (`nemo/speech_rate.py`).
+  `calibrate_rate()` measures the voice from a previous dub's sidecars, so
+  the rate self-corrects instead of being frozen into the source.
+- **Gate uses rate + overhead**; flags 4/10 instead of 10/10.
+- **L3 meaning check** (`nemo/dub_meaning.py`): on the shipped dub, mean WER
+  **0.143**, similarity **0.933**, no lost facts. No word lists — it scales
+  to any language and any number of videos.
+- **L4 timing check** (`nemo/dub_timing.py`): **12/12** segments fit, no late
+  onsets, no short gaps.
+- **Automatic compressor** (`nemo/dub_compress.py`) that shortens via the
+  models, with a language check and the meaning guard. No hand-written rules.
+- **57 offline tests pass**; `tools/check_dubbing.py --offline|--timing|--meaning`.
+
+## Open (where this was stopped)
+
+1. **Unfinished bug in `_adapt_from_report`** — `source_srt` arrives as
+   `None` at `pipeline_subtitle.py:470`. The call path was narrowed but the
+   fix was not landed. This is why the L2 retry never ran.
+2. **Two segments still do not fit** (indices 4 and 9) — segment 4 needs
+   1.23×, segment 9 needs 1.14×. The compressor shortens but not enough; it
+   needs to iterate harder or a stronger engine.
+3. **Tower cannot be made to shorten** (returns identical text for every
+   budget). hymt2 and eurollm can, but erratically and sometimes in the
+   wrong language. Using Ling (OpenRouter) would likely fix it — it was not
+   used, and no OpenRouter calls were spent on the dub.
+4. **Uncommitted**: the `dub_compress.py` work and the `_adapt_from_report`
+   fix are in the working tree, not committed.
 
 ## Known translation issues (Tower, not the pipeline)
 

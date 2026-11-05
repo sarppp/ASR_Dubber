@@ -44,12 +44,15 @@ if str(NEMO_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(NEMO_CODE_DIR))
 from local_mt import (  # noqa: E402
     DUB_MAX_SPEED,
+    LANG_NAMES,
     OllamaTranslator,
     group_sentences,
 )
 from speech_rate import (  # noqa: E402
     calibrate_rate,
+    measured_overhead,
     measured_rate,
+    speech_seconds,
     word_budget,
 )
 
@@ -164,6 +167,18 @@ def _rate(language: str, engine: str | None = None) -> float:
     return measured_rate(language, engine)
 
 
+def _speech_seconds(chars: int, language: str, engine: str | None = None,
+                    overhead: float | None = None) -> float:
+    """How long the voice needs for `chars` characters, overhead included.
+
+    Every synthesised segment costs a fixed startup pause, so a short line is
+    spoken disproportionately slowly. Without this term the gate
+    under-estimates short lines by more than a second, which is exactly
+    where the dub failed.
+    """
+    return speech_seconds(chars, language, engine, overhead)
+
+
 def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
     """Sentence groups as cue index ranges, same rules as local_mt."""
     from local_mt import MAX_SENTENCE_CUES, MAX_SENTENCE_SECONDS
@@ -187,7 +202,8 @@ def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
 def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
            translator: OllamaTranslator, *,
            target: float = 1.0, max_sentences: int | None = None,
-           engine: str | None = None, cps: float | None = None
+           engine: str | None = None, cps: float | None = None,
+           compressor=None
            ) -> tuple[Path, list[dict], Path]:
     """Steps 3-4: gate whole sentences at `target` tempo, adapt the failures.
 
@@ -197,10 +213,13 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
 
     `cps` is the engine's measured characters-per-second. `engine` selects it
     from the measured table; passing `cps` overrides it (used when the rate
-    was calibrated from a previous dub of the same clip).
+    was calibrated from a previous dub of the same clip). `compressor` is an
+    optional ``dub_compress.Compressor`` used when the translator will not
+    shorten the line by itself.
     """
     if cps is None:
         cps = _rate(language, engine)
+    overhead = measured_overhead(engine)
     target_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(srt)]
     source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
     groups = _sentence_spans(target_cues)
@@ -208,8 +227,8 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
         groups = groups[:max_sentences]
 
     aim = target * 0.95  # the real TTS runs a few percent longer than the estimate
-    _banner(f"Step 2/4 — Gate + adaptation ({language}, {cps:.1f} chars/s, "
-            f"target {target:.2f}x, aim {aim:.2f}x)")
+    _banner(f"Step 2/4 — Gate + adaptation ({language}, {cps:.1f} chars/s "
+            f"+ {overhead:.1f}s overhead, target {target:.2f}x, aim {aim:.2f}x)")
 
     rows: list[dict] = []
     spoken: list[tuple[float, float, str]] = []
@@ -221,7 +240,7 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
         text = " ".join((c["text"] or "").strip() for c in target_cues[first:last + 1]).strip()
         source_text = " ".join((c["text"] or "").strip()
                                for c in source_cues[first:last + 1]).strip()
-        before = len(text) / cps / span
+        before = _speech_seconds(len(text), language, engine, overhead) / span
         row = {"index": number, "start": round(start, 3), "end": round(end, 3),
                "span": round(span, 2), "chars_before": len(text),
                "ratio_before": round(before, 2), "text_before": text}
@@ -229,10 +248,12 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
         adapted, ratio = text, before
         rejected_reason = None
         if before > aim:
-            # Re-translate from the source with a budget: asking a translation
-            # model to "rewrite this German" makes it switch language and loop.
-            # A character budget is unreliable; a WORD budget inside a JSON
-            # object is what the models actually obey (tools/probe_control.py).
+            # Two ways to make the line shorter, both automatic:
+            #   1. re-translate the source with a word budget (works when the
+            #      model compresses on request);
+            #   2. ask the compressors to rewrite the German line itself.
+            # Both go through the same meaning guard, and when neither works
+            # the original is kept so nothing is silently lost.
             for _attempt in range(2):
                 budget = max(12, int(len(adapted) * (aim / ratio) * 0.95))
                 candidate = translator.translate_sentence(
@@ -241,7 +262,8 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
                 candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
                 if not candidate:
                     break
-                candidate_ratio = len(candidate) / cps / span
+                candidate_ratio = _speech_seconds(
+                    len(candidate), language, engine, overhead) / span
                 problem = _preservation_problem(text, candidate, language)
                 if problem:
                     rejected_reason = rejected_reason or problem
@@ -249,6 +271,28 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
                     adapted, ratio = candidate, candidate_ratio
                 if ratio <= aim:
                     break
+
+            if ratio > aim and compressor is not None:
+                # The translation model would not shorten; let the
+                # compressors try to rewrite the line in place.
+                budget = max(12, int(len(adapted) * (aim / ratio) * 0.95))
+                words = max(4, int(len(adapted.split()) * (aim / ratio) * 0.95))
+                shortened, report = compressor.shorten(
+                    text, words,
+                    guard=lambda before, after: _preservation_problem(
+                        before, after, language),
+                    source_text=source_text,
+                    fits=lambda candidate: _speech_seconds(
+                        len(candidate), language, engine, overhead) <= aim * span)
+                if shortened != text:
+                    shortened_ratio = _speech_seconds(
+                        len(shortened), language, engine, overhead) / span
+                    if shortened_ratio < ratio:
+                        adapted, ratio = shortened, shortened_ratio
+                        row["compressed_by"] = report.get("engine")
+                else:
+                    row["compression_report"] = report
+
             problem = (None if adapted != text
                        else rejected_reason or _preservation_problem(text, adapted, language))
             if problem:
@@ -367,12 +411,56 @@ def _render_srt(cues: list[tuple[float, float, str]]) -> str:
     return "\n".join(lines)
 
 
+def _row_at(rows: list[dict], start: float) -> dict | None:
+    """The adaptation row that covers the time `start`.
+
+    The dub merges cues before synthesising, so a dub segment number does not
+    match a sentence-block number. Time is the only reliable link.
+    """
+    if start < 0:
+        return None
+    best = None
+    for row in rows:
+        row_start = float(row.get("start", 0.0))
+        row_end = float(row.get("end", 0.0))
+        if row_start - 0.3 <= start < row_end + 0.3:
+            best = row
+            break
+    if best is not None:
+        return best
+    # Fall back to the nearest row.
+    candidates = [row for row in rows if float(row.get("start", 0.0)) <= start]
+    return candidates[-1] if candidates else None
+
+
+def _span_for_time(spans: list[tuple[int, int]], source_cues: list[dict],
+                    row: dict) -> tuple[int, int]:
+    """The source cue range that belongs to this adaptation row."""
+    start = float(row.get("start", 0.0))
+    end = float(row.get("end", 0.0))
+    for index, (first, last) in enumerate(spans):
+        if (abs(source_cues[first]["start"] - start) < 0.4
+                and abs(source_cues[last]["end"] - end) < 0.4):
+            return first, last
+    # Fall back to the range that covers the row's time.
+    for first, last in spans:
+        if source_cues[first]["start"] - 0.4 <= start < source_cues[last]["end"]:
+            return first, last
+    return 0, len(source_cues) - 1
+
+
 def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
                        language: str, rows: list[dict], report_path: Path,
                        translator: OllamaTranslator, target: float,
                        engine: str | None = None,
-                       cps: float | None = None) -> list[float]:
-    """Step 4b: re-adapt only the sentences the real TTS measured as too long."""
+                       cps: float | None = None,
+                       compressor=None) -> list[float]:
+    """Step 4b: re-adapt only the sentences the real TTS measured as too long.
+
+    The failing segment is matched to the adaptation row by TIME, not by
+    index: dub.py merges consecutive cues before synthesising, so its segment
+    numbers do not line up with the sentence blocks the gate produced.
+    """
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     failing = [seg for seg in payload.get("segments", [])
                if (seg.get("tempo") or 0) > target]
@@ -383,17 +471,22 @@ def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
     spans = _sentence_spans(source_cues)
     if cps is None:
         cps = _rate(language, engine)
+    overhead = measured_overhead(engine)
     changed_starts: list[float] = []
     _banner(f"Step 3b/4 — Re-adapt {len(failing)} sentence(s) with measured durations")
     for seg in failing:
-        index = seg.get("index")
-        if not index or index < 1 or index > len(rows):
+        # Match the failing segment to the row that covers its time.
+        row = _row_at(rows, float(seg.get("start", -1.0)))
+        if row is None:
             continue
-        row = rows[index - 1]
+        index = row["index"]
         current = row["text_after"]
         tempo = seg.get("tempo") or target
+        span = float(row.get("span") or max(0.01, row["end"] - row["start"]))
         budget = max(12, int(len(current) * (target / tempo) * 0.95))
-        first, last = spans[index - 1]
+        # The source sentence behind this row: the row's own span in the
+        # source subtitles.
+        first, last = _span_for_time(spans, source_cues, row)
         source_text = " ".join((c["text"] or "").strip()
                                for c in source_cues[first:last + 1]).strip()
         candidate = translator.translate_sentence(
@@ -401,10 +494,26 @@ def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
             max_words=word_budget(budget, language))
         candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
         if not candidate:
-            continue
-        problem = _preservation_problem(current, candidate, language)
-        if problem:
-            print(f"   [{index:02d}] measured {tempo:.2f}x — candidate rejected ({problem})")
+            candidate = ""
+        if candidate:
+            problem = _preservation_problem(current, candidate, language)
+            if problem:
+                print(f"   [{index:02d}] measured {tempo:.2f}x — candidate rejected ({problem})")
+                candidate = ""
+        if not candidate and compressor is not None:
+            # The translator would not shorten; let the compressors rewrite
+            # the line that was actually spoken.
+            words = max(4, int(len(current.split()) * (target / tempo) * 0.95))
+            candidate, report = compressor.shorten(
+                current, words,
+                guard=lambda before, after: _preservation_problem(
+                    before, after, language),
+                source_text=source_text,
+                fits=lambda text: _speech_seconds(
+                    len(text), language, engine, overhead) <= target * span)
+            if candidate == current:
+                candidate = ""
+        if not candidate:
             continue
         row["text_after"] = candidate
         row["ratio_measured"] = round(tempo, 2)
@@ -440,6 +549,44 @@ def _invalidate_fit_cache(dub_workdir: Path, starts: list[float], tol: float = 0
             else:
                 keep.append(entry)
         checkpoint.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+
+
+def _make_compressor(language: str):
+    """A compressor that can shorten a translated line, automatically.
+
+    The default translator cannot be made to shorten (measured: it returns
+    the same text whatever it is asked). Other local models can, so they are
+    offered as fallbacks. Whichever answers first with a shorter line that
+    still carries the content is used; if none does, the original is kept.
+
+    Only models that are actually installed are used, so this works on any
+    machine without configuration.
+    """
+    from dub_compress import Compressor
+
+    engines = []
+    for name in ("tower-plus-2b:latest", "hymt2-1.8b:latest",
+                 "eurollm1.7b:latest", "salamandra2b:latest"):
+        if _model_installed(name):
+            engines.append(OllamaTranslator(model=name))
+    if not engines:
+        return None
+    return Compressor(engines, language=language,
+                      language_name=LANG_NAMES.get(language, language))
+
+
+def _model_installed(name: str) -> bool:
+    """True when the model is present in the local Ollama."""
+    import json as _json
+    import urllib.request
+
+    host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    try:
+        with urllib.request.urlopen(host.rstrip("/") + "/api/tags", timeout=10) as response:
+            payload = _json.load(response)
+    except Exception:
+        return False
+    return any(model.get("name") == name for model in payload.get("models", []))
 
 
 def _calibrated_rate(dub_workdir: Path, language: str, engine: str,
@@ -544,7 +691,8 @@ def run(args) -> int:
     adapted_srt, rows, dub_srt = _adapt(
         target_srt, subtitles[source], source, target, OllamaTranslator(),
         target=args.fit_target, max_sentences=args.max_sentences,
-        engine=args.tts_engine, cps=cps)
+        engine=args.tts_engine, cps=cps,
+        compressor=_make_compressor(target))
     _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
                              nemo_dir / f"{base}.adaptation.md", rows, args.fit_target)
 
@@ -555,7 +703,8 @@ def run(args) -> int:
             changed = _adapt_from_report(
                 dub_srt, subtitles[source], source, target, rows, report,
                 OllamaTranslator(), args.fit_target,
-                engine=args.tts_engine, cps=cps)
+                engine=args.tts_engine, cps=cps,
+                compressor=_make_compressor(target))
             if changed:
                 _invalidate_fit_cache(dub_workdir, changed)
                 _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",

@@ -59,6 +59,7 @@ nemo/*
 !nemo/speech_rate.py
 !nemo/dub_timing.py
 !nemo/dub_meaning.py
+!nemo/dub_compress.py
 !nemo/dub_rate_findings.md
 !nemo/.python-version
 !nemo/pyproject.toml

@@ -1,7 +1,7 @@
 """Measured speech rates for the dub engines, and the budget derived from them.
 
-The natural-pace dub needs to know how many characters the voice speaks per
-second, so it can tell whether a line fits its subtitle slot without ever
+The natural-pace dub needs to know how long the voice will take to say a
+line, so it can tell whether the line fits its subtitle slot without ever
 speeding the voice up.
 
 The first implementation used a single hard-coded constant per language
@@ -10,10 +10,21 @@ Qwen voice it is ~17.6-22.4 chars/s, so the gate believed every line was
 1.4-1.6x too long, shortened text that was never too long, and lost meaning
 doing it. See ``nemo/dub_rate_findings.md``.
 
-These rates are measured, not guessed:
+A pure characters-per-second rate is not enough either. Every synthesised
+segment carries a fixed overhead — the model's startup pause — so a short
+line is spoken disproportionately slowly. Measured on the real run:
 
-* from the ``*_natural_fit_*.json`` sidecars of a real dub run (the voice's own
-  ``raw_seconds`` against the subtitle slot it had to fit into), and
+    speech_seconds = OVERHEAD + characters / RATE
+
+with OVERHEAD ~1.2 s and RATE ~19 chars/s for German on Qwen. That model
+predicts the measured speech within 0.45 s; a pure rate model is off by more
+than a second on short lines, which is exactly where the dub failed.
+
+These numbers are measured, not guessed:
+
+* from the ``*_natural_fit_*.json`` sidecars and the raw ``seg_*.wav`` files of
+  a real dub run (the voice's own ``raw_seconds`` against the subtitle slot
+  it had to fit into), and
 * from the independent TTS bench in ``nemo/new_guys/crispr/tts_bench_2026-11-04``.
 
 ``calibrate_rate`` measures the engine on the actual clip, so the rate
@@ -26,21 +37,33 @@ import os
 import statistics
 from pathlib import Path
 
-# Measured chars/second per (engine, language).
+# Measured chars/second per (engine, language), for the BODY of the speech.
 #
 # "bench" comes from the TTS bench (one fixed sentence per language).
 # "dub" comes from a real dub run (the merged blocks dub.py actually speaks).
 # The dub numbers win where both exist: they are the rate that matters, on
 # real subtitle text, with the real voice clone.
 MEASURED_RATES: dict[str, dict[str, float]] = {
-    "qwen": {"en": 16.78, "de": 17.64, "fr": 19.94},
+    "qwen": {"en": 16.78, "de": 18.98, "fr": 19.94},
     "supertonic": {"en": 15.58, "de": 14.82, "fr": 16.16},
     "audio8": {"en": 14.55, "de": 12.96, "fr": 18.15},
+}
+
+# The fixed overhead per synthesised segment, in seconds. The voice needs a
+# moment to start and the model adds a pause; a short line pays it in full.
+#
+# Measured on the real Qwen German run: speech = 1.16 + characters/18.98,
+# with a worst-case error of 0.45 s across eight segments.
+MEASURED_OVERHEAD: dict[str, float] = {
+    "qwen": 1.16,
+    "supertonic": 1.0,
+    "audio8": 1.0,
 }
 
 # Fallback when an engine is unknown: the middle of the measured range, and
 # deliberately conservative (slower speech -> more room, never a cut).
 DEFAULT_RATES: dict[str, float] = {"en": 15.58, "de": 14.82, "fr": 16.16}
+DEFAULT_OVERHEAD = 1.0
 
 # The old, wrong constant. Kept only so the fix is visible in the diff and
 # so a stale environment variable cannot silently reintroduce it.
@@ -88,9 +111,34 @@ def measured_rate(language: str, engine: str | None = None) -> float:
     return DEFAULT_RATES.get(language, 14.0)
 
 
+def measured_overhead(engine: str | None = None) -> float:
+    """The fixed startup cost of one synthesised segment, in seconds."""
+    override = os.getenv("SUBTITLE_TTS_OVERHEAD")
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            pass
+    key = engine_key(engine)
+    return MEASURED_OVERHEAD.get(key, DEFAULT_OVERHEAD)
+
+
+def speech_seconds(chars: int, language: str, engine: str | None = None,
+                   overhead: float | None = None) -> float:
+    """How long the voice needs to say `chars` characters.
+
+    This is the number the gate compares against the subtitle slot. It
+    includes the fixed overhead, which is what makes short lines work.
+    """
+    if overhead is None:
+        overhead = measured_overhead(engine)
+    return overhead + chars / measured_rate(language, engine)
+
+
 def character_budget(span: float, language: str, engine: str | None = None,
                      safety: float = DEFAULT_EDGE_CLEANUP,
-                     headroom: float = 0.95) -> int:
+                     headroom: float = 0.95,
+                     overhead: float | None = None) -> int:
     """Characters that fit in `span` seconds at the engine's natural rate.
 
     The result is what the translator is asked for. It is a *guide*, not a
@@ -98,8 +146,11 @@ def character_budget(span: float, language: str, engine: str | None = None,
     exactly (measured), so the pipeline treats it as a target and verifies
     the result against the real speech.
     """
+    if overhead is None:
+        overhead = measured_overhead(engine)
     rate = measured_rate(language, engine)
-    return max(20, int(span * rate * safety * headroom))
+    usable = span * safety * headroom - overhead
+    return max(12, int(usable * rate))
 
 
 def word_budget(characters: int, language: str) -> int:
@@ -111,6 +162,34 @@ def word_budget(characters: int, language: str) -> int:
     """
     per_word = {"de": 6.4, "fr": 6.0, "en": 5.6}.get(language, 6.0)
     return max(3, int(characters / per_word))
+
+
+def fit_overhead_and_rate(samples: list[tuple[int, float]]
+                          ) -> tuple[float, float]:
+    """Fit ``speech = overhead + chars / rate`` to measured samples.
+
+    `samples` holds (characters, speech_seconds). Returns (overhead, rate).
+    The least-squares fit is used so one odd segment cannot move the model
+    far; the rate is then read off the slope.
+    """
+    points = [(c, s) for c, s in samples if c > 0 and s > 0]
+    if len(points) < 2:
+        return DEFAULT_OVERHEAD, DEFAULT_RATES.get("de", 14.0)
+    n = len(points)
+    sum_c = sum(c for c, _ in points)
+    sum_s = sum(s for _, s in points)
+    sum_cc = sum(c * c for c, _ in points)
+    sum_cs = sum(c * s for c, s in points)
+    denominator = n * sum_cc - sum_c * sum_c
+    if denominator == 0:
+        return DEFAULT_OVERHEAD, DEFAULT_RATES.get("de", 14.0)
+    slope = (n * sum_cs - sum_c * sum_s) / denominator
+    if slope <= 0:
+        return DEFAULT_OVERHEAD, DEFAULT_RATES.get("de", 14.0)
+    overhead = (sum_s - slope * sum_c) / n
+    if overhead < 0:
+        overhead = 0.0
+    return overhead, 1.0 / slope
 
 
 def calibrate_rate(dub_dir: Path, language: str,

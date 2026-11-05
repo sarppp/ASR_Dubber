@@ -54,7 +54,10 @@ class FakeTranslator:
             out.append(f"wort{i}")
             i += 1
         line = " ".join(out)
-        return line[:budget].rsplit(" ", 1)[0]
+        # Keep every number the original had: the meaning guard rejects a
+        # candidate that drops one.
+        kept = " ".join(numbers) if numbers else ""
+        return f"{kept} {line[:budget]}".strip()[:budget + len(kept)]
 
 
 # ── L0: guards ───────────────────────────────────────────────────────────────
@@ -185,11 +188,13 @@ def _rows_and_files(tmp_path, count=10):
 def test_report_readapts_only_the_failing_sentences(tmp_path):
     import json
     dub, source, rows = _rows_and_files(tmp_path)
+    # The dub reports the segments it synthesised, matched to the adaptation
+    # rows by TIME (dub.py merges cues, so its indices do not line up).
     report = tmp_path / "fit_report.json"
     report.write_text(json.dumps({"max_speed": 1.0, "segments": [
-        {"index": 2, "tempo": 1.15, "span": 1.9},
-        {"index": 5, "tempo": 1.08, "span": 1.9},
-        {"index": 9, "tempo": 1.19, "span": 1.9},
+        {"index": 2, "start": rows[1]["start"], "tempo": 1.15, "span": 1.9},
+        {"index": 5, "start": rows[4]["start"], "tempo": 1.08, "span": 1.9},
+        {"index": 9, "start": rows[8]["start"], "tempo": 1.19, "span": 1.9},
     ]}), encoding="utf-8")
 
     changed = ps._adapt_from_report(dub, source, "en", "de", rows, report,
@@ -202,12 +207,30 @@ def test_report_readapts_only_the_failing_sentences(tmp_path):
     assert len(ps._parse_srt(dub)) == 10
 
 
+def test_report_matches_the_failing_segment_by_time(tmp_path):
+    """A dub segment number that does not match the row number is fine:
+    the segment is matched to the row that covers its time."""
+    import json
+    dub, source, rows = _rows_and_files(tmp_path)
+    report = tmp_path / "fit_report.json"
+    # Segment "1" is reported, but it starts on the fifth row's time.
+    report.write_text(json.dumps({"max_speed": 1.0, "segments": [
+        {"index": 1, "start": rows[4]["start"], "tempo": 1.2, "span": 1.9},
+    ]}), encoding="utf-8")
+    changed = ps._adapt_from_report(dub, source, "en", "de", rows, report,
+                                    FakeTranslator(), target=1.0)
+    assert len(changed) == 1, changed
+    assert rows[4].get("ratio_measured"), rows[4]
+    assert not any(row.get("ratio_measured") for row in rows[:4])
+
+
 def test_report_without_failures_changes_nothing(tmp_path):
     import json
     dub, source, rows = _rows_and_files(tmp_path)
     report = tmp_path / "fit_report.json"
     report.write_text(json.dumps({"max_speed": 1.0, "segments": [
-        {"index": 3, "tempo": 1.0, "span": 1.9}]}), encoding="utf-8")
+        {"index": 3, "start": rows[2]["start"], "tempo": 1.0, "span": 1.9}]}),
+        encoding="utf-8")
     assert ps._adapt_from_report(dub, source, "en", "de", rows, report,
                                  FakeTranslator(), target=1.0) == []
 
