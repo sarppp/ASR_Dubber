@@ -142,7 +142,7 @@ def render_srt(segments: list[dict]) -> bytes:
 
 def run_local_jobs(plan: list[dict], source_language: str, report: Path,
                    asr_model: str | None = None, translator: str | None = None,
-                   fit_budget: bool = True) -> None:
+                   fit_budget: bool = True, tts_engine: str | None = None) -> None:
     """Local backend.
 
     Default: one ASR pass (parakeet-ultra) + whole-sentence translation
@@ -150,6 +150,9 @@ def run_local_jobs(plan: list[dict], source_language: str, report: Path,
 
     Pass translator="canary" for the old behaviour: Canary translating the
     audio directly, one SRT per language, no combined file.
+
+    `tts_engine` selects the dub engine whose measured speech rate the
+    translation budget is derived from (nemo/speech_rate.py).
     """
     asr_model = asr_model or os.getenv("ASR_MODEL", "parakeet-ultra")
     translator = translator or os.getenv("TRANSLATOR", "tower")
@@ -157,7 +160,8 @@ def run_local_jobs(plan: list[dict], source_language: str, report: Path,
         from local_sentence_pipeline import run as run_sentence_pipeline
 
         return run_sentence_pipeline(plan, source_language, report, asr_model,
-                                     translator, fit_budget=fit_budget)
+                                     translator, fit_budget=fit_budget,
+                                     tts_engine=tts_engine)
 
     from batch_subtitles import extract_audio, probe_duration, srt_stats
     import torch

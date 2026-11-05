@@ -189,6 +189,11 @@ def main() -> None:
                         choices=["tower", "gemma", "tower-7b", "canary"],
                         help="Local translator (default: tower = tower-plus-2b). "
                              "gemma = translategemma:4b, canary = old in-pass translation")
+    parser.add_argument("--tts-engine", default="supertonic",
+                        choices=["supertonic", "qwen", "audio8"],
+                        help="Dub engine that will speak the subtitle. The duration "
+                             "budget given to the translator comes from this "
+                             "engine's measured speech rate (nemo/speech_rate.py).")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
@@ -214,7 +219,8 @@ def main() -> None:
             from local_subtitles import run_local_jobs
             run_local_jobs(plan, args.source_language, report,
                            asr_model=args.asr_model, translator=args.translator,
-                           fit_budget=not args.no_fit_budget)
+                           fit_budget=not args.no_fit_budget,
+                           tts_engine=args.tts_engine)
         else:
             import modal
             os.environ["NEMO_GPU"] = args.gpu

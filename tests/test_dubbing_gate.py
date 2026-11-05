@@ -41,7 +41,8 @@ class FakeTranslator:
         self.ignore_budget = ignore_budget
         self.calls = 0
 
-    def translate_sentence(self, text, source, target, max_chars=None):
+    def translate_sentence(self, text, source, target, max_chars=None,
+                           max_words=None):
         self.calls += 1
         if self.ignore_budget:
             return text
@@ -151,10 +152,16 @@ def test_adapt_reports_when_the_voice_ignores_the_budget(tmp_path):
 
 def test_adapt_keeps_original_when_candidate_loses_a_number(tmp_path):
     class NumberDropper:
-        def translate_sentence(self, text, source, target, max_chars=None):
+        def translate_sentence(self, text, source, target, max_chars=None,
+                               max_words=None):
             return "Es ist später."
 
-    cues = [(0.0, 4.0, "Es sind 14 Jahre später und es bleibt wichtig.")]
+    # A line that is genuinely too long for its slot, so the guard is reached.
+    # (The measured rate is ~17.6 chars/s for German, so 130 characters in
+    # 4 seconds is about 1.8x over.)
+    cues = [(0.0, 4.0, "Es sind 14 Jahre später und es bleibt wichtig, "
+                       "denn die Forschung ging weiter und die Ergebnisse "
+                       "waren sehr wichtig für uns alle.")]
     _adapted, rows, _dub = _adapt_case(tmp_path, NumberDropper(), cues)
     assert rows[0].get("kept_original")
     assert rows[0]["text_after"] == rows[0]["text_before"]

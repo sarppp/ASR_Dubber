@@ -44,9 +44,13 @@ if str(NEMO_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(NEMO_CODE_DIR))
 from local_mt import (  # noqa: E402
     DUB_MAX_SPEED,
-    TTS_CHARS_PER_SECOND,
     OllamaTranslator,
     group_sentences,
+)
+from speech_rate import (  # noqa: E402
+    calibrate_rate,
+    measured_rate,
+    word_budget,
 )
 
 SUBTITLE_PY = NEMO_CODE_DIR / ".venv-local-asr" / "bin" / "python"
@@ -150,9 +154,14 @@ def _preservation_problem(before: str, after: str, language: str) -> str | None:
     return None
 
 
-def _rate(language: str) -> float:
-    return float(os.getenv("SUBTITLE_TTS_CPS")
-                 or TTS_CHARS_PER_SECOND.get(language, 12.0))
+def _rate(language: str, engine: str | None = None) -> float:
+    """Characters per second the dub engine speaks in `language`.
+
+    Measured per engine, not a hard-coded guess: see nemo/speech_rate.py and
+    nemo/dub_rate_findings.md. The old constant (11.6 chars/s for German) was
+    ~1.9x too low for Qwen, so the gate shortened lines that already fit.
+    """
+    return measured_rate(language, engine)
 
 
 def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
@@ -177,22 +186,28 @@ def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
 
 def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
            translator: OllamaTranslator, *,
-           target: float = 1.0, max_sentences: int | None = None
+           target: float = 1.0, max_sentences: int | None = None,
+           engine: str | None = None, cps: float | None = None
            ) -> tuple[Path, list[dict], Path]:
     """Steps 3-4: gate whole sentences at `target` tempo, adapt the failures.
 
     Target 1.0 means the voice speaks at its natural pace: the wording gets
     shorter, the audio is never sped up. The unit is a complete sentence, which
     is exactly what the dub synthesises (one cue per sentence).
+
+    `cps` is the engine's measured characters-per-second. `engine` selects it
+    from the measured table; passing `cps` overrides it (used when the rate
+    was calibrated from a previous dub of the same clip).
     """
-    cps = _rate(language)
+    if cps is None:
+        cps = _rate(language, engine)
     target_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(srt)]
     source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
     groups = _sentence_spans(target_cues)
     if max_sentences:
         groups = groups[:max_sentences]
 
-    aim = target * 0.92  # the real TTS runs a few percent longer than the estimate
+    aim = target * 0.95  # the real TTS runs a few percent longer than the estimate
     _banner(f"Step 2/4 — Gate + adaptation ({language}, {cps:.1f} chars/s, "
             f"target {target:.2f}x, aim {aim:.2f}x)")
 
@@ -216,10 +231,13 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
         if before > aim:
             # Re-translate from the source with a budget: asking a translation
             # model to "rewrite this German" makes it switch language and loop.
+            # A character budget is unreliable; a WORD budget inside a JSON
+            # object is what the models actually obey (tools/probe_control.py).
             for _attempt in range(2):
                 budget = max(12, int(len(adapted) * (aim / ratio) * 0.95))
                 candidate = translator.translate_sentence(
-                    source_text, source_language, language, max_chars=budget)
+                    source_text, source_language, language, max_chars=budget,
+                    max_words=word_budget(budget, language))
                 candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
                 if not candidate:
                     break
@@ -294,6 +312,9 @@ def _produce_subtitles(args, video: Path, workdir: Path, source: str,
             cmd += ["--asr-model", args.asr_model]
         if args.translator:
             cmd += ["--translator", args.translator]
+        # The translation budget is derived from the dub engine's measured
+        # speech rate, so the translator is told which voice will speak it.
+        cmd += ["--tts-engine", args.tts_engine]
         _banner(f"Step 1/4 — Subtitles ({' + '.join(languages)}) via Ultra + Tower")
         _run(cmd, cwd=str(NEMO_CODE_DIR), label="Subtitle generation")
     else:
@@ -348,7 +369,9 @@ def _render_srt(cues: list[tuple[float, float, str]]) -> str:
 
 def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
                        language: str, rows: list[dict], report_path: Path,
-                       translator: OllamaTranslator, target: float) -> list[float]:
+                       translator: OllamaTranslator, target: float,
+                       engine: str | None = None,
+                       cps: float | None = None) -> list[float]:
     """Step 4b: re-adapt only the sentences the real TTS measured as too long."""
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     failing = [seg for seg in payload.get("segments", [])
@@ -358,7 +381,8 @@ def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
 
     source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
     spans = _sentence_spans(source_cues)
-    cps = _rate(language)
+    if cps is None:
+        cps = _rate(language, engine)
     changed_starts: list[float] = []
     _banner(f"Step 3b/4 — Re-adapt {len(failing)} sentence(s) with measured durations")
     for seg in failing:
@@ -373,7 +397,8 @@ def _adapt_from_report(dub_srt: Path, source_srt: Path, source_language: str,
         source_text = " ".join((c["text"] or "").strip()
                                for c in source_cues[first:last + 1]).strip()
         candidate = translator.translate_sentence(
-            source_text, source_language, language, max_chars=budget)
+            source_text, source_language, language, max_chars=budget,
+            max_words=word_budget(budget, language))
         candidate = re.sub(r"\s+", " ", candidate).strip().strip('"')
         if not candidate:
             continue
@@ -415,6 +440,28 @@ def _invalidate_fit_cache(dub_workdir: Path, starts: list[float], tol: float = 0
             else:
                 keep.append(entry)
         checkpoint.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+
+
+def _calibrated_rate(dub_workdir: Path, language: str, engine: str,
+                     script: Path | None = None) -> float:
+    """The engine's speech rate, measured from a previous dub when possible.
+
+    A dub that already ran on this clip knows exactly how many characters the
+    voice spoke per second on this text with this voice. Using that measured
+    rate instead of a table entry is what keeps the gate honest: it can never
+    be wrong by more than the noise of one clip.
+    """
+    table = _rate(language, engine)
+    measured = calibrate_rate(dub_workdir, language, engine, script=script)
+    if not measured:
+        print(f"   ℹ️  Using the measured table rate: {table:.1f} chars/s "
+              f"({language}, {engine})")
+        return table
+    rate, evidence = measured
+    print(f"   📏 Calibrated from a previous dub: {rate:.1f} chars/s "
+          f"({evidence['samples']} segments, {evidence['min']:.1f}–"
+          f"{evidence['max']:.1f}) — table said {table:.1f}")
+    return rate
 
 
 def _dub(args, video: Path, srt: Path, base: str, target: str) -> tuple[Path, int]:
@@ -486,9 +533,18 @@ def run(args) -> int:
     if target_srt is None:
         sys.exit(f"❌  No {target} subtitle was produced for {video.name}")
 
+    # The gate needs the engine's real speech rate. A previous dub of the same
+    # clip measures it exactly (the sidecars record how long the voice spoke
+    # against the slot it had); otherwise fall back to the measured table.
+    dub_workdir = QWEN_DIR / "output" / "dub" / base
+    previous_dub_srt = nemo_dir / f"{base}.nemo.{target}.dub.srt"
+    cps = _calibrated_rate(dub_workdir, target, args.tts_engine,
+                           script=previous_dub_srt if previous_dub_srt.exists() else None)
+
     adapted_srt, rows, dub_srt = _adapt(
         target_srt, subtitles[source], source, target, OllamaTranslator(),
-        target=args.fit_target, max_sentences=args.max_sentences)
+        target=args.fit_target, max_sentences=args.max_sentences,
+        engine=args.tts_engine, cps=cps)
     _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
                              nemo_dir / f"{base}.adaptation.md", rows, args.fit_target)
 
@@ -498,7 +554,8 @@ def run(args) -> int:
         if report.exists():
             changed = _adapt_from_report(
                 dub_srt, subtitles[source], source, target, rows, report,
-                OllamaTranslator(), args.fit_target)
+                OllamaTranslator(), args.fit_target,
+                engine=args.tts_engine, cps=cps)
             if changed:
                 _invalidate_fit_cache(dub_workdir, changed)
                 _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
