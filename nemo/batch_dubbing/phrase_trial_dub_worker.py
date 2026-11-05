@@ -9,7 +9,7 @@ TRIAL = ROOT / 'experiments/crispr_phrase_modal_2026-10-30_10min_qwen'
 image = (modal.Image.debian_slim(python_version='3.11')
          .apt_install('ffmpeg', 'libsndfile1', 'sox', 'libsox-dev')
          .pip_install('torch==2.6.0', 'torchaudio==2.6.0', 'torchvision==0.21.0')
-         .pip_install('qwen-tts==0.1.1', 'transformers==4.57.3', 'accelerate',
+         .pip_install('qwen-tts==0.1.1', 'faster-qwen3-tts==0.2.5', 'transformers==4.57.3', 'accelerate',
                       'huggingface_hub<1', 'soundfile', 'numpy<2', 'scipy', 'psutil')
          .env({'HF_HOME': '/cache/huggingface', 'OMP_NUM_THREADS': '4',
                'OPENBLAS_NUM_THREADS': '4', 'MKL_NUM_THREADS': '4'})
@@ -20,7 +20,7 @@ volume = modal.Volume.from_name('speech-model-benchmark-20261027')
 app = modal.App('crispr-10min-qwen-20261030-dub')
 
 
-@app.function(image=image, gpu='T4', cpu=(4, 4), memory=(32768, 32768), timeout=3600,
+@app.function(image=image, gpu='T4', cpu=(4, 4), memory=(32768, 32768), timeout=2400,
               startup_timeout=180, max_containers=1, min_containers=0, retries=0,
               scaledown_window=2, volumes={'/cache': volume})
 def synthesize(data, seconds):
@@ -46,10 +46,10 @@ def synthesize(data, seconds):
 def main(smoke: bool = False):
     from batch_dubbing.phrase_trial import write_json, sha256
     from batch_dubbing.cpu_natural import select_units
-    source = TRIAL / 'translated.json'
+    source = TRIAL / 'dub_ready.json'
     data = json.loads(source.read_text())
-    destination = TRIAL / ('dub_smoke.json' if smoke else 'dub.json')
-    audio = TRIAL / ('dub_smoke.m4a' if smoke else 'german-dub.m4a')
+    destination = TRIAL / ('dub_smoke_sentences.json' if smoke else 'dub.json')
+    audio = TRIAL / ('dub_smoke_sentences.m4a' if smoke else 'german-dub.m4a')
     if destination.exists() or audio.exists():
         raise FileExistsError('Dubbing test artifacts already exist')
     seconds = data['duration_seconds']

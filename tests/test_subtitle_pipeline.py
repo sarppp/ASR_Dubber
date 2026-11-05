@@ -29,8 +29,8 @@ def _args(**overrides) -> SimpleNamespace:
 def test_languages_default_to_source_plus_target():
     assert ps._subtitle_languages(_args(), "en", "de") == ["en", "de"]
     assert ps._subtitle_languages(_args(), "de", "en") == ["de", "en"]
-    assert ps._subtitle_languages(_args(subtitle_languages=["fr"]), "en", "de") == ["fr", "de"]
-    assert ps._subtitle_languages(_args(subtitle_languages=["de", "fr"]), "en", "de") == ["de", "fr"]
+    assert ps._subtitle_languages(_args(subtitle_languages=["fr"]), "en", "de") == ["fr", "de", "en"]
+    assert ps._subtitle_languages(_args(subtitle_languages=["de", "fr"]), "en", "de") == ["de", "fr", "en"]
 
 
 def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
@@ -39,6 +39,7 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
     nemo_dir = tmp_path / "nemo"
     nemo_dir.mkdir()
 
+    monkeypatch.setattr(ps, "QWEN_DIR", tmp_path / "qwen3-tts")
     calls = []
 
     def fake_run(cmd, cwd=None, label=None, env=None, check=True):
@@ -56,9 +57,11 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
         return 0
 
     class _Translator:
-        def adapt_sentence(self, text, language, max_chars):
+        def translate_sentence(self, text, source, language, max_chars=None, max_words=None):
             return " ".join(text.split()[:max(1, max_chars // 6)])
 
+    monkeypatch.setattr(ps, "_make_compressor", lambda *a: None)
+    monkeypatch.setattr(ps, "_calibrated_rate", lambda *a, **k: 20.0)
     monkeypatch.setattr(ps, "_run", fake_run)
     monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
     monkeypatch.setattr(ps, "_detect_source_language", lambda *a, **k: "en")
@@ -67,7 +70,7 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "_finalize_outputs", lambda *a, **k: None)
     monkeypatch.setattr(ps, "_derive_run_label", lambda *a, **k: "talk__de")
 
-    rc = ps.run(_args(input_file=str(video), input_dir=str(nemo_dir)))
+    rc = ps.run(_args(input_file=str(video), input_dir=str(nemo_dir), output_dir=str(tmp_path / "out")))
     assert rc == 0
     assert len(calls) == 2, calls
 
@@ -92,7 +95,7 @@ def test_subtitle_command_uses_backend_local_and_selected_models(tmp_path, monke
     seen = {}
 
     class _Translator:
-        def adapt_sentence(self, text, language, max_chars):
+        def translate_sentence(self, text, source, language, max_chars=None, max_words=None):
             return text
 
     monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
@@ -110,9 +113,11 @@ def test_subtitle_command_uses_backend_local_and_selected_models(tmp_path, monke
         return 0
 
     class _Translator:
-        def adapt_sentence(self, text, language, max_chars):
+        def translate_sentence(self, text, source, language, max_chars=None, max_words=None):
             return " ".join(text.split()[:max(1, max_chars // 6)])
 
+    monkeypatch.setattr(ps, "_make_compressor", lambda *a: None)
+    monkeypatch.setattr(ps, "_calibrated_rate", lambda *a, **k: 20.0)
     monkeypatch.setattr(ps, "_run", fake_run)
     monkeypatch.setattr(ps, "OllamaTranslator", _Translator)
     monkeypatch.setattr(ps, "_detect_source_language", lambda *a, **k: "en")
@@ -121,7 +126,7 @@ def test_subtitle_command_uses_backend_local_and_selected_models(tmp_path, monke
     monkeypatch.setattr(ps, "_finalize_outputs", lambda *a, **k: None)
     monkeypatch.setattr(ps, "_derive_run_label", lambda *a, **k: "run")
 
-    ps.run(_args(input_file=str(video), input_dir=str(nemo_dir),
+    ps.run(_args(input_file=str(video), input_dir=str(nemo_dir), output_dir=str(tmp_path / "out"),
                  asr_model="parakeet-ultra", translator="tower", skip_dub=True))
     cmd = seen["cmd"]
     assert "--backend" in cmd and cmd[cmd.index("--backend") + 1] == "local"

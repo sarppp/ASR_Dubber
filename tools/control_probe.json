@@ -1,0 +1,30 @@
+[
+  {
+    "technique": "B words",
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde.",
+    "chars": 190,
+    "words": 26,
+    "seconds": 1.18
+  },
+  {
+    "technique": "C words+JSON",
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass es eine transformative Technologie sein würde.",
+    "chars": 120,
+    "words": 15,
+    "seconds": 1.21
+  },
+  {
+    "technique": "D self-shorten",
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie transformative Technologie wäre und wir hofften, sie würde das Leben beeinflussen.",
+    "chars": 160,
+    "words": 21,
+    "seconds": 2.2
+  },
+  {
+    "technique": "E hard cut",
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie transformative Technologie wäre und",
+    "chars": 113,
+    "words": 14,
+    "seconds": 0.0
+  }
+]

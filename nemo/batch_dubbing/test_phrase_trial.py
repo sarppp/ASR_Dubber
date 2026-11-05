@@ -177,7 +177,24 @@ def test_billing_snapshot_alone_cannot_claim_a_completed_video(tmp_path):
     assert result['status'] == 'incomplete'
     assert result['billing_final'] is False
     assert result['application_cost_usd_so_far'] == '0'
-    assert len(result['issues']) == 7
+    assert len(result['issues']) == 9
+
+
+def test_spoken_groups_preserve_word_provenance_and_speaker_boundaries():
+    from batch_dubbing.phrase_trial_spoken import sentence_groups, validate_spoken
+    from batch_dubbing.natural_pipeline import validate_units
+    data = speech_fixture(); original = deepcopy(data)
+    groups = sentence_groups(data)
+    assert data == original
+    assert [i for g in groups for i in g['source_word_indices']] == list(range(len(data['source_words'])))
+    for group in groups:
+        assert {w['speaker'] for w in group['words']} == {group['speaker']}
+        assert group['source_start'] == group['words'][0]['start']
+        assert group['source_end'] == group['words'][-1]['end']
+    translated = [validate_spoken(json.dumps({'de':'Guter Text.'}), g) for g in groups]
+    assert validate_units(translated, data['duration_seconds']) == translated
+    with pytest.raises(ValueError):
+        validate_spoken(json.dumps({'de':'x'*10000}), groups[0])
 
 
 def test_batch_timing_uses_matching_controller_run(tmp_path):

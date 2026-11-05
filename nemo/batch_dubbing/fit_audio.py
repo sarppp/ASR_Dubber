@@ -6,11 +6,13 @@ model. Short clips keep their natural tempo; excess speech fails explicitly.
 from __future__ import annotations
 
 import array
+import errno
 import hashlib
 import json
 import math
 from numbers import Real
 import os
+import shutil
 from pathlib import Path
 import struct
 import sys
@@ -29,6 +31,33 @@ _FIT_LOCK = threading.Lock()
 
 class AudioFitError(ValueError):
     """Speech cannot fit safely; caller must not publish a partial dub."""
+
+
+def _publish_exclusive(source, destination):
+    """Publish without replacing existing data, including on Modal volumes.
+
+    Modal's mounted volume rejected hard links with EPERM in the real T4
+    test. Exclusive creation preserves the no-overwrite contract there.
+    Readers encountering a write in progress fail closed on integrity checks.
+    """
+    try:
+        os.link(source, destination)
+        return
+    except OSError as exc:
+        if exc.errno not in (errno.EPERM, errno.EOPNOTSUPP, errno.EXDEV, errno.ENOSYS):
+            raise
+    with open(source, "rb") as src:
+        # Keep this open outside the cleanup block: an existing destination
+        # belongs to another invocation and must never be removed.
+        dst = open(destination, "xb")
+        try:
+            with dst:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+        except BaseException:
+            Path(destination).unlink(missing_ok=True)
+            raise
 
 
 def _finite(value, name):
@@ -200,9 +229,9 @@ def fit_file(audio_path, target_dur, max_speed=1.15, min_speed=1.0):
             staged_receipt = tmp / "receipt.json"
             staged_receipt.write_text(json.dumps(metadata, indent=2) + "\n")
             # Exclusive publication never replaces a previous user artifact.
-            os.link(staged_receipt, receipt)
+            _publish_exclusive(staged_receipt, receipt)
             try:
-                os.link(staged, destination)
+                _publish_exclusive(staged, destination)
             except BaseException:
                 receipt.unlink()  # This invocation exclusively created it above.
                 raise

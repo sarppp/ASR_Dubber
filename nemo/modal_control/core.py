@@ -181,6 +181,10 @@ def load_catalog(path):
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+", name):
             raise ValueError("Invalid job name")
         for key in ("command", "smoke_command"):
+            if key == "smoke_command" and job.get("smoke_mode") == "offline_receipt":
+                if job.get(key):
+                    raise ValueError("Offline receipt cannot execute a smoke command")
+                continue
             if (
                 not isinstance(job.get(key), list)
                 or not job[key]
@@ -249,6 +253,11 @@ def cancel_apps(store, rid, app_ids, modal_command, env):
 
 
 def stage(store, rid, job, smoke, env, modal_command):
+    if smoke and job.get("smoke_mode") == "offline_receipt":
+        from .offline import verify_receipt
+        verified = verify_receipt(job)
+        store.event(rid, "offline_preflight_verified", {"files": verified, "cloud_calls": 0})
+        return verified
     name = "smoke" if smoke else "workload"
     cmd = job["smoke_command" if smoke else "command"]
     d = store.root / "runs" / rid

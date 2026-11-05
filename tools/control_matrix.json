@@ -1,0 +1,164 @@
+[
+  {
+    "engine": "ling",
+    "sentence": 1,
+    "budget": 10,
+    "words": 27,
+    "overshoot": 2.7,
+    "seconds": 1.16,
+    "text": "Ich glaube, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass man ab und zu eine Entdeckung macht und im Bauch weiß, dass sie wirklich tiefgreifend ist."
+  },
+  {
+    "engine": "ling",
+    "sentence": 1,
+    "budget": 14,
+    "words": 27,
+    "overshoot": 1.929,
+    "seconds": 1.08,
+    "text": "Ich glaube, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass man ab und zu eine Entdeckung macht und im Bauch weiß, dass sie wirklich tiefgreifend ist."
+  },
+  {
+    "engine": "ling",
+    "sentence": 1,
+    "budget": 18,
+    "words": 28,
+    "overshoot": 1.556,
+    "seconds": 1.12,
+    "text": "Ich glaube, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass man ab und zu eine Entdeckung macht und im Bauch weiß, dass sie etwas wirklich Tiefgreifendes ist."
+  },
+  {
+    "engine": "ling",
+    "sentence": 2,
+    "budget": 10,
+    "words": 26,
+    "overshoot": 2.6,
+    "seconds": 1.04,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde."
+  },
+  {
+    "engine": "ling",
+    "sentence": 2,
+    "budget": 14,
+    "words": 14,
+    "overshoot": 1.0,
+    "seconds": 1.04,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde."
+  },
+  {
+    "engine": "ling",
+    "sentence": 2,
+    "budget": 18,
+    "words": 26,
+    "overshoot": 1.444,
+    "seconds": 1.07,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde."
+  },
+  {
+    "engine": "ling",
+    "sentence": 3,
+    "budget": 10,
+    "words": 34,
+    "overshoot": 3.4,
+    "seconds": 1.2,
+    "text": "\"Es ist jetzt vierzehn Jahre später und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge zu tun wie das Ändern von krankheitsverursachenden Genen, und das wird bereits getan.\""
+  },
+  {
+    "engine": "ling",
+    "sentence": 3,
+    "budget": 14,
+    "words": 34,
+    "overshoot": 2.429,
+    "seconds": 1.19,
+    "text": "\"Es ist jetzt vierzehn Jahre später und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge zu tun wie das Ändern von krankheitsverursachenden Genen, und das wird bereits getan.\""
+  },
+  {
+    "engine": "ling",
+    "sentence": 3,
+    "budget": 18,
+    "words": 15,
+    "overshoot": 0.833,
+    "seconds": 1.31,
+    "text": "Es ist jetzt vierzehn Jahre später und es ist erstaunlich zu sehen, was passiert ist."
+  },
+  {
+    "engine": "tower",
+    "sentence": 1,
+    "budget": 10,
+    "words": 29,
+    "overshoot": 2.9,
+    "seconds": 8.74,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass wir hin und wieder eine Entdeckung machen und in unserem Bauch wissen, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "engine": "tower",
+    "sentence": 1,
+    "budget": 14,
+    "words": 29,
+    "overshoot": 2.071,
+    "seconds": 1.59,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass wir ab und zu eine Entdeckung machen und in unserem Bauch wissen, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "engine": "tower",
+    "sentence": 1,
+    "budget": 18,
+    "words": 29,
+    "overshoot": 1.611,
+    "seconds": 1.5,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass wir hin und wieder eine Entdeckung machen und in unserem Bauch wissen, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "engine": "tower",
+    "sentence": 2,
+    "budget": 10,
+    "words": 35,
+    "overshoot": 3.5,
+    "seconds": 1.66,
+    "text": "Als wir unsere Forschung über CRISPR erstmals veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass sie das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "engine": "tower",
+    "sentence": 2,
+    "budget": 14,
+    "words": 35,
+    "overshoot": 2.5,
+    "seconds": 1.59,
+    "text": "Als wir unsere Forschung über CRISPR erstmals veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass sie das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "engine": "tower",
+    "sentence": 2,
+    "budget": 18,
+    "words": 35,
+    "overshoot": 1.944,
+    "seconds": 1.71,
+    "text": "Als wir unsere Forschung über CRISPR erstmals veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass sie das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "engine": "tower",
+    "sentence": 3,
+    "budget": 10,
+    "words": 34,
+    "overshoot": 3.4,
+    "seconds": 1.83,
+    "text": "Es ist jetzt vierzehn Jahre vergangen, und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  },
+  {
+    "engine": "tower",
+    "sentence": 3,
+    "budget": 14,
+    "words": 34,
+    "overshoot": 2.429,
+    "seconds": 1.85,
+    "text": "Es ist jetzt vierzehn Jahre vergangen, und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  },
+  {
+    "engine": "tower",
+    "sentence": 3,
+    "budget": 18,
+    "words": 34,
+    "overshoot": 1.889,
+    "seconds": 1.79,
+    "text": "Es ist jetzt vierzehn Jahre vergangen, und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  }
+]

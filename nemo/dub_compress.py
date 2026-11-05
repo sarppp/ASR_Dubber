@@ -95,6 +95,9 @@ class Compressor:
                     form=form,
                     words=len(candidate.split()),
                     chars=len(candidate)))
+            # Do not leave one model resident when trying the next engine.
+            if hasattr(engine, "unload"):
+                engine.unload()
         found.sort(key=lambda c: c.chars)
         return found
 
@@ -137,7 +140,9 @@ class Compressor:
                         "reason": "answered in another language"})
                     continue
                 if guard is not None:
-                    problem = guard(current, candidate.text)
+                    # Compare every round to the original. Pairwise checks
+                    # permit repeated 45% losses to compound unnoticed.
+                    problem = guard(text, candidate.text)
                     if problem:
                         round_report["rejected"].append({
                             "engine": candidate.engine, "form": candidate.form,
@@ -162,6 +167,7 @@ class Compressor:
                 break
             else:
                 # No candidate in this round; stop.
+                report["rejected"].extend(round_report["rejected"])
                 break
             report["rejected"].extend(round_report["rejected"])
 

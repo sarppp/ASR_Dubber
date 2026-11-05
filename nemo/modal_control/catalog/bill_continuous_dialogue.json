@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "bill_continuous_dialogue": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/dialogue_trial_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial",
+        "--smoke-result",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial/smoke/report.json"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/dialogue_trial_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/dialogue_trial_worker.py",
+        "batch_dubbing/dialogue_trial.py",
+        "batch_dubbing/native_excerpt_probe.py",
+        "batch_dubbing/cheap_native_probe.py",
+        "batch_dubbing/dialogue_trial_review.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "modal_control/batch_inputs/video_00.gpu_full.json",
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/inputs.json"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial/workload/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial/smoke/report.json"
+      ],
+      "max_seconds": 180,
+      "build_timeout_seconds": 30,
+      "startup_timeout_seconds": 45,
+      "idle_timeout_seconds": 155,
+      "review": {
+        "purpose": "Continuous Bill Ackman opening before/after, replacing isolated small pieces",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1; cached im-40qUTZlx5ttgX1nwrQdvyw",
+        "precision": "ONNX CPU, complete FLOAT32 mono 44100 Hz WAV",
+        "reason": "User rejected isolated phrase comparisons and selected Bill Ackman first15seconds. Finish the last sentence at17.84seconds to avoid cutting words; keep the passage continuous.",
+        "input": "Bill Ackman opening0..17.84seconds, English cues0..7 and German cues0..7. One old-German whole passage smoke then one assistant-rewritten whole passage workload, same M1 preset/seed at native speed1.0/eightsteps. TwoAPIcalls/fouractualinternalchunks total. Smoke reused in final review. Source English transcript is recorded unchanged, not newly audio-verified.",
+        "input_seconds": 17.84,
+        "outputs": "dubbing_naturalness_2026-10-28/bill_continuous_2026-10-29/trial/smoke and/workload: two unique complete native FLOAT32mono44100WAVs, hashes, duration and caption-span differences; result_review.html presents existing German-dub opening vs new full take, with original English and native old-wording control in expandable details. Max30sclip/180sgeneratedstage/32MiBaudio+1MiBmetadata. No transformed or overwritten source media.",
+        "quality_tradeoffs": "One continuous file per take, generated from the entire passage. Pinned package internally splits each into two chunks at300characters, with0.3s interchunk silence. Speech may be longer/shorter than17.84s and remains whole; no time-stretching, trimming or padding. Not an exact acoustic pause match, speaker clone or synchronized new video. Same M1 model limits remain. Cache miss aborts without download. No retries.",
+        "cost_estimate": "Controller pinned-rate compute maximum: two180s stages at2CPU/4GiB approximately $0.01263; allowing cleanup and up to64MiB total audio transfer suggests about $0.02. Declared target $0.10, not a provider-enforced billing cap; current provider charges/overhead may differ. No GPU, paid retry, ASR or translation API cost.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 360,
+        "max_synthesis_calls_including_smoke": 2,
+        "max_internal_chunks_including_smoke": 4
+      }
+    }
+  }
+}

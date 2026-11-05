@@ -33,15 +33,25 @@ def validate_job(job):
     if review['max_containers'] != 1:
         raise ValueError('Only one container per function is allowed')
     positive(job.get('max_seconds'), 'max_seconds')
-    if review['max_total_seconds'] < 2 * job['max_seconds']:
+    offline = job.get('smoke_mode') == 'offline_receipt'
+    if job.get('smoke_mode', 'remote') not in ('remote', 'offline_receipt'):
+        raise ValueError('Unknown smoke mode')
+    if review['max_total_seconds'] < (1 if offline else 2) * job['max_seconds']:
         raise ValueError('max_total_seconds must cover both smoke and workload deadlines')
     sources = {(Path(job['cwd']) / f).resolve() for f in job.get('source_files', [])}
     if not sources:
         raise ValueError('source_files must pin all worker code, imported helpers and input/configuration files')
+    if offline:
+        from .offline import verify_receipt
+        verify_receipt(job)
     # Direct Modal entrypoints only; shell wrappers and arbitrary local commands
     # cannot hide unreviewed hardware allocation behind a CPU/T4 declaration.
     workers = set()
     for key in ('smoke_command', 'command'):
+        if offline and key == 'smoke_command':
+            if job.get(key):
+                raise ValueError('Offline receipt cannot execute a smoke command')
+            continue
         cmd = job[key]
         if len(cmd) < 5 or cmd[1:4] != ['-m', 'modal', 'run'] or not cmd[4].endswith('.py'):
             raise ValueError(f'{key}: use python -m modal run worker.py; wrappers/detached runs are forbidden')

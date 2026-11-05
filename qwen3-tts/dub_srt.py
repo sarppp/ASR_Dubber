@@ -55,7 +55,7 @@ def parse_srt(path: Path) -> List[Dict]:
     Returns list of:
       {"index": int, "start": float, "end": float, "speaker": str, "text": str}
     """
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8-sig")
     blocks = re.split(r"\n\s*\n", text.strip())
     segments = []
 

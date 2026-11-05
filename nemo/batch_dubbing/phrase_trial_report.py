@@ -75,7 +75,7 @@ def report(trial):
     old, _ = application_total(before['report'])
     new, items = application_total(after['report'])
     timings, issues = {}, []
-    for stage, name in [('asr', 'asr'), ('translation', 'translated'), ('dub', 'dub')]:
+    for stage, name in [('asr', 'asr'), ('translation', 'translated'), ('spoken', 'dub_ready'), ('dub', 'dub')]:
         timings[stage] = {}
         for part, filename in [('smoke', stage + '_smoke.json'), ('full', name + '.json')]:
             path = trial / filename
@@ -87,6 +87,8 @@ def report(trial):
                 issues.append(f'{stage}/{part}: no completed local artifact')
                 continue
             data = json.loads(path.read_text())
+            if stage == 'spoken' and part == 'full':
+                data = data['spoken_translation']
             timings[stage][part] = {'status': data.get('status'),
                 'client_call_seconds': data.get('client_call_seconds'),
                 'worker_timings': data.get('timings', {}),

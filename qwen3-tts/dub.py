@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from tqdm import tqdm
+from dub_cache import file_digest, speech_key, restore as restore_speech, save as save_speech
 
 log = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ Examples:
     work_dir   = Path(args.workdir).resolve()
     import hashlib
     cache_key = hashlib.sha256(srt_path.read_bytes() + repr((
-        "natural-fit-v1-gap025", args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
+        "natural-fit-v2-bom-report", args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
         args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
         str(video_path), video_path.stat().st_mtime_ns,
     )).encode()).hexdigest()[:16]
@@ -267,6 +268,14 @@ Examples:
     if args.merge_gap > 0:
         segments = merge_segments(segments, gap_sec=args.merge_gap,
                                   max_dur=args.merge_max_dur)
+
+    report_path = work_dir / "fit_report.json"
+    report_base = {"schema_version": 2, "script_sha256": file_digest(srt_path),
+                   "engine": args.tts_engine, "language": args.language,
+                   "cache_dir": str(cache_dir), "max_speed": args.max_speed,
+                   "expected_segments": segments}
+    report_path.write_text(json.dumps({**report_base, "status": "running",
+                                       "segments": []}, ensure_ascii=False, indent=1))
 
     # Compute SRT duration early — used for trimming audio AND final video
     srt_end = max(s["end"] for s in segments)
@@ -336,6 +345,29 @@ Examples:
         next_start = segments[idx + 1]["start"] if idx + 1 < len(segments) else None
         _available[seg["index"]] = _fit_window(seg["start"], seg["end"], next_start)
 
+    # A whole-script hash is useful for fitted checkpoints, but it used to
+    # force every unchanged sentence to be synthesised again on each retry.
+    # Share raw speech by exact synthesis identity; refit it for the new slot.
+    raw_cache = work_dir / "raw_speech"
+    raw_keys = {}
+    worker_digest = file_digest(Path(qwen_worker))
+    for seg in todo:
+        ref = clone_refs.get(seg["speaker"])
+        settings = {
+            "engine": args.tts_engine, "mode": args.qwen_mode,
+            "language": qwen_language, "speaker": seg["speaker"],
+            "voice": voice_map.get(seg["speaker"]), "worker": worker_digest,
+            "reference": file_digest(ref) if ref and ref.exists() else None,
+        }
+        key = speech_key(seg["text"], settings)
+        raw_keys[seg["index"]] = key
+        raw = temp_dir / f"seg_{seg['index']:04d}.wav"
+        if not raw.exists():
+            restore_speech(raw_cache, key, raw)
+    needs_synthesis = any(not (temp_dir / f"seg_{seg['index']:04d}.wav").exists()
+                          or (temp_dir / f"seg_{seg['index']:04d}.wav").stat().st_size <= 500
+                          for seg in todo)
+
     device_ids = ([None] if args.tts_engine == "supertonic"
                   else [int(x.strip()) for x in args.tts_devices.split(",")])
     n_workers  = (_auto_workers(device_ids)
@@ -361,6 +393,26 @@ Examples:
     fit_report: List[dict] = []
     fit_report_lock = threading.Lock()
 
+    def _fit_record(seg, fitted=None, error=None):
+        record = {"index": seg["index"], "start": seg["start"],
+                  "end": seg["end"], "text": seg["text"],
+                  "span": _available[seg["index"]]}
+        if error is not None:
+            record.update(needed=_needed_seconds(str(error)),
+                          tempo=_required_tempo(str(error)), error=str(error),
+                          status="failed")
+        else:
+            sidecar = json.loads(fitted.with_suffix(".json").read_text())
+            needed = sidecar["edges"]["retained_seconds"]
+            record.update(needed=needed, tempo=max(1.0, needed / record["span"]),
+                          applied_tempo=sidecar["tempo"], status="passed")
+        return record
+
+    by_index = {seg["index"]: seg for seg in segments}
+    for fitted, start, end in final_files:
+        idx = int(fitted.stem.split("_")[1])
+        fit_report.append(_fit_record(by_index[idx], fitted=fitted))
+
     # ── Shared TTS Managers (one model instance per mode) ─────────────────────
     # Instead of each worker loading its own model, we use shared managers.
     # This keeps VRAM constant (~6GB) regardless of n_workers.
@@ -370,13 +422,13 @@ Examples:
     clone_broken_global = (args.qwen_mode != "clone")
     
     # Only load clone model if we have clone refs and clone mode is enabled
-    if not clone_broken_global and clone_refs:
+    if needs_synthesis and not clone_broken_global and clone_refs:
         log.info("Loading shared clone TTS model...")
         clone_manager = SharedTTSManager(
             "clone", qwen_python, qwen_worker, device_id=device_ids[0]
         )
         clone_manager.start()
-    elif clone_broken_global:
+    elif needs_synthesis and clone_broken_global:
         # Not in clone mode - load custom model upfront
         log.info("Loading shared custom TTS model...")
         custom_manager = SharedTTSManager(
@@ -396,14 +448,10 @@ Examples:
                                min_speed=args.min_speed)
         except Exception as exc:
             with fit_report_lock:
-                fit_report.append({
-                    "index": seg_index, "start": round(start, 3), "end": round(end, 3),
-                    "span": round(max(0.01, end - start), 3),
-                    "needed": _needed_seconds(str(exc)),
-                    "tempo": _required_tempo(str(exc)),
-                    "error": str(exc),
-                })
+                fit_report.append(_fit_record(by_index[seg_index], error=exc))
             raise
+        with fit_report_lock:
+            fit_report.append(_fit_record(by_index[seg_index], fitted=fitted))
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
@@ -436,10 +484,13 @@ Examples:
                 log.info(f"   [{i:04d}] text={repr(text)}")
                 raw_out    = temp_dir / f"seg_{i:04d}.wav"
                 ok         = False
+                generated = False
+                used_fallback = False
 
                 if raw_out.exists() and raw_out.stat().st_size > 500:
                     ok = True
                 else:
+                    generated = True
                     # Try clone mode first (if available and not broken)
                     if not clone_broken_local and clone_manager:
                         ref = clone_refs.get(spk)
@@ -454,6 +505,7 @@ Examples:
 
                     # Fallback to custom mode - load model lazily if needed
                     if not ok:
+                        used_fallback = args.qwen_mode == "clone"
                         # Load custom model on first fallback (thread-safe via lock)
                         if custom_manager is None:
                             with fit_lock:  # reuse fit_lock as general lock
@@ -472,6 +524,9 @@ Examples:
                                 log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
                 if ok and raw_out.exists():
+                    # Never label a fallback voice as the requested clone.
+                    if generated and not used_fallback:
+                        save_speech(raw_cache, raw_keys[i], raw_out)
                     fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end, i)
                     with fit_lock:
                         fit_futures.append(fut)
@@ -516,13 +571,16 @@ Examples:
             log.error(f"Speech could not fit safely: {exc}")
     fit_pool.shutdown(wait=True)
 
-    if fit_report:
-        report_path = Path(args.workdir) / "fit_report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps({"max_speed": args.max_speed,
-                                           "segments": sorted(fit_report, key=lambda r: r["start"])},
-                                          ensure_ascii=False, indent=1), encoding="utf-8")
-        log.info(f"Fit report → {report_path}")
+    reported = {row["index"] for row in fit_report}
+    for seg in segments:
+        if seg["index"] not in reported:
+            fit_report.append(_fit_record(seg, error="No audio was generated"))
+    complete = not (fit_errors or worker_exceptions or len(final_files) != len(segments))
+    report_path.write_text(json.dumps({**report_base,
+                                      "status": "passed" if complete else "failed",
+                                      "segments": sorted(fit_report, key=lambda r: r["start"])},
+                                     ensure_ascii=False, indent=1), encoding="utf-8")
+    log.info(f"Fit report → {report_path}")
 
     if fit_errors or worker_exceptions or len(final_files) != len(segments):
         log.error("Dubbing incomplete; refusing to publish a track with missing speech. "

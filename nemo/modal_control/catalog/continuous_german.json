@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/modal_control/.state/runtime/bin/python",
+    "-m",
+    "modal"
+  ],
+  "billing_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/modal_control/.state/runtime/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "continuous_german": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/modal_control/.state/runtime/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/continuous_german_worker.py"
+      ],
+      "smoke_mode": "offline_receipt",
+      "smoke_command": [],
+      "source_files": [
+        "batch_dubbing/continuous_german.py",
+        "batch_dubbing/continuous_german_worker.py",
+        "batch_dubbing/trial_telemetry.py",
+        "tests/test_continuous_german.py",
+        "modal_control/__init__.py",
+        "modal_control/__main__.py",
+        "modal_control/batch_plans.py",
+        "modal_control/billing.py",
+        "modal_control/compare_benchmark.py",
+        "modal_control/core.py",
+        "modal_control/dub_segments.py",
+        "modal_control/evaluate_audio.py",
+        "modal_control/export_all_evidence.py",
+        "modal_control/gpu_probe.py",
+        "modal_control/mcp_server.py",
+        "modal_control/offline.py",
+        "modal_control/organize_report.py",
+        "modal_control/package_dub_pair.py",
+        "modal_control/plans.py",
+        "modal_control/refresh_results.py",
+        "modal_control/render_qwen17.py",
+        "modal_control/smoke_cpu_worker.py",
+        "modal_control/smoke_gpu_worker.py",
+        "modal_control/smoke_nemo_helpers.py",
+        "modal_control/speaker_timeline.py",
+        "modal_control/speaker_voices.py",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/input.de.srt",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/voice_reference.wav",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/scope.json",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/source_10cues.mp4",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_offline_smoke.json"
+      ],
+      "success_files": [
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous/report.json",
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous/CONTINUOUS_GERMAN.wav"
+      ],
+      "smoke_success_files": [
+        "new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_offline_smoke.json"
+      ],
+      "max_seconds": 300,
+      "build_timeout_seconds": 90,
+      "startup_timeout_seconds": 90,
+      "idle_timeout_seconds": 40,
+      "review": {
+        "purpose": "Remove subtitle-boundary voice resets with one continuous German take",
+        "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        "revision": "fd4b254389122332181a7c3db7f27e918eec64e3; faster-qwen3-tts==0.2.5; torch==2.6.0",
+        "precision": "bfloat16; same 8-second x-vector voice reference",
+        "reason": "User confirmed the voice stops between lines. Per-cue synthesis restarts six times inside sentences. Read the same text in one request.",
+        "input": "Exact existing input.de.srt ten texts joined with spaces, same source_10cues.mp4 (29.488 seconds) and voice_reference.wav. No new ASR or translation. Cached pinned model only; cache miss fails.",
+        "input_seconds": 29.488,
+        "outputs": "continuous/CONTINUOUS_GERMAN.wav and report.json, then local CONTINUOUS_GERMAN.mp4 with German audio and original SRT display track. Existing results preserved. Maximum 3 MB raw audio.",
+        "quality_tradeoffs": "Natural pauses remain possible. Last supplied cue ends mid-sentence. No speech speed-up or trimming; if speech exceeds the source video, hold its last frame. Original subtitles are included for review but are not force-aligned to new speech. Token cap 600; reject audio >=49 seconds. Listening still required.",
+        "cost_estimate": "Previously checked same-session rates imply <=$0.081 compute for 300 seconds at T4 + 4 CPU + 24 GiB. Allow about $0.10 compute/teardown; build/storage/transfer charges additional and unknown. Not a provider-enforced dollar cap. One synthesis call, no retries.",
+        "hardware": "T4",
+        "max_containers": 1,
+        "max_total_seconds": 300,
+        "max_synthesis_calls_including_smoke": 1
+      }
+    }
+  }
+}

@@ -69,7 +69,7 @@ class Report:
 
     @property
     def short_gaps(self) -> list[tuple[float, float]]:
-        return [g for g in self.gaps if g[1] < MIN_GAP]
+        return [g for g in self.gaps if g[1] - g[0] < MIN_GAP]
 
     @property
     def ok(self) -> bool:
@@ -169,8 +169,41 @@ def check_dub(dub_dir: Path, script: Path | None = None) -> Report:
         report.warnings.append("no TTS checkpoint found; nothing was synthesised")
         return report
 
+    checkpoints = sorted(dub_dir.rglob("cache/*/*/checkpoint.json"))
+    fit_report = dub_dir / "fit_report.json"
+    if fit_report.exists():
+        try:
+            fit = json.loads(fit_report.read_text())
+        except (OSError, ValueError):
+            report.warnings.append("unreadable fit report")
+            return report
+        failures = [s for s in fit.get("segments", [])
+                    if s.get("error") or s.get("status") == "failed"]
+        if failures:
+            report.warnings.append("failed speech segments: " + ", ".join(
+                str(s.get("index")) for s in failures))
+        if fit.get("status") == "running":
+            report.warnings.append("dub has not completed")
+        if fit.get("cache_dir"):
+            selected = Path(fit["cache_dir"]) / "checkpoint.json"
+            if selected.resolve() not in {p.resolve() for p in checkpoints}:
+                report.warnings.append("current run has no checkpoint")
+                return report
+            checkpoints = [selected]
+        expected = fit.get("expected_segments", [])
+        if expected:
+            # Use the submitted script, not an old output SRT with shifted
+            # timestamps. Matching only counts cannot establish identity.
+            submitted = [(s["start"], s["end"], s["text"]) for s in expected]
+            supplied = [(c["start"], c["end"], c["text"]) for c in cues]
+            if submitted != supplied:
+                report.warnings.append("supplied SRT does not match the current run segments")
+    if len(checkpoints) != 1:
+        report.warnings.append("ambiguous cache history; no single current run identified")
+        return report
+
     entries: list[dict] = []
-    for checkpoint in sorted(dub_dir.rglob("cache/*/*/checkpoint.json")):
+    for checkpoint in checkpoints:
         try:
             entries.extend(json.loads(checkpoint.read_text(encoding="utf-8")))
         except (OSError, ValueError):
@@ -201,10 +234,17 @@ def check_dub(dub_dir: Path, script: Path | None = None) -> Report:
         ))
 
     report.segments.sort(key=lambda s: s.start)
+    for cue in cues:
+        if not any(s.start <= cue["start"] + 0.002
+                   and s.end >= cue["end"] - 0.002 for s in report.segments):
+            report.warnings.append(f"missing speech for cue at {cue['start']:.3f}s")
     for first, second in zip(report.segments, report.segments[1:]):
-        gap = second.start - first.end
+        speech_end = first.start + first.speech
+        gap = second.start - speech_end
+        if gap < -0.001:
+            report.warnings.append(f"speech overlap at {second.start:.3f}s")
         if 0 <= gap < 5.0:
-            report.gaps.append((first.end, second.start))
+            report.gaps.append((speech_end, second.start))
 
     if not report.segments:
         report.warnings.append("no synthesised clips found")

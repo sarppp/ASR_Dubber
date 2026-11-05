@@ -1,4 +1,202 @@
-# Subtitle dubbing — status (DeepSeek work, 2026-11-04)
+# Subtitle dubbing — status (updated 2026-11-05)
+
+## Current handoff — continuous local dub and English comparison subtitles
+
+The latest review is the **single continuous German take**, not the earlier
+stitched `GERMAN_DUB.mp4`. User authorized local execution with “run it in our
+gpu”; no Modal job was launched for this correction.
+
+- **Input:** the same ten `input.de.srt` texts, joined with spaces into one
+  request. No translation changes or new punctuation. Six of the old
+  per-cue boundaries were inside sentences, explaining the voice resets.
+- **Execution:** cached `Qwen/Qwen3-TTS-12Hz-1.7B-Base`, revision
+  `fd4b254389122332181a7c3db7f27e918eec64e3`; FasterQwen 0.2.5 on the local
+  RTX 2060, FP16, sequence limit 1024, token limit 600. One synthesis call,
+  five-minute deadline, completed in **69.09 seconds**.
+- **Delivered locally:** under
+  `new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/`:
+  `CONTINUOUS_GERMAN.mp4` (29.487792 s), `CONTINUOUS_GERMAN.wav`
+  (27.76 s, mono 24 kHz PCM16), and `CONTINUOUS_GERMAN.srt`.
+  Full MP4 decode passed; there are no inserted per-cue pauses, speech cuts,
+  speed changes, or final-frame extension.
+- **English comparison:** user explicitly requested **only an SRT** to load
+  on the new German video. Delivered `CONTINUOUS_GERMAN.en.srt`, ten original
+  English cues shifted for this clip, UTF-8 BOM and CRLF. Its timing follows
+  the English source; neither language is force-aligned to the new German
+  voice. The extra English captioned video made before that clarification
+  is not the requested handoff.
+- **GPU released:** synthesis process exited; the recorded check found no
+  compute processes and 5514 MiB free. See local `gpu_released.json`.
+- **Limits:** human listening and semantic review are still open. The supplied
+  text ends mid-sentence at “dass sie das Leben”; that was preserved. Existing
+  translation problems such as “viskales Gefühl” were not silently rewritten.
+
+### Source changes included in this push
+
+Source-linked retry fixes, measured timing calibration, BOM handling,
+identity-checked raw TTS reuse, and complete fit reports are accompanied by
+regression tests. The fitter handles filesystems without hard links using
+exclusive creation. The continuous helper and local/Modal runners read one
+passage instead of generating individual subtitle entries. The controller
+can verify a pinned **offline smoke receipt** without a separate cloud
+allocation; the old prepared Modal plan is unused and its receipt is stale
+following later source/test edits, so it must not be executed as-is.
+
+The pending phrase/dialogue trial changes and test-archive moves are included
+with this source handoff. Archive allowlists keep generated media local;
+compatibility links preserve existing worker and fixture paths. Continuous
+smoke tests now use a tracked SRT fixture and temporary mocked media, so they
+do not depend on the ignored local review files. Trial catalogs reference
+local input artifacts and are not standalone downloadable datasets.
+
+Validation before push: **509 passed, 1 skipped, 574 subtests passed** across
+continuous-generation, DeepSeek retry/transport, controller, batch-dubbing,
+subtitle-pipeline, speech-rate, gate and quality suites. These were offline
+checks with mocked inference; no additional GPU or cloud job was launched.
+The staged diff also passed whitespace checks and a credential-pattern scan.
+A clean export of the staged source, without local review media, passed the
+focused generation/retry/transport/controller suite: **96 passed, 1 skipped,
+56 subtests passed**.
+
+All earlier sections below are historical checkpoints; their “open” or
+“not generated” statements do not supersede this current handoff.
+
+---
+
+## Playable German dub delivered from the saved T4 takes
+
+`new_guys/crispr/deepseek_t4_10cues_2026-11-05/GERMAN_DUB.mp4` now contains
+the actual German voice track and embedded German subtitles. The exact ten
+texts from `input.de.srt` are unchanged. `GERMAN_DUB.srt` follows the actual
+speech onsets; `GERMAN_DUB.manifest.json` records the timing and verification.
+
+All ten original PCM takes were preserved byte-for-byte in the assembled
+audio at tempo 1.0. Cues were delayed where needed to avoid speech overlap.
+The source video's last frame is held for approximately 2.4 seconds to retain
+the complete final utterance: audio 31.880 s, MP4 31.907 s. This is a playable
+native-speed review, **not a fix for fitting the original 29.479-second slots**.
+Full video/audio decoding passed. No additional model inference or T4 run was
+used for this delivery.
+
+---
+
+## 2026-11-05 — short T4 validation result
+
+User selected Modal/T4 and a short test of ten SRT entries. The exact first ten
+German entries cover source time 4.320-33.799 s: **29.479 seconds**, not the older
+approximately 98-second ten-block test. Some entries are sentence fragments.
+Existing wording and cue boundaries were preserved, with merging disabled.
+
+- All **10 raw utterances** were generated on Tesla T4 with the pinned Qwen
+  1.7B Base clone model. The first two smoke takes were reused byte-for-byte;
+  only eight new utterances were generated for the full test.
+- Independent local checking of those downloaded WAVs gives **3 fitting cues
+  (4, 5, 6), 7 overlong cues (1, 2, 3, 7, 8, 9, 10)** at maximum tempo 1.0.
+  Raw speech totals 31.84 s. No final dubbed video was published.
+- The first controller attempt stopped because the transport report lacked
+  the required top-level `status`. The correction preserved a separate
+  `dub_status: needs_review`; it did not relabel fitting failures as success.
+  Remaining controller deadlines were reduced to keep combined stage bounds
+  within the original 600 seconds.
+- The T4 workload exposed a separate storage issue: Modal volume hard links
+  raised EPERM for fitted receipts. `fit_audio.py` now falls back to exclusive
+  file creation without overwriting existing artifacts. The fix is verified
+  offline with simulated unsupported hard links, collisions and partial writes;
+  it has **not** been rerun on Modal. The three affected takes pass the actual
+  fitter locally. Original remote reports/logs remain intact.
+- Offline wrapper tests now exercise the actual transport function and
+  controller completion contract with fake synthesis, including ten-cue output,
+  missing-audio rejection and wrong-GPU rejection. Together with fitting and
+  retry regressions: **38 tests + 4 subtests pass**, no model loaded.
+- All owned Modal containers were confirmed stopped. Posted owned-app costs
+  were **$0.04349934**; billing can still lag. Unrelated apps were untouched.
+
+Evidence directory: `nemo/new_guys/crispr/deepseek_t4_10cues_2026-11-05/`.
+`verified_fit_report.json` is the final local audit of real T4 audio;
+`workload/` preserves the remote result; `cloud_closeout.json` records shutdown
+and billing; `smoke_reuse_verified.json` records byte identity.
+
+**Latest user boundary:** do small local/offline smoke tests for every component
+first, then only one bounded T4 run for the result. No further T4 execution was
+performed after that instruction. Any next attempt must follow that sequence,
+rather than using paid smoke/retry runs to discover wrapper errors.
+
+---
+
+## 2026-11-05 — verified repair, fresh model run still pending
+
+This section supersedes the historical claims below that all offline checks
+passed and that all real speech fitted. The checkout initially failed its own
+offline harness. The current repair passes **213 focused pytest tests**,
+including 20 new regressions in `nemo/tests/test_deepseek_retry.py`. The standard
+`python3 tools/check_dubbing.py --offline` harness includes those regressions
+and passes without loading any model.
+
+Confirmed bugs and fixes:
+
+- **Missing opening speech:** the pipeline writes UTF-8 with BOM, but
+  `qwen3-tts/dub_srt.py` read plain UTF-8 and silently skipped cue 1. A two-cue
+  reproduction returned only cue 2. Reading `utf-8-sig` preserves both.
+- **Wrong sentence rewritten:** `_row_at()` expanded sentence boundaries by
+  300 ms and selected the preceding row at touching/nearby boundaries. Exact
+  onsets now take priority; an unmatched timestamp does not select a distant
+  sentence. A merged failure spanning several rows is left unresolved rather
+  than charged to only one row.
+- **Compressor bypassed:** `_adapt_from_report()` accepted unchanged or longer
+  translations and recorded them as changes. It now rejects those and tries
+  the compressor when a candidate is absent or still above the measured budget.
+  Retry estimates are labelled `estimate_pending_tts`, not measured passes.
+- **Lost source:** custom subtitle-language selections could omit the source.
+  Source SRT generation is now mandatory for adaptation, and retry rejects a
+  missing source explicitly. The documented `None` traceback was not available;
+  it is not claimed as reproduced. A full mocked pipeline retry verifies that
+  the actual source path reaches the retry.
+- **Unstable retries:** the whole-script cache hash forced unchanged lines to
+  be synthesised again after a text edit. A separate raw-speech cache now checks
+  exact text, speaker, voice/reference, language, engine and worker identity,
+  plus audio integrity. Only changed speech is synthesised; reused speech is
+  fitted again for its current time window. Historical checkpoints are retained.
+- **Misleading evidence:** fit reports now include passed, failed and cached
+  segments, expected input segments, script hash and cache directory. The timing
+  checker rejects missing cues, pending runs and ambiguous cache histories.
+  Successful sidecars alone cannot establish that every segment fitted.
+- **Calibration and limits:** the calibrated rate is now actually used by the
+  gate. Calibration requires a matching report and includes failed fits; it no
+  longer pools historical success-only sidecars. The dub command respects
+  `--fit-target 1.0` even when `--max-speed` retains its 1.15 default. Translation
+  models are unloaded before TTS; compressor rounds check against the original
+  text so repeated small content losses cannot compound past the guard.
+
+Verification:
+
+```bash
+python3 tools/check_dubbing.py --offline
+qwen3-tts/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_dubbing_gate.py tests/test_speech_rate.py tests/test_dub_quality.py \
+  tests/test_subtitle_pipeline.py tests/test_dub_srt.py tests/test_dub_pipeline.py \
+  nemo/tests/test_deepseek_retry.py
+```
+
+The integration regression runs the actual dub orchestration with a fake voice
+and fitter: first attempt fails one sentence and refuses publication; the retry
+synthesises only the changed sentence, reports both sentences, and passes.
+A fully cached resume starts no voice worker.
+
+Rechecking the existing CRISPR artifacts now returns `ok: false`, with
+`failed speech segments: 4, 9` and
+`ambiguous cache history; no single current run identified`. The saved report
+still records required tempos **1.231** and **1.139**. No existing audio was
+regenerated, and no vendor/cloud inference was performed during this repair.
+
+Remaining verification: a fresh bounded Qwen run at 1.0x, followed by review of
+the actual speech and meaning. The live worker selects **Qwen3-TTS 1.7B**
+(Base for clone; CustomVoice for fallback), so the historical 0.6B benchmark is
+not the same configuration. Character/number/language heuristics do not prove
+semantic preservation, and these code fixes do not guarantee every sentence
+can be shortened enough. ASR/AGENTS.md requires a reviewed Modal release or an
+explicit user override before local TTS inference.
+
+---
 
 Pipeline: **subtitle-dubbing** = Parakeet Ultra ASR → cue packing → whole-sentence
 Tower translation → deterministic split → gate + adaptation → Qwen dub.
@@ -310,3 +508,13 @@ was 1.9× too low. Two things follow:
 - `CRISPR ist ein akronym` — clipped / lower-case.
 - `Kapitel 1. Die Anatomie eines Durchbruchs.` fine, but the following sentence
   can lose its subject on long blocks.
+
+
+## 2026-11-05: voice pauses between subtitle lines
+
+User confirmed the problem is the voice stopping between lines. Audit: ten separate TTS takes, six boundaries inside sentences, only 40 ms inserted by assembly. The raw takes themselves contain the pauses/resets. Prepared `batch_dubbing/continuous_german_worker.py`: one unchanged full-passage call to the same pinned Qwen Base clone on one T4. Offline smoke receipt support in the controller avoids a second cloud smoke allocation and pins all tested inputs/helpers. 109 tests passed, one skipped, 60 subtests passed, including mocked actual worker execution and real FFmpeg packaging. No new inference run started. Review plan: `new_guys/crispr/deepseek_t4_10cues_2026-11-05/CONTINUOUS_PLAN.md`. Current GERMAN_DUB.mp4 is still the rejected stitched version; do not present it as fixed.
+
+
+## 2026-11-05: continuous take generated on local RTX 2060
+
+User override: "run it in our gpu". Ran cached pinned Qwen Base once in FP16, max sequence 1024, token cap 600, five-minute shell deadline. Completed in 69.09 s; 27.76 s mono 24 kHz PCM16 output. Thirteen focused offline tests passed before inference. Local deliverable: `new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/CONTINUOUS_GERMAN.mp4`, with matching WAV and original display-time SRT. Full video decoding passed. No speech speeding/trimming/inserted cue gaps and no final-frame hold. Subtitle timing is not force-aligned; human listening review remains. No Modal job started. GPU release verified: no compute processes, 5514 MiB free. The prepared Modal plan was not used.

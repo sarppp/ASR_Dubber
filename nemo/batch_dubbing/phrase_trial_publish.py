@@ -20,7 +20,10 @@ def publish(trial):
     manifest = json.loads((trial / 'input/manifest.json').read_text())
     if data['status'] != 'complete' or dub['status'] != 'complete':
         raise ValueError('Do not publish an incomplete test')
-    if data['input_sha256'] != sha256(trial / 'asr.json') or dub['input_sha256'] != sha256(trial / 'translated.json'):
+    spoken = json.loads((trial / 'dub_ready.json').read_text())
+    if (data['input_sha256'] != sha256(trial / 'asr.json')
+            or spoken['input_sha256'] != sha256(trial / 'translated.json')
+            or dub['input_sha256'] != sha256(trial / 'dub_ready.json')):
         raise ValueError('Model outputs do not match their source artifacts')
     original = Path(manifest['source'])
     if sha256(original) != manifest['source_sha256']:

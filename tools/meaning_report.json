@@ -1,0 +1,14 @@
+{
+  "sentences": 9,
+  "failed": [],
+  "notes": [
+    {
+      "index": 9,
+      "note": "tail truncated by --max-sentences; WER not meaningful"
+    }
+  ],
+  "mean_wer": 0.143,
+  "mean_similarity": 0.933,
+  "warnings": [],
+  "ok": true
+}

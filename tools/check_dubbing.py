@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SUITES = [
+    ROOT / "nemo" / "tests" / "test_deepseek_retry.py",
     ROOT / "tests" / "test_dubbing_gate.py",
     ROOT / "tests" / "test_speech_rate.py",
     ROOT / "tests" / "test_dub_quality.py",

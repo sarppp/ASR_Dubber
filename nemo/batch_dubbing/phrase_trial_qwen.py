@@ -34,7 +34,7 @@ def synthesize_qwen(data, seconds, *, emit, commit):
     import torch
     from scipy.signal import resample_poly
     from huggingface_hub import snapshot_download
-    from qwen_tts import Qwen3TTSModel
+    from faster_qwen3_tts import FasterQwen3TTS
 
     started = time.monotonic()
     destination = Path('/cache/crispr-10min-qwen') / uuid.uuid4().hex
@@ -44,12 +44,12 @@ def synthesize_qwen(data, seconds, *, emit, commit):
     native, load_seconds = [], None
 
     def persist():
-        report.update(model=MODEL, revision=REVISION, runtime='qwen-tts==0.1.1',
-                      dtype='float32', attention='sdpa', seconds=seconds, scope=scope,
+        report.update(model=MODEL, revision=REVISION, runtime='faster-qwen3-tts==0.2.5; qwen-tts==0.1.1',
+                      dtype='bfloat16', attention='sdpa', seconds=seconds, scope=scope,
                       native_artifact_directory=str(destination), native_takes=native,
                       voice_assignments=voices, load_seconds=load_seconds,
                       worker_wall_seconds=time.monotonic()-started,
-                      speech_text_basis='Adjacent German phrase translations joined by source utterance',
+                      speech_text_basis='Source-linked sentence groups translated directly to concise spoken German',
                       timing_conditioning='Brisk delivery with source-duration instruction; measured fit afterward, maximum 1.15x tempo',
                       semantic_quality_verified=False, listening_review_complete=False)
         (destination / 'worker-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
@@ -59,7 +59,7 @@ def synthesize_qwen(data, seconds, *, emit, commit):
         torch.set_num_threads(4)
         torch.manual_seed(42)
         local = snapshot_download(MODEL, revision=REVISION)
-        model = Qwen3TTSModel.from_pretrained(local, device_map='cuda:0', dtype=torch.float32,
+        model = FasterQwen3TTS.from_pretrained(local, device='cuda', dtype=torch.bfloat16,
                                              attn_implementation='sdpa')
         load_seconds = time.monotonic()-started
         emit('model_loaded', seconds=load_seconds, model=MODEL)
@@ -70,7 +70,7 @@ def synthesize_qwen(data, seconds, *, emit, commit):
             target_seconds = unit['source_end'] - unit['source_start']
             waves, sr = model.generate_custom_voice(
                 text=text, language='German', speaker=voice,
-                instruct=('Speak clearly in German at a brisk, fluent interview pace. '
+                instruct=('Speak clearly in German at a natural, fluent interview pace. '
                           f'Aim to finish this text in about {target_seconds:.1f} seconds. '
                           'Preserve every word. Avoid dramatic pauses and drawn-out syllables.'),
                 max_new_tokens=1440)

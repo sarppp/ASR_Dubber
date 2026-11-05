@@ -1,5 +1,6 @@
 """Tiny synthetic WAV regressions; no model or source-media processing."""
 import array
+import errno
 import json
 import math
 from pathlib import Path
@@ -36,6 +37,32 @@ class FitAudioTests(unittest.TestCase):
 
     def metadata(self, output):
         return json.loads(output.with_suffix(".json").read_text())
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg unavailable")
+    def test_volume_without_hardlinks_can_publish_and_resume(self):
+        with patch.object(fit_audio.os, "link", side_effect=OSError(errno.EPERM, "unsupported link")):
+            output = fit_audio.fit_file(self.path, 1, max_speed=1.)
+        self.assertEqual(self.metadata(output)["tempo"], 1.)
+        self.assertEqual(fit_audio.fit_file(self.path, 1, max_speed=1.), output)
+
+    def test_volume_fallback_never_overwrites_existing_file(self):
+        destination = self.path.parent / "existing.wav"
+        destination.write_bytes(b"keep this artifact")
+        with patch.object(fit_audio.os, "link", side_effect=OSError(errno.EPERM, "unsupported link")):
+            with self.assertRaises(FileExistsError):
+                fit_audio._publish_exclusive(self.path, destination)
+        self.assertEqual(destination.read_bytes(), b"keep this artifact")
+
+    def test_partial_volume_write_is_removed(self):
+        destination = self.path.parent / "partial.wav"
+        def fail(source, target):
+            target.write(b"partial")
+            raise OSError("write failed")
+        with patch.object(fit_audio.os, "link", side_effect=OSError(errno.EPERM, "unsupported link")), \
+             patch.object(fit_audio.shutil, "copyfileobj", side_effect=fail):
+            with self.assertRaises(OSError):
+                fit_audio._publish_exclusive(self.path, destination)
+        self.assertFalse(destination.exists())
 
     def test_invalid_old_policy_rejected_before_processing(self):
         for minimum, maximum in ((.65, 1.15), (1, 1.5), (1, float("nan")), (True, 1.15)):
