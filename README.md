@@ -1,24 +1,29 @@
 # ASR Dubber — End-to-End Local Dubbing Stack
 
-## Default dubbing engine
+## Default dubbing workflow
 
-Dubbing now defaults to **Supertonic 3 on CPU**, using preset **M1**, the voice
-used in the German comparison. Both `run_pipeline.py` and `qwen3-tts/dub.py`
-select it automatically. No voice-cloning reference extraction is needed.
-Target language and background-music preservation remain explicit pipeline settings.
+`run_pipeline.py` defaults to **Ultra ASR → whole-passage Tower translation →
+Qwen Base voice cloning with continuous synchronization**. It freezes paired
+subtitle text before synthesis, aligns source speech on CPU, generates bounded
+continuous takes, then measures synchronization and aligns the adjusted speech
+again to produce matching per-language and combined subtitles. The full picture
+and absolute context starts remain intact; failed checks require review.
 
 ```bash
 uv run python run_pipeline.py --target-lang de
-# Optional: previous Qwen 1.7B voice cloning backend
-uv run python run_pipeline.py --target-lang de --tts-engine qwen --qwen-mode clone
+# Optional background separation/preservation (default replaces source audio):
+uv run python run_pipeline.py --target-lang de --preserve-background
+# Optional Supertonic CPU voice:
+uv run python run_pipeline.py --target-lang de --tts-engine supertonic --supertonic-voice M1
 ```
 
-Use `--supertonic-voice M1` (or M2–M5 / F1–F5) to choose a preset.
-Run `uv sync --project qwen3-tts` after updating to install the pinned CPU dependency.
-Model assets download on first synthesis. Cached segments/checkpoints are separated
-by backend, input and synthesis settings; timing JSON records the selected backend.
-The old `dubber_modal.py` wrapper references a retired `fish_qwen_copy.py` entrypoint;
-use the pipeline above. This default change does not deploy or launch Modal jobs.
+The accepted 29-second reproduction, exact recipe, model pins, source-context
+provenance, and replay command are in
+[nemo/batch_dubbing/SYNCED_WORKFLOW.md](nemo/batch_dubbing/SYNCED_WORKFLOW.md).
+The user confirmed the actual pipeline result matches on 2026-11-06.
+Legacy-dubbing and standalone `qwen3-tts/dub.py` retain their Supertonic defaults.
+Model assets download on first synthesis; caches are separated by backend,
+input and synthesis settings. This change launches no Modal jobs.
 
 
 ## What This Project Solves
@@ -199,7 +204,7 @@ selectable but are not defaults. Details and known limits:
 
 Dubbing consumes these subtitles: `run_pipeline.py` defaults to
 `--pipeline subtitle-dubbing`, which produces the target subtitles with Ultra +
-Tower and then dubs them with the existing TTS step. The old NeMo +
+Tower and then applies the confirmed continuous Qwen synchronization workflow. The old NeMo +
 Canary/Gemma flow is `--pipeline legacy-dubbing`.
 
 ```bash

@@ -180,13 +180,13 @@ class RetryTests(unittest.TestCase):
         result = Report(gaps=[(40., 40.1), (60., 60.4)])
         self.assertEqual(result.short_gaps, [(40., 40.1)])
 
-    def test_run_passes_source_through_to_measured_retry(self):
+    def test_source_anchored_run_passes_source_through_to_measured_retry(self):
         video = self.root / "clip.mp4"
         video.write_bytes(b"fixture")
         args = SimpleNamespace(input_dir=None, input_file=str(video),
             output_dir=str(self.root / "output"), trim=0, language="en", target_lang="de",
             whisper_model="base", tts_engine="qwen", fit_target=1., max_sentences=3,
-            skip_dub=False)
+            skip_dub=False, dub_timing="source-anchored")
         translator = Mock()
         translator.translate_sentence.return_value = self.short
         with patch.object(ps, "_produce_subtitles", return_value={"en": self.source, "de": self.dub}), \

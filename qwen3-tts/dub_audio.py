@@ -683,120 +683,18 @@ def stitch_and_mix(
     output_dir: Path,
     temp_dir: Path,
     background: Optional[Path] = None,   # None when --no-demucs
-    trim_to: Optional[float] = None,     # trim video to this many seconds (from SRT end)
+    trim_to: Optional[float] = None,     # rejected: excerpt selection belongs upstream
 ) -> Tuple[Path, List[Tuple[float, float, float, float]]]:
+    """Render native takes at absolute source starts and preserve the full video.
+
+    A missing take or overrun fails publication instead of shifting later audio.
     """
-    Concatenate dubbed clips with silence gaps → dub track.
-    Then mix over video:
-      - With demucs:    dub (loud) + background music (quiet) + original video
-      - Without demucs: dub track replaces audio entirely
-    If trim_to is set, the output video is trimmed to that duration.
-
-    Returns (final_video_path, actual_positions) where actual_positions is
-    a list of (actual_start, actual_end, original_start, original_end) for
-    each clip — representing where each segment actually lands in the dubbed
-    audio timeline.
-    """
-    concat_list = temp_dir / "concat.txt"
-    actual_cur = 0.0    # tracks actual position in the dubbed audio timeline
-    actual_positions: List[Tuple[float, float, float, float]] = []
-
-    with open(concat_list, "w") as f:
-        for clip_path, start, end in final_files:
-            if not clip_path.exists():
-                log.warning(f"Missing clip, skipping: {clip_path}")
-                continue
-            # Absolute positioning: place each clip at its original start time.
-            # The gap is computed from actual_cur (real position) so cumulative
-            # drift from previous clips is corrected each iteration.
-            gap = start - actual_cur
-            if gap > 0.001:
-                sil = temp_dir / f"sil_{actual_cur:.3f}.wav"
-                subprocess.run(
-                    f'ffmpeg -f lavfi -i anullsrc=r=24000:cl=mono -t {gap:.6f}'
-                    f' "{sil}" -y -loglevel error',
-                    shell=True, check=True,
-                )
-                f.write(f"file '{sil.resolve()}'\n")
-                actual_cur += gap
-            elif gap < -0.001:
-                # Previous clip overran into this slot (shouldn't happen with
-                # exact speed_fit, but handle gracefully).  The clip will start
-                # slightly late — better than overlapping or crashing.
-                log.warning(
-                    f"Clip at {start:.3f}s: previous segment overran by "
-                    f"{-gap:.3f}s — slight timing shift"
-                )
-            actual_start = actual_cur
-            clip_dur = _audio_duration(clip_path)
-            actual_cur += clip_dur
-            actual_positions.append((actual_start, actual_cur, start, end))
-            f.write(f"file '{clip_path.resolve()}'\n")
-
-    dub_track = output_dir / "dub_track.wav"
-    subprocess.run(
-        f'ffmpeg -f concat -safe 0 -i "{concat_list}" -c copy "{dub_track}" -y -loglevel error',
-        shell=True, check=True,
-    )
-
-    final = output_dir / "final_dub.mp4"
-
-    # Build trim flag if needed (re-encodes video to allow cutting)
-# Build trim flag if needed
-    if trim_to:
-        log.info(f"✂️  Trimming output video to {trim_to:.2f}s (matches SRT duration)")
-        trim_flags  = ["-t", str(trim_to)]
-        
-        # --- NEW GPU DETECTION LOGIC ---
-        try:
-            # Quick check if NVENC is available in this environment
-            check_gpu = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
-            if "nvenc" in check_gpu.stdout.lower():
-                log.info("🚀 RENDER MODE: GPU Accelerated (h264_nvenc)")
-                video_codec = [
-                    "-c:v", "h264_nvenc", 
-                    "-preset", "p4", 
-                    "-tune", "hq", 
-                    "-rc", "vbr", 
-                    "-cq", "19", 
-                    "-b:v", "0"
-                ]
-            else:
-                log.warning("⚠️  GPU Encoder not found! Falling back to CPU (libx264)")
-                video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
-        except Exception:
-            video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
-        # -------------------------------
-    else:
-        log.info("🚀 RENDER MODE: Stream Copy (No re-encode)")
-        trim_flags  = []
-        video_codec = ["-c:v", "copy"]
-
-    if background and background.exists():
-        subprocess.run(
-            ["ffmpeg",
-             "-i", str(video_path),
-             "-i", str(dub_track),
-             "-i", str(background),
-             *trim_flags,
-             "-filter_complex",
-             "[1:a]volume=1.5[v];[2:a]volume=0.4[b];[v][b]amix=inputs=2:duration=first[out]",
-             "-map", "0:v", "-map", "[out]",
-             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
-            check=True,
-        )
-    else:
-        subprocess.run(
-            ["ffmpeg",
-             "-i", str(video_path),
-             "-i", str(dub_track),
-             *trim_flags,
-             "-map", "0:v", "-map", "1:a",
-             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
-            check=True,
-        )
-
-    return final, actual_positions
+    nemo_dir = str(Path(__file__).resolve().parent.parent / "nemo")
+    if nemo_dir not in sys.path:
+        sys.path.insert(0, nemo_dir)
+    from batch_dubbing.anchored_timeline import render
+    return render(final_files, video_path, output_dir, temp_dir,
+                  background=background, trim_to=trim_to)
 
 
 # ---------------------------------------------------------------------------

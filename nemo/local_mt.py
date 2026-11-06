@@ -35,6 +35,8 @@ _GEMMA_STOP = ["<end_of_turn>", "<eos>"]
 
 # Model families whose GGUF carries no chat template.
 MODEL_FAMILIES = {
+    "hymt": {"template": "<｜hy_begin▁of▁sentence｜><｜hy_User｜>{prompt}<｜hy_Assistant｜>",
+             "stop": ["<｜hy_place▁holder▁no▁2｜>", "<｜hy_place▁holder▁no▁3｜>"]},
     "tower": {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
     "translategemma": {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
     "gemma": {"template": _GEMMA_TURN, "stop": _GEMMA_STOP},
@@ -303,7 +305,11 @@ def translate_cues(cues: list[dict], source: str, target: str,
     """
     translator = translator or OllamaTranslator()
     out: list[dict] = []
-    groups = group_sentences(cues)
+    # Translation and synthesis share complete source passage boundaries.
+    # The original soft translation budget remains; no post-translation
+    # rewriting may remove clauses to force a fit.
+    from batch_dubbing.aligned_finish import passage_spans
+    groups = [cues[a:b+1] for a,b in passage_spans(cues)]
     for number, group in enumerate(groups, 1):
         sentence = " ".join((c.get("text") or "").strip() for c in group).strip()
         if not sentence:

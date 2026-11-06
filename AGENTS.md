@@ -56,20 +56,26 @@ deleted.
 
 - **`--pipeline subtitle-dubbing` (default)**: generates the subtitles with the
   flow above (`pipeline_subtitle.py` → `batch_subtitles.py --backend local`),
-  runs the step 3 gate + step 4 adaptation, then hands the adapted
-  target-language SRT to `qwen3-tts/dub.py`. The target comes from
-  `--target-lang` as always; `--tts-engine`, voices, speeds and merge flags are
-  unchanged. Subtitle languages default to source + target;
+  groups complete source passages, freezes their paired captions, and hands
+  the target-language SRT to `qwen3-tts/dub.py`. The target comes from
+  `--target-lang` as always; engine, voices and timing modes remain selectable. Subtitle languages default to source + target;
   `--subtitle-languages` overrides that (the target is always kept).
 
-  Natural pace is the goal: `--fit-target 1.0` means the dub may not speed the
-  voice up at all, so the **wording** is shortened (cinema-style adaptation)
-  instead. The adapter re-translates from the source English with a character
-  budget derived from the cue span; it never rewrites the German in place (a
-  translation model asked to "rewrite this" can switch language). Two bounded
-  passes per block, and every adaptation is rejected if it drops a number, a
-  negation, gets suspiciously short or starts repeating. `--max-sentences N`
-  limits a run to the first N sentence blocks.
+  **Confirmed default (2026-11-06):** Qwen Base voice cloning with
+  `--dub-timing continuous-synced`, source audio replacement (`--no-demucs`),
+  source alignment before synthesis, and fresh CPU alignment after bounded
+  pitch-preserving synchronization. `--preserve-background` explicitly enables
+  Demucs. Legacy and standalone dub.py keep their earlier engine defaults.
+  Freeze paired caption text and cuts before continuous synthesis in bounded
+  contexts (at most 30 source seconds). Preserve absolute starts, source gaps,
+  and the full video. Compute slowdown from measured speech/source endpoints
+  within 0.90–1.00, then align the adjusted recording again and rebuild shared
+  subtitle times. Never cut the picture, accelerate speech, or rewrite content
+  automatically to hide a failed fit. Report failed contexts for review.
+  See `nemo/batch_dubbing/SYNCED_WORKFLOW.md` for the accepted reference,
+  source-context provenance, checks, model pins, and exact replay command.
+  The user accepted the actual pipeline reproduction on 2026-11-06; do not
+  substitute the older raw-continuous or CPU-passage references.
 - **`--pipeline legacy-dubbing`**: the previous NeMo → Canary/Gemma path,
   unchanged. Keep it working, but do not make it the default again.
 

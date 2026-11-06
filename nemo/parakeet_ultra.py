@@ -129,7 +129,10 @@ class UltraInProcessModel:
         # Callers may use the pipeline alias; Photon needs the full HF id.
         model_id = ULTRA_MODEL_ID if _is_parakeet_ultra(model_id) else model_id
         self.model_id = model_id
-        self._ctx = md.photon(model_id)
+        runtime = {}
+        if os.getenv("PARAKEET_ULTRA_MODEL_PATH"):
+            runtime["model_path"] = os.environ["PARAKEET_ULTRA_MODEL_PATH"]
+        self._ctx = md.photon(model_id, **runtime)
         self._speech = self._ctx.__enter__()
 
     def transcribe(self, audio_path: str, timestamps: str = "word") -> dict:

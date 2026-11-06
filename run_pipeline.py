@@ -37,7 +37,7 @@ uv run python run_pipeline.py --target-lang fr --skip-nemo
 uv run python run_pipeline.py --target-lang fr --skip-translate
 uv run python run_pipeline.py --target-lang fr --skip-dub
 
-# TTS defaults to Supertonic CPU, M1. Qwen voice cloning is opt-in.
+# Subtitle dubbing defaults to Qwen cloning with continuous sync; legacy keeps Supertonic.
 uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode clone       # clones original speakers
 uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode custom      # uses fixed Qwen voices
 
@@ -233,14 +233,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Source language code (auto-detected from SRT if omitted)")
     p.add_argument("--trim",           type=int, default=0, metavar="SEC",
                    help="Process only first N seconds of video (default: full)")
-    p.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen"],
-                   help="TTS backend (default: supertonic on CPU)")
+    p.add_argument("--dub-retries", type=int, choices=[0, 1], default=1,
+                   help="At most one measured correction (default: 1); 0 disables it. Failed takes are preserved.")
+    p.add_argument("--dub-timing", choices=["continuous-synced", "continuous", "source-anchored"], default="continuous-synced",
+                   help="Bounded pitch-preserving continuous sync (default); raw continuous or source-anchored remain selectable")
+    p.add_argument("--voice-reference", default=None,
+                   help="Optional existing reference WAV for a single-speaker Qwen clone")
+    p.add_argument("--tts-engine", default=None, choices=["supertonic", "qwen"],
+                   help="TTS backend (default: qwen for subtitle-dubbing; supertonic for legacy)")
     p.add_argument("--supertonic-voice", default="M1",
                    choices=[f"{g}{i}" for g in ("M", "F") for i in range(1, 6)])
     p.add_argument("--qwen-mode",      default="clone", choices=["clone", "custom"],
                    help="Qwen-only voice mode: clone (default) or custom")
-    p.add_argument("--no-demucs",      action="store_true",
-                   help="Skip demucs — faster, no background music preserved")
+    background = p.add_mutually_exclusive_group()
+    background.add_argument("--no-demucs", action="store_true", default=None,
+                            help="Replace source audio (default for subtitle-dubbing)")
+    background.add_argument("--preserve-background", dest="no_demucs", action="store_false",
+                            help="Separate and retain background audio with Demucs (legacy default)")
     p.add_argument("--max-speed",      type=float, default=1.15, metavar="SPEED",
                    help="Max natural TTS speed-up; overflow requires review (default: 1.15)")
     p.add_argument("--min-speed",      type=float, default=1.0, metavar="SPEED",
@@ -313,18 +322,27 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["tower", "gemma", "tower-7b", "canary"],
                    help="subtitle-dubbing translator (default: tower = tower-plus-2b)")
     p.add_argument("--fit-target", type=float, default=1.0, metavar="X",
-                   help=("subtitle-dubbing tempo budget; 1.0 = natural pace, the wording "
-                         "is shortened instead (default: 1.0)"))
+                   help=("subtitle-dubbing duration budget (default: 1.0); continuous modes "
+                         "keep paired wording and report failures without automatic rewriting"))
     p.add_argument("--max-sentences", type=int, default=None, metavar="N",
                    help="subtitle-dubbing: keep only the first N sentence blocks")
     return p
 
 
+def _resolve_dubbing_defaults(args):
+    """Apply pipeline-specific defaults while preserving explicit user choices."""
+    if args.tts_engine is None:
+        args.tts_engine = "qwen" if args.pipeline == "subtitle-dubbing" else "supertonic"
+    if args.no_demucs is None:
+        args.no_demucs = args.pipeline == "subtitle-dubbing"
+    return args
+
+
 def main():
     p = build_parser()
-    args = p.parse_args()
+    args = _resolve_dubbing_defaults(p.parse_args())
     if args.pipeline == "subtitle-dubbing":
-        # Cinema-style: the wording is adapted, the voice is never sped up.
+        # Freeze paired wording; continuous sync permits bounded slowdown, never speed-up.
         args.max_speed = 1.0
     if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
         p.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")

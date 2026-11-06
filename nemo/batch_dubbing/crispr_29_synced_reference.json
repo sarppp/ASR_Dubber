@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "source_language": "en",
+  "target_language": "de",
+  "description": "Authoritative user-confirmed DUB_SYNCED reference: continuous voice, measured pitch-preserving slowdown, new CPU alignment, paired frozen captions, unchanged full video.",
+  "assets": {
+    "video": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/source_10cues.mp4",
+      "sha256": "5fc4bead8c343963bcab9fae16fc382514a9a5751bea8c4186494b9f4cc0fc62"
+    },
+    "source_srt": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/input.en.srt",
+      "sha256": "da3676561ae5245a2b760a47cd58dbb503ff1676e01c6da1587b953d90df736d"
+    },
+    "target_srt": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/input.de.srt",
+      "sha256": "34054160bc2dbee60ba5af888f89b2bc56232f2484c15df4e2684c4fe09cb729"
+    },
+    "raw_take": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/CONTINUOUS_GERMAN.wav",
+      "sha256": "edc5fdeabe84d15895d0d598ffca9926c0bd1307b225fe5b24e90862d934b738"
+    },
+    "source_alignment": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/cpu_native_review/source_words.json",
+      "sha256": "b4e531c37f118cb13ce09a7d2b365d8a8085ef5ee30a356698a84f947aeae0e6"
+    },
+    "target_alignment": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/subtitle_alignment_words.json",
+      "sha256": "4e5a0d4ef0f5a246b63932b749da147e60faa2a999a10fa7a167498e1f94b6ca"
+    },
+    "reference_video": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/synced_result/DUB_SYNCED.mp4",
+      "sha256": "388f2743fd8e8978495ddd14c646f9c3179807ec97ca68247a56f3010742738f"
+    },
+    "reference_wav": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/synced_result/DUB_SYNCED.wav",
+      "sha256": "b8ed7ed53cb9e678fcc38bb2ca3a3706535db9bf8846438d9959cb704b4dadb7"
+    },
+    "reference_source_srt": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/synced_result/DUB_SYNCED.en.srt",
+      "sha256": "696d7a23c865e3e4c063d3a6f0edf8d9d54ad48cb9b65bf0e85e94880212ad32"
+    },
+    "reference_target_srt": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/synced_result/DUB_SYNCED.de.srt",
+      "sha256": "3b6a991fb978c8860273a408016612a9479d542b93bad12201fcdbc6f22f2d34"
+    },
+    "adjusted_alignment": {
+      "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/continuous_local/synced_result/aligned_words.json",
+      "sha256": "7c5c70ad86e3930d54b804eb4f197666ca74c37ee501dc489a8a25742e3628d1"
+    }
+  },
+  "placement_mode": "continuous_synced",
+  "voice_reference": {
+    "path": "../new_guys/crispr/deepseek_t4_10cues_2026-11-05/voice_reference.wav",
+    "sha256": "b52b1f50b6e8d93896f576512e5f8397b3cf9176293cc428f1aa2ed4db2463f4"
+  },
+  "source_context": "Original first ten Ultra/Tower cues from CRISPR-120s, source 4.320-33.799 seconds; extracted after ASR/translation."
+}

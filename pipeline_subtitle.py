@@ -102,13 +102,15 @@ def _parse_srt(path: Path) -> list[tuple[float, float, str]]:
     for block in re.split(r"\r?\n\r?\n", path.read_text(encoding="utf-8-sig").strip()):
         lines = block.splitlines()
         if len(lines) < 3:
-            continue
+            raise ValueError("Malformed subtitle block; refusing to omit source text")
         match = stamp.match(lines[1])
         if not match:
-            continue
+            raise ValueError("Invalid subtitle timestamp; refusing to omit source text")
         g = [int(v) for v in match.groups()]
         start = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000
         end = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000
+        if end <= start or (cues and start < cues[-1][1]):
+            raise ValueError("Invalid or overlapping source subtitle interval")
         cues.append((start, end, " ".join(lines[2:]).strip()))
     return cues
 
@@ -182,30 +184,16 @@ def _speech_seconds(chars: int, language: str, engine: str | None = None,
 
 
 def _sentence_spans(cues: list[dict]) -> list[tuple[int, int]]:
-    """Sentence groups as cue index ranges, same rules as local_mt."""
-    from local_mt import MAX_SENTENCE_CUES, MAX_SENTENCE_SECONDS
-
-    spans: list[tuple[int, int]] = []
-    begin = 0
-    for index, cue in enumerate(cues):
-        text = (cue.get("text") or "").strip()
-        span = float(cues[index]["end"]) - float(cues[begin]["start"])
-        done = (bool(re.search(r"[.!?]$", text))
-                or index - begin + 1 >= MAX_SENTENCE_CUES
-                or span >= MAX_SENTENCE_SECONDS)
-        if done:
-            spans.append((begin, index))
-            begin = index + 1
-    if begin < len(cues):
-        spans.append((begin, len(cues) - 1))
-    return spans
+    """Complete source passages; do not break speech at a caption count limit."""
+    from batch_dubbing.aligned_finish import passage_spans
+    return passage_spans(cues)
 
 
 def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
            translator: OllamaTranslator, *,
            target: float = 1.0, max_sentences: int | None = None,
            engine: str | None = None, cps: float | None = None,
-           compressor=None
+           compressor=None, allow_rewrite=True
            ) -> tuple[Path, list[dict], Path]:
     """Steps 3-4: gate whole sentences at `target` tempo, adapt the failures.
 
@@ -224,7 +212,9 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
     overhead = measured_overhead(engine)
     target_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(srt)]
     source_cues = [{"start": a, "end": b, "text": t} for a, b, t in _parse_srt(source_srt)]
-    groups = _sentence_spans(target_cues)
+    if len(target_cues) != len(source_cues):
+        raise ValueError("Source and target cue coverage differ; refusing to drop source content")
+    groups = _sentence_spans(source_cues)
     if max_sentences:
         groups = groups[:max_sentences]
 
@@ -249,7 +239,7 @@ def _adapt(srt: Path, source_srt: Path, source_language: str, language: str,
 
         adapted, ratio = text, before
         rejected_reason = None
-        if before > aim:
+        if before > aim and allow_rewrite:
             # Two ways to make the line shorter, both automatic:
             #   1. re-translate the source with a word budget (works when the
             #      model compresses on request);
@@ -372,7 +362,7 @@ def _produce_subtitles(args, video: Path, workdir: Path, source: str,
         shutil.move(str(src), str(dest))
         produced[lang] = dest
 
-    for suffix in (".multi.srt", ".multi.ass"):
+    for suffix in (".multi.srt", ".multi.ass", ".source-timing.json"):
         src = workdir / f"{video.stem}{suffix}"
         if src.exists():
             shutil.move(str(src), str(nemo_dir / f"{base}{suffix}"))
@@ -589,8 +579,11 @@ def _make_compressor(language: str):
     from dub_compress import Compressor
 
     engines = []
-    for name in ("tower-plus-2b:latest", "hymt2-1.8b:latest",
-                 "eurollm1.7b:latest", "salamandra2b:latest"):
+    selected = os.getenv("DUB_COMPRESS_MODELS")
+    names = selected.split(",") if selected is not None else (
+        "tower-plus-2b:latest", "hymt2-1.8b:latest",
+        "eurollm1.7b:latest", "salamandra2b:latest")
+    for name in names:
         if _model_installed(name):
             engines.append(OllamaTranslator(model=name))
     if not engines:
@@ -642,7 +635,7 @@ def _calibrated_rate(dub_workdir: Path, language: str, engine: str,
     return table
 
 
-def _dub(args, video: Path, srt: Path, base: str, target: str) -> tuple[Path, int]:
+def _dub(args, video: Path, srt: Path, base: str, target: str, *, source_srt=None, subtitles=None, source_language=None) -> tuple[Path, int]:
     dub_workdir = QWEN_DIR / "output" / "dub" / base
     if args.skip_dub:
         print("⏭️  Skipping dub (--skip-dub)")
@@ -664,11 +657,22 @@ def _dub(args, video: Path, srt: Path, base: str, target: str) -> tuple[Path, in
     ]
     if args.no_demucs:
         cmd.append("--no-demucs")
-    cmd += ["--max-speed", str(min(args.max_speed or args.fit_target, args.fit_target))]
+    cmd += ["--max-speed", "1.0"]
+    if source_srt is not None:
+        cmd += ["--source-script", str(source_srt), "--source-language", source_language]
+        cmd += ["--placement-mode", getattr(args, "dub_timing", "continuous-synced").replace("-", "_")]
+        timing = video.parent / f"{base}.source-timing.json"
+        if timing.exists():
+            cmd += ["--source-timing", str(timing)]
+        for lang, path in (subtitles or {}).items():
+            cmd += ["--comparison-script", f"{lang}={path}"]
+    if getattr(args, "voice_reference", None):
+        cmd += ["--voice-reference", str(args.voice_reference)]
     if args.min_speed is not None:
         cmd += ["--min-speed", str(args.min_speed)]
-    if args.merge_gap is not None:
-        cmd += ["--merge-gap", str(args.merge_gap)]
+    # _adapt already emits one source sentence per TTS request; never re-merge
+    # those across source pauses merely because their captions are adjacent.
+    cmd += ["--merge-gap", "0"]
     if args.merge_max_dur is not None:
         cmd += ["--merge-max-dur", str(args.merge_max_dur)]
     cmd += ["--tts-workers", str(args.tts_workers), "--tts-devices", args.tts_devices]
@@ -729,34 +733,46 @@ def run(args) -> int:
             target_srt, subtitles[source], source, target, translator,
             target=args.fit_target, max_sentences=args.max_sentences,
             engine=args.tts_engine, cps=cps,
-            compressor=_make_compressor(target))
+            compressor=None, allow_rewrite=False)
     finally:
         if hasattr(translator, "unload"):
             translator.unload()
     _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
                              nemo_dir / f"{base}.adaptation.md", rows, args.fit_target)
 
-    dub_workdir, rc = _dub(args, video, dub_srt, base, target)
-    if rc != 0:
-        report = dub_workdir / "fit_report.json"
-        if report.exists():
-            translator = OllamaTranslator()
-            try:
-                changed = _adapt_from_report(
-                    dub_srt, subtitles[source], source, target, rows, report,
-                    translator, args.fit_target,
-                    engine=args.tts_engine, cps=cps,
-                    compressor=_make_compressor(target))
-            finally:
-                if hasattr(translator, "unload"):
-                    translator.unload()
-            if changed:
-                # dub.py keys runs by SRT content. Never delete historical
-                # checkpoints: they are evidence, not the retry's cache.
-                _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
-                                         nemo_dir / f"{base}.adaptation.md", rows,
-                                         args.fit_target)
-                dub_workdir, rc = _dub(args, video, dub_srt, base, target)
+    dub_workdir, rc = _dub(args, video, dub_srt, base, target, source_srt=subtitles[source], subtitles=subtitles, source_language=source)
+    if rc != 0 and getattr(args, "dub_timing", "continuous-synced") in {"continuous", "continuous-synced"}:
+        print("Continuous dubbing failed; preserving paired text and recordings for review without rewriting.")
+    elif rc != 0 and getattr(args, "dub_retries", 1) > 0:
+        aligned_report = dub_workdir / "output" / "alignment_report.json"
+        if aligned_report.exists() and json.loads(aligned_report.read_text()).get("failed_placement"):
+            if json.loads(aligned_report.read_text()).get("placement_mode") in {"continuous", "continuous_synced"}:
+                print("Continuous context does not fit; preserving its text and recording for review.")
+            elif _model_installed("hymt2-1.8b:latest"):
+                from batch_dubbing.measured_repair import repair
+                correction = repair(dub_srt, aligned_report, guard=_preservation_problem)
+                if correction["status"] == "estimate_pending_tts":
+                    dub_workdir, rc = _dub(args, video, dub_srt, base, target, source_srt=subtitles[source], subtitles=subtitles, source_language=source)
+        else:
+            report = dub_workdir / "fit_report.json"
+            if report.exists():
+                translator = OllamaTranslator()
+                try:
+                    changed = _adapt_from_report(
+                        dub_srt, subtitles[source], source, target, rows, report,
+                        translator, args.fit_target,
+                        engine=args.tts_engine, cps=cps,
+                        compressor=_make_compressor(target))
+                finally:
+                    if hasattr(translator, "unload"):
+                        translator.unload()
+                if changed:
+                    # dub.py keys runs by SRT content. Never delete historical
+                    # checkpoints: they are evidence, not the retry's cache.
+                    _write_adaptation_report(nemo_dir / f"{base}.adaptation.json",
+                                             nemo_dir / f"{base}.adaptation.md", rows,
+                                             args.fit_target)
+                    dub_workdir, rc = _dub(args, video, dub_srt, base, target, source_srt=subtitles[source], subtitles=subtitles, source_language=source)
     if rc != 0:
         print("❌  Dubbing still does not fit at natural pace; see the fit report.")
         sys.exit(rc)
@@ -765,7 +781,7 @@ def run(args) -> int:
     run_label = _derive_run_label(source, target, video=video,
                                   nemo_dir=nemo_dir, end_product_dir=end_product_dir)
     _finalize_outputs(run_label, dub_workdir=None if args.skip_dub else dub_workdir,
-                      nemo_dir=nemo_dir)
+                      nemo_dir=nemo_dir, end_product_dir=end_product_dir)
     print(f"\n✅ Subtitle dubbing complete → {end_product_dir / run_label}")
     return 0
 

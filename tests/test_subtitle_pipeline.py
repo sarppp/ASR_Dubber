@@ -76,6 +76,9 @@ def test_run_produces_subtitles_and_dubs_target(tmp_path, monkeypatch):
 
     dub = calls[1]
     assert "dub.py" in dub[1]
+    assert "--source-script" in dub and "--comparison-script" in dub
+    assert dub[dub.index("--placement-mode")+1] == "continuous_synced"
+    assert "--strict-timing" not in dub
     assert "--language" in dub and dub[dub.index("--language") + 1] == "de"
     assert dub[dub.index("--language") - 1].endswith("talk.nemo.de.dub.srt")
 

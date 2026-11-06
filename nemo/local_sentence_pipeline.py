@@ -68,7 +68,8 @@ def transcribe_chunk(model, model_name: str, audio: Path, source_language: str) 
     from qwen3_asr import _is_qwen3_asr, _transcribe_qwen3_asr
 
     if _is_parakeet_ultra(model_name):
-        _, segments = _transcribe_parakeet_ultra(model, str(audio), 0.0)
+        words, segments = _transcribe_parakeet_ultra(model, str(audio), 0.0)
+        model.source_words = words
         return segments
     if _is_qwen3_asr(model_name):
         _, segments = _transcribe_qwen3_asr(model, str(audio), 0.0, source_language)
@@ -139,15 +140,17 @@ def run(plan: list[dict], source_language: str, report: Path,
             continue
         video = Path(filename)
         fingerprint = {"bytes": video.stat().st_size, "mtime_ns": video.stat().st_mtime_ns}
+        if model is None:
+            model = load_asr(asr_model)
         audio = _prepare_audio(video, cache, fingerprint)
         duration = probe_duration(video)
-        boundaries = chunk_boundaries(audio)
+        boundaries = chunk_boundaries(audio, maximum=30. if "parakeet-ultra" in asr_model else 25.)
 
         # One ASR pass per video, shared by every target language.
         asr_path = cache / f"{video.stem}.asr.json"
         identity = {**fingerprint, "model": asr_model, "source": source_language,
-                    "boundaries": [list(b) for b in boundaries]}
-        checkpoint = {"identity": identity, "chunks": {}}
+                    "boundaries": [list(b) for b in boundaries], "word_evidence_version": 1}
+        checkpoint = {"identity": identity, "chunks": {}, "word_chunks": {}}
         if asr_path.exists():
             previous = json.loads(asr_path.read_text())
             if previous.get("identity") == identity:
@@ -164,6 +167,10 @@ def run(plan: list[dict], source_language: str, report: Path,
                 for segment in segments:
                     segment["start"] = round(float(segment["start"]) + start, 3)
                     segment["end"] = round(min(end, float(segment["end"]) + start), 3)
+                checkpoint.setdefault("word_chunks", {})[str(index)] = [
+                    {**word, "start": round(float(word["start"])+start, 3),
+                     "end": round(min(end, float(word["end"])+start), 3)}
+                    for word in getattr(model, "source_words", [])]
                 checkpoint["chunks"][str(index)] = segments
                 save_json(asr_path, checkpoint)
                 print(f"{video.name} asr {index + 1}/{len(boundaries)} "
@@ -177,6 +184,19 @@ def run(plan: list[dict], source_language: str, report: Path,
         peak_asr = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
         print(f"{video.name}: {len(cues)} cues "
               f"(max {max(len(c['text']) for c in cues)} chars)", flush=True)
+
+        words = [word for i in range(len(boundaries)) for word in checkpoint.get("word_chunks", {}).get(str(i), [])]
+        save_json(video.with_suffix(".source-timing.json"), {
+            "source_language": source_language, "asr_model": asr_model,
+            "duration_seconds": duration, "identity": identity, "words": words,
+            "cues": cues, "word_evidence": "ASR" if words else "cue_boundaries_only"})
+        # Release the source model before Tower occupies the GPU.
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()
+        model = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
         rows_by_language: dict[str, list[dict]] = {}
         for job in pending:

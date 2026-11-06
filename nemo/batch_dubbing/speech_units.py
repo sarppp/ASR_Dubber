@@ -282,6 +282,8 @@ def build_speech_units(
         flags = []
         if not _terminal(source_text):
             flags.append("unfinished_sentence")
+            if reason == "input_end":
+                flags.append("unfinished_at_input_end")
             if reason in {"hard_duration_limit", "character_limit", "soft_duration_boundary"}:
                 flags.append("unfinished_at_size_limit")
         if reason in {"hard_duration_limit", "character_limit", "soft_duration_boundary"}:

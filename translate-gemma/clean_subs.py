@@ -81,7 +81,7 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
         return base_norm in name_norm if base_norm else True
 
     # 2. Gather ONLY SRTs belonging to this video
-    all_srts = [str(f) for f in NEMO_DIR.glob("*.srt") if _matches(f.name)]
+    all_srts = [str(f) for suffix in ("*.srt", "*.ass") for f in NEMO_DIR.glob(suffix) if _matches(f.name)]
 
     # 3. Find NeMo intermediate files + our new timing JSONs
     intermediate_files = []
@@ -105,7 +105,7 @@ def move_final_products(run_label: str | None = None, dub_workdir: str | None = 
         for path in search_paths:
             if path.exists():
                 dub_files += [str(f) for f in path.glob('*.mp4')]
-                dub_files += [str(f) for f in path.glob('*_dub.srt')]
+                dub_files += [str(f) for suffix in ('*_dub.srt', 'final_dub.*.srt', 'final_dub.*.ass', 'alignment_report.json') for f in path.glob(suffix)]
                 dub_files += [str(f) for f in path.glob('*_timing_dub.json')]
     else:
         # Fallback (no --dub-workdir): scan all per-video subdirs under dub/

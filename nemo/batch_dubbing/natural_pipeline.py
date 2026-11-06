@@ -96,7 +96,9 @@ def _save_float(path, samples, sample_rate):
 
 def run_pipeline(units, *, duration_seconds, output_dir, synthesize,
                  revise=None, max_synthesis_calls=None, max_revisions_per_unit=0,
-                 max_rate=1.15, max_shift=.25):
+                 max_rate=1.0, max_shift=.25, max_end_gap=None, end_gap_policy="warn",
+                 expected_source_words=None, require_complete_passages=False,
+                 content_check=None, require_content_check=False):
     """Generate serially, measure, schedule turns, and optionally revise once.
 
     ``synthesize(unit, text)`` returns samples, sample_rate and optional voice /
@@ -106,6 +108,21 @@ def run_pipeline(units, *, duration_seconds, output_dir, synthesize,
     All raw attempts and measurements survive, including rejected revisions.
     """
     units = validate_units(units, duration_seconds)
+    if end_gap_policy not in {"warn", "block"}:
+        raise ValueError("End gap policy must be warn or block")
+    if max_end_gap is not None and not 0 <= _number(max_end_gap, "max_end_gap") <= .5:
+        raise ValueError("End gap limit must be between zero and 500 ms")
+    if expected_source_words is not None:
+        flattened = [w for u in units for w in u["words"]]
+        indices = [i for u in units for i in u["source_word_indices"]]
+        if indices != list(range(len(expected_source_words))) or len(flattened) != len(expected_source_words):
+            raise ValueError("Source word coverage is incomplete, including beginning or ending words")
+        for actual, expected in zip(flattened, expected_source_words):
+            if any(actual.get(k) != expected.get(k) for k in ("word", "start", "end", "speaker")):
+                raise ValueError("Source word identity or timing changed")
+    for unit in units:
+        if " ".join(w["word"].strip() for w in unit["words"]) != unit["source_text"]:
+            raise ValueError("Source text differs from its word evidence")
     if max_revisions_per_unit not in (0, 1) or isinstance(max_revisions_per_unit, bool):
         raise ValueError("At most one explicitly budgeted revision per unit")
     if max_revisions_per_unit and revise is None:
@@ -119,11 +136,17 @@ def run_pipeline(units, *, duration_seconds, output_dir, synthesize,
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     attempts, selected, calls, revision_calls = [], {}, 0, 0
+    source_failures = [{"id": u["id"], "flags": u.get("flags", [])} for u in units
+                       if require_complete_passages and set(u.get("flags", [])) &
+                       {"unfinished_at_size_limit", "unfinished_at_input_end", "oversized_source_word"}]
     unit_positions = {unit["id"]: index for index, unit in enumerate(units)}
     report = {"policy": POLICY_VERSION, "status": "running", "units": units,
               "attempts": attempts, "revision_requests": [], "revision_failures": [],
               "max_synthesis_calls": max_synthesis_calls,
               "max_revisions_per_unit": max_revisions_per_unit,
+              "source_failures": source_failures, "max_end_gap": max_end_gap,
+              "end_gap_policy": end_gap_policy,
+              "require_content_check": require_content_check,
               "quality_limit": "Timing and protected-term checks are not proof of meaning preservation or naturalness."}
 
     def persist():
@@ -167,9 +190,26 @@ def run_pipeline(units, *, duration_seconds, output_dir, synthesize,
         plans = [schedule_turn(rows, corridor_start=start, corridor_end=end,
                                max_rate=max_rate, max_shift=max_shift)
                  for (start, end, speaker), rows in turns.items()]
+        if max_end_gap is not None:
+            for plan in plans:
+                early = [r for r in plan["schedule"] if r["end_shift"] < -max_end_gap - 1e-9]
+                if early:
+                    diagnostics = [
+                        {"clip_ids": [r["id"]], "reason": "speech_ends_early",
+                         "early_seconds": -r["end_shift"]} for r in early]
+                    if end_gap_policy == "block":
+                        plan["status"] = "blocked"
+                        plan["diagnostics"]["conflicts"].extend(diagnostics)
+                        plan["schedule"] = []
+                    else:
+                        plan["diagnostics"].setdefault("warnings", []).extend(diagnostics)
         return plans
 
     try:
+        if source_failures:
+            report.update(status="needs_source_review", render={"status": "blocked", "rows": []})
+            persist()
+            return report
         for unit in units:
             selected[unit["id"]] = generate(unit, unit["translated_text"], 0)
         plans = schedule()
@@ -207,10 +247,27 @@ def run_pipeline(units, *, duration_seconds, output_dir, synthesize,
         if any(a["end"] > b["start"] + 1e-9 for a, b in zip(placements, placements[1:])):
             ready = False
             report["cross_turn_conflict"] = True
+        content_results = []
+        if require_content_check or content_check is not None:
+            for unit in units:
+                take = selected[unit["id"]]
+                receipt = content_check(deepcopy(unit), deepcopy(take)) if content_check else {}
+                valid = (isinstance(receipt, dict) and receipt.get("status") == "passed"
+                         and receipt.get("audio_sha256") == take["sha256"]
+                         and receipt.get("text_sha256") == hashlib.sha256(take["text"].encode()).hexdigest()
+                         and receipt.get("source_text_sha256") == hashlib.sha256(unit["source_text"].encode()).hexdigest()
+                         and receipt.get("source_id") == unit.get("source_id")
+                         and receipt.get("unit_id") == unit["id"]
+                         and receipt.get("speech_coverage_verified") is True
+                         and receipt.get("meaning_verified") is True)
+                content_results.append({"id": unit["id"], "passed": valid, "receipt": receipt})
+            if any(not r["passed"] for r in content_results):
+                ready = False
+        report["content_checks"] = content_results
         rows = [{"id": row["id"], "file": selected[row["id"]]["file"],
                  "sha256": selected[row["id"]]["sha256"], "edges": selected[row["id"]]["edges"],
                  "start": row["start"], "end": row["end"], "tempo": row["rate"]} for row in placements]
-        report.update(status="ready" if ready else "needs_revision", turn_plans=plans,
+        report.update(status="ready" if ready else ("needs_content_review" if any(not r["passed"] for r in content_results) else "needs_revision"), turn_plans=plans,
             selected_attempts={key: value["attempt"] for key, value in selected.items()},
             render={"status": "ready" if ready else "blocked", "sample_rate": 44100,
                     "duration_seconds": duration_seconds, "rows": rows if ready else []})

@@ -149,8 +149,10 @@ Examples:
                         help="Working directory for intermediate files (default: output/dub)")
     parser.add_argument("--qwen-dir",   default=".",
                         help="Path to the qwen3-tts uv project (default: current folder)")
-    parser.add_argument("--max-speed",  type=float, default=1.15,
-                        help="Max natural TTS speed-up; overflow requires review (default: 1.15)")
+    parser.add_argument("--max-speed",  type=float, default=1.0,
+                        help="Maximum tempo; native speed by default, overflow requires review")
+    parser.add_argument("--strict-timing", action="store_true",
+                        help="Reject native speech ending over 400 ms before its source passage")
     parser.add_argument("--min-speed",  type=float, default=1.0,
                         help="Native minimum tempo; only 1.0 is supported (no artificial slowing)")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
@@ -165,9 +167,19 @@ Examples:
     parser.add_argument("--tts-devices", default="0",
                         help="Comma-separated GPU IDs for workers, e.g. '0,1,2' "
                              "(default: '0'). Workers round-robin across devices.")
+    parser.add_argument("--source-script", type=Path, help="Original ASR subtitles: enables measured word alignment and final combined subtitles")
+    parser.add_argument("--source-language", default="en")
+    parser.add_argument("--placement-mode", choices=["continuous_synced", "continuous", "source_anchored"], default="continuous_synced",
+                        help="With --source-script: bounded continuous sync, raw continuous, or source-anchored placement")
+    parser.add_argument("--source-timing", type=Path)
+    parser.add_argument("--comparison-script", action="append", default=[], help="LANG=original-aligned subtitle path")
+    parser.add_argument("--voice-reference", type=Path)
     args = parser.parse_args()
     if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
         parser.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
+
+    if args.strict_timing and args.max_speed != 1.:
+        parser.error("--strict-timing requires --max-speed 1.0")
 
     if args.tts_engine == "supertonic":
         from supertonic_tts_worker import language_code
@@ -231,7 +243,7 @@ Examples:
     work_dir   = Path(args.workdir).resolve()
     import hashlib
     cache_key = hashlib.sha256(srt_path.read_bytes() + repr((
-        "natural-fit-v2-bom-report", args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
+        "natural-fit-v8-selected-placement", args.placement_mode, args.strict_timing, args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
         args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
         str(video_path), video_path.stat().st_mtime_ns,
     )).encode()).hexdigest()[:16]
@@ -261,10 +273,39 @@ Examples:
     log.info("=" * 60)
 
     # ── 1. Parse SRT ─────────────────────────────────────────────────────────
-    segments = parse_srt(srt_path)
+    segments = parse_srt(srt_path, strict=True)
     if not segments:
         log.error("No segments parsed — make sure this is a diarized+translated SRT")
         return 1
+    alignment_plan = None
+    synthesis_bundles = None
+    if args.source_script:
+        if args.merge_gap != 0 or args.max_speed != 1.:
+            parser.error("Source-aligned dubbing requires native speed and already grouped passages (--merge-gap 0)")
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nemo"))
+        from batch_dubbing.aligned_finish import source_plan
+        from batch_dubbing.continuous_context import bundle_segments
+        import importlib.util
+        import os
+        nemo_dir = Path(__file__).resolve().parent.parent / "nemo"
+        alignment_python = os.environ.get("ALIGNMENT_PYTHON") or (
+            sys.executable if importlib.util.find_spec("qwen_asr") else str(nemo_dir / ".venv/bin/python"))
+        source_timing = work_dir / "source_forced_alignment.json"
+        source_request = dict(operation="align_source", video=str(video_path),
+                              source_script=str(args.source_script), source_language=args.source_language,
+                              output=str(source_timing))
+        source_request_path = work_dir / "source_alignment_request.json"
+        source_request_path.write_text(json.dumps(source_request, indent=2))
+        log.info("Aligning original speech before synthesis")
+        subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(source_request_path)],
+                       cwd=nemo_dir, check=True, timeout=max(180, 90*len(segments)))
+        comparisons = dict(value.split("=", 1) for value in args.comparison_script)
+        alignment_plan = source_plan(args.source_script, srt_path, comparisons, args.source_language, args.language, source_timing=source_timing)
+        segments = bundle_segments(segments)
+        synthesis_bundles = [seg["passage_indices"] for seg in segments]
+        os.environ["QWEN_TTS_CONTINUOUS"] = "1"
+        log.info("Continuous synthesis: %s contexts for %s complete source passages", len(segments), len(alignment_plan["passages"]))
+        (work_dir / "source_alignment_plan.json").write_text(json.dumps(alignment_plan, ensure_ascii=False, indent=2))
     if args.merge_gap > 0:
         segments = merge_segments(segments, gap_sec=args.merge_gap,
                                   max_dur=args.merge_max_dur)
@@ -277,7 +318,7 @@ Examples:
     report_path.write_text(json.dumps({**report_base, "status": "running",
                                        "segments": []}, ensure_ascii=False, indent=1))
 
-    # Compute SRT duration early — used for trimming audio AND final video
+    # Compute reference extraction extent; never use it to trim the picture
     srt_end = max(s["end"] for s in segments)
 
     # ── 2. Audio separation or raw extract ───────────────────────────────────
@@ -289,13 +330,20 @@ Examples:
         if args.qwen_mode == "clone":
             extract_audio(video_path, audio_for_refs, trim_sec=srt_end)
     else:
-        vocals, background = separate_audio(video_path, temp_dir, trim_sec=srt_end)
+        vocals, background = separate_audio(video_path, temp_dir, trim_sec=0)
         audio_for_refs = vocals
 
     # ── 3. Clone refs ─────────────────────────────────────────────────────────
     clone_refs: Dict[str, Path] = {}
     if args.qwen_mode == "clone":
-        clone_refs = extract_clone_refs(segments, audio_for_refs, cast_dir)
+        if args.voice_reference:
+            if not args.voice_reference.is_file() or len({seg["speaker"] for seg in segments}) != 1:
+                raise ValueError("A supplied voice reference requires an existing WAV and one source speaker")
+            clone_refs = {seg["speaker"]: args.voice_reference.resolve() for seg in segments}
+        else:
+            clone_refs = extract_clone_refs(segments, audio_for_refs, cast_dir)
+        if alignment_plan is not None and not clone_refs:
+            raise ValueError("No clone reference; refusing an unrequested voice substitution")
         if not clone_refs:
             log.warning("⚠️  No clone refs extracted — falling back to custom mode")
             args.qwen_mode = "custom"
@@ -405,7 +453,7 @@ Examples:
             sidecar = json.loads(fitted.with_suffix(".json").read_text())
             needed = sidecar["edges"]["retained_seconds"]
             record.update(needed=needed, tempo=max(1.0, needed / record["span"]),
-                          applied_tempo=sidecar["tempo"], status="passed")
+                          applied_tempo=sidecar["tempo"], status="native_measured" if alignment_plan is not None else "passed")
         return record
 
     by_index = {seg["index"]: seg for seg in segments}
@@ -444,8 +492,11 @@ Examples:
         # The safe fitter measures speech after edge cleanup. Native short
         # speech stays native even when a small end allowance is available.
         try:
-            fitted = speed_fit(raw_out, available_dur, max_speed=args.max_speed,
+            fitted = speed_fit(raw_out, (_audio_duration(raw_out) + .1) if alignment_plan is not None else available_dur, max_speed=args.max_speed,
                                min_speed=args.min_speed)
+            if args.strict_timing:
+                from batch_dubbing.anchored_timeline import validate_end_timing
+                validate_end_timing(json.loads(fitted.with_suffix(".json").read_text()), start, end)
         except Exception as exc:
             with fit_report_lock:
                 fit_report.append(_fit_record(by_index[seg_index], error=exc))
@@ -502,6 +553,9 @@ Examples:
                                 clone_broken_local = True
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
+
+                    if not ok and alignment_plan is not None:
+                        raise RuntimeError("Requested clone synthesis failed; no automatic voice fallback")
 
                     # Fallback to custom mode - load model lazily if needed
                     if not ok:
@@ -577,7 +631,7 @@ Examples:
             fit_report.append(_fit_record(seg, error="No audio was generated"))
     complete = not (fit_errors or worker_exceptions or len(final_files) != len(segments))
     report_path.write_text(json.dumps({**report_base,
-                                      "status": "passed" if complete else "failed",
+                                      "status": ("native_measured" if alignment_plan is not None else "passed") if complete else "failed",
                                       "segments": sorted(fit_report, key=lambda r: r["start"])},
                                      ensure_ascii=False, indent=1), encoding="utf-8")
     log.info(f"Fit report → {report_path}")
@@ -594,14 +648,40 @@ Examples:
         log.error("No audio was generated. Check TTS errors above.")
         return 1
 
+    if alignment_plan is not None:
+        import importlib.util
+        import os
+        nemo_dir = Path(__file__).resolve().parent.parent / "nemo"
+        alignment_python = os.environ.get("ALIGNMENT_PYTHON")
+        if not alignment_python:
+            alignment_python = sys.executable if importlib.util.find_spec("qwen_asr") else str(nemo_dir / ".venv/bin/python")
+        takes = []
+        for fitted, start, end in final_files:
+            index = int(fitted.stem.split("_")[1])
+            sidecar = json.loads(fitted.with_suffix(".json").read_text())
+            raw = temp_dir / f"seg_{index:04d}.wav"
+            if not raw.is_file():
+                raise ValueError("Continuous placement requires its complete original recording")
+            takes.append(dict(index=index, file=str(raw.resolve()), text=by_index[index]["text"],
+                              sha256=file_digest(raw), tempo=sidecar["tempo"]))
+        request = dict(video=str(video_path), output=str(output_dir), plan=alignment_plan, placement_mode=args.placement_mode,
+                       takes=takes, bundles=synthesis_bundles, background=str(background) if background else None)
+        request_path = work_dir / "alignment_request.json"
+        request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
+        result = subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(request_path)],
+                                cwd=nemo_dir, timeout=max(180, 90*len(takes)))
+        if result.returncode:
+            log.error("Alignment or native placement failed; see alignment_report.json. No partial final dub is accepted.")
+        return result.returncode
+
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
-    # srt_end already computed above (reused for audio trim + video trim)
+    # Preserve the full source video, including scenes after the final subtitle.
     t_stitch_start = time.perf_counter()
     log.info("🎬 Stitching and mixing…")
     final, actual_positions = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
         background=background,   # None when --no-demucs
-        trim_to=srt_end,
+        trim_to=None,
     )
 
     # ── 7. Write dubbed SRT with actual audio timestamps ─────────────────

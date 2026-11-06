@@ -96,12 +96,12 @@ def test_sentence_groups_end_on_punctuation_or_caps():
     assert len(spans) == 2
 
 
-def test_sentence_group_respects_max_cues():
+def test_sentence_group_does_not_split_at_subtitle_cue_limit():
     from local_mt import MAX_SENTENCE_CUES
     cues = [{"start": i * 1.0, "end": i * 1.0 + 0.9, "text": "weiter und weiter,"}
             for i in range(MAX_SENTENCE_CUES + 3)]
     spans = ps._sentence_spans(cues)
-    assert spans[0][1] - spans[0][0] + 1 == MAX_SENTENCE_CUES
+    assert spans == [(0, len(cues)-1)]
 
 
 def test_render_srt_is_monotonic_and_preserves_text():
