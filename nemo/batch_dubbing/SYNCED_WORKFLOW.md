@@ -104,6 +104,30 @@ unavailable service falls back to the previous fresh-process stage.
 `ALIGN_SERVICE=off` restores the old behaviour exactly. GPU models (Parakeet,
 Tower, Qwen) still load per run: the 6 GB GPU holds one model at a time.
 
+**GPU aligner is the default** (`--alignment-device cuda:0`; `cpu` stays
+selectable and is the fallback without a GPU). FP16 weights wait in CPU RAM and
+move to the GPU only for each request. RTX 2060, accepted 29 s clip, warm:
+source 2.65 s + final 4.87 s on GPU vs 6.04 s + 14.17 s on CPU. Same fixed
+recordings: 84/84 German words identical, final mp4/SRT/ASS byte-identical; one
+English source boundary ("You"/"know") moved by one 80 ms aligner step. Fresh
+full local run with Qwen: 71.7 s (CPU aligner 95.3 s, previous main 126.4 s),
+GPU peak 5.9 of 6.1 GB (Qwen 5.5 GB plus the aligner's 224 MB CUDA context).
+
+### Opt-in MAI-Voice engine
+
+```bash
+qwen3-tts/.venv/bin/python run_pipeline.py --input-file video.mp4 --output-dir out \
+  --language en --target-lang de --tts-engine mai [--mai-voice Harper] [--mai-model microsoft/mai-voice-2-flash]
+```
+
+Paid OpenRouter API (~$15 per million characters, ~$1 per hour of German
+speech), preset voices only (default female per language: Mia for German).
+`qwen3-tts/mai_tts_worker.py` receives each context's finisher target and
+deadline, asks MAI for its own pace within 0.85-1.15 when needed (at most three
+requests), silences isolated trailing blips, and writes `<take>.mai.json`.
+Offline check with the earlier paid take replayed through `MAI_TTS_API_URL`:
+one request, `complete`, ending gap 0.093 s.
+
 The user accepted the actual runner result on 2026-11-06: “yes now it mathces!”
 The exact replay below proves the accepted output with original ASR/MT checkpoints
 and newly generated speech/alignments; new media uses the same workflow, subject

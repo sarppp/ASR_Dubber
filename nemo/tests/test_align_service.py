@@ -102,3 +102,29 @@ def test_ping_reports_identity(service):
     status = svc.ping(path)
     assert status['protocol'] == svc.PROTOCOL and status['code'] == svc.code_digest()
     assert svc.usable(path)
+
+
+def test_device_must_match_and_gpu_fallback_passes_device(service, tmp_path, monkeypatch):
+    path, _, seen = service
+    assert svc.usable(path, 'cpu') and not svc.usable(path, 'cuda:0')
+    calls = _record(monkeypatch)
+    svc.run_stage(tmp_path / 'g.json', python='py', timeout=30, device='cuda:0')
+    assert calls[0][0] == ['py', '-m', 'batch_dubbing.aligned_finish', str(tmp_path / 'g.json'), '--device', 'cuda:0']
+    assert seen == []   # the CPU service never serves a GPU request
+
+
+def test_gpu_service_reports_device(monkeypatch):
+    monkeypatch.setenv('ALIGN_SERVICE', 'auto')
+    path = Path(tempfile.mkdtemp(dir='/tmp')) / 'g.sock'
+    thread = threading.Thread(target=svc.serve, args=(path,), daemon=True,
+                              kwargs=dict(device='cuda:0', loader=lambda: 'M', runner=lambda m, r: None))
+    thread.start()
+    for _ in range(100):
+        if path.exists():
+            break
+        time.sleep(.02)
+    try:
+        assert svc.ping(path)['device'] == 'cuda:0' and svc.usable(path, 'cuda:0')
+        assert svc.run(path, '/tmp/x.json', 30, 'cuda:0')['returncode'] == 0
+    finally:
+        svc._call(path, dict(op='shutdown'), 5); thread.join(5)

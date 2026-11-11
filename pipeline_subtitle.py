@@ -655,11 +655,15 @@ def _dub(args, video: Path, srt: Path, base: str, target: str, *, source_srt=Non
         "--qwen-mode", args.qwen_mode,
         "--workdir", str(dub_workdir),
     ]
+    if args.tts_engine == "mai":
+        cmd += ["--mai-voice", getattr(args, "mai_voice", ""),
+                "--mai-model", getattr(args, "mai_model", "microsoft/mai-voice-2.1-flash")]
     if args.no_demucs:
         cmd.append("--no-demucs")
     cmd += ["--max-speed", "1.0"]
     if source_srt is not None:
         cmd += ["--source-script", str(source_srt), "--source-language", source_language]
+        cmd += ["--alignment-device", getattr(args, "alignment_device", "cuda:0")]
         cmd += ["--placement-mode", getattr(args, "dub_timing", "continuous-synced").replace("-", "_")]
         timing = video.parent / f"{base}.source-timing.json"
         if timing.exists():
@@ -706,7 +710,8 @@ def run(args) -> int:
     from batch_dubbing.align_service import ephemeral
     log = QWEN_DIR / "output" / "dub" / "align_service.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    with ephemeral(python, log=log):
+    from batch_dubbing.align_service import resolve_device
+    with ephemeral(python, log=log, device=resolve_device(getattr(args, "alignment_device", "cuda:0"))):
         return _run_pipeline(args)
 
 

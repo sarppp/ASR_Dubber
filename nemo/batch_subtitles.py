@@ -190,7 +190,7 @@ def main() -> None:
                         help="Local translator (default: tower = tower-plus-2b). "
                              "gemma = translategemma:4b, canary = old in-pass translation")
     parser.add_argument("--tts-engine", default="supertonic",
-                        choices=["supertonic", "qwen", "audio8"],
+                        choices=["supertonic", "qwen", "audio8", "mai"],
                         help="Dub engine that will speak the subtitle. The duration "
                              "budget given to the translator comes from this "
                              "engine's measured speech rate (nemo/speech_rate.py).")

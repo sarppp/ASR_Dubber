@@ -1,14 +1,19 @@
-"""Warm forced-aligner service: load the pinned CPU aligner once, reuse it.
+"""Warm forced-aligner service: load the pinned aligner once, reuse it.
 
 Every request runs the same code as ``python -m batch_dubbing.aligned_finish``
 (``load_aligner`` -> ``make_align`` -> ``run_request``); only the model load is
-shared. CPU only, one request at a time, local Unix socket (mode 0600).
+shared. One request at a time, local Unix socket (mode 0600).
+
+Device: ``cuda:0`` (default) parks FP16 weights in CPU RAM and holds the GPU
+only while a request runs, so the TTS model keeps the 6 GB card between
+stages; ``cpu`` is the FP32 reference path. Without a GPU, cuda:0 falls back
+to cpu.
 
 Per run: ``pipeline_subtitle`` starts an ephemeral service before ASR so the
 load overlaps GPU work, and both alignment stages of ``dub.py`` reuse it.
 Across runs: keep one running yourself, and every run skips the load::
 
-    cd nemo && .venv/bin/python -m batch_dubbing.align_service serve   # foreground
+    cd nemo && .venv/bin/python -m batch_dubbing.align_service serve   # foreground; --device cpu for CPU
     .venv/bin/python -m batch_dubbing.align_service status | stop
 
 ``ALIGN_SERVICE=off`` restores the one-process-per-stage behaviour exactly.
@@ -48,6 +53,20 @@ def code_digest() -> str:
     for path in files:
         digest.update(path.name.encode() + b'\0' + path.read_bytes() + b'\0')
     return digest.hexdigest()
+
+
+def resolve_device(device: str) -> str:
+    """cuda:0 only when an NVIDIA GPU answers; otherwise the CPU reference path."""
+    if device == 'cpu' or os.environ.get('CUDA_VISIBLE_DEVICES') == '':
+        return 'cpu'
+    try:
+        found = subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        found = None
+    if not found or found.returncode or 'GPU' not in found.stdout:
+        print('No NVIDIA GPU found; aligning on CPU', flush=True)
+        return 'cpu'
+    return device
 
 
 def socket_path() -> Path:
@@ -91,24 +110,25 @@ def ping(path=None, timeout=2.0):
         return None
 
 
-def usable(path=None):
-    """True only for a live service running exactly the code on disk."""
+def usable(path=None, device='cpu'):
+    """True only for a live service running exactly the code on disk, on `device`."""
     status = ping(path)
-    return bool(status and status.get('protocol') == PROTOCOL and status.get('code') == code_digest())
+    return bool(status and status.get('protocol') == PROTOCOL and status.get('code') == code_digest()
+                and status.get('device', 'cpu') == device)
 
 
-def run(path, request_path, timeout):
+def run(path, request_path, timeout, device='cpu'):
     """Run one request file on the warm aligner; returns the reply dict."""
     path = Path(path)
-    if not usable(path):
-        raise Unavailable(f'No matching alignment service at {path}')
+    if not usable(path, device):
+        raise Unavailable(f'No matching {device} alignment service at {path}')
     reply = _call(path, dict(op='run', request=str(Path(request_path).resolve()), code=code_digest()), timeout)
     if not reply.get('ok'):
         raise Unavailable(reply.get('error') or 'Alignment service refused the request')
     return reply
 
 
-def run_stage(request_path, *, python, timeout, check=False):
+def run_stage(request_path, *, python, timeout, check=False, device='cpu'):
     """Use a matching warm service when one is reachable, else a fresh process.
 
     Output is echoed like the subprocess stage; returns the process-style code.
@@ -116,7 +136,7 @@ def run_stage(request_path, *, python, timeout, check=False):
     if os.environ.get('ALIGN_SERVICE', 'auto') != 'off':
         path = socket_path()
         try:
-            reply = run(path, request_path, timeout)
+            reply = run(path, request_path, timeout, device)
         except Unavailable as exc:
             if path.exists():
                 print(f'Warm aligner not used ({exc}); loading a fresh aligner process', flush=True)
@@ -124,22 +144,40 @@ def run_stage(request_path, *, python, timeout, check=False):
             sys.stdout.write(reply.get('output') or '')
             if reply.get('error'):
                 sys.stderr.write(reply['error'])
-            print(f"Warm aligner: request {reply['request_number']} on one model load "
+            print(f"Warm aligner ({device}): request {reply['request_number']} on one model load "
                   f"(load {reply['load_seconds']:.1f}s, this request {reply['seconds']:.1f}s)", flush=True)
             if check and reply['returncode']:
                 raise subprocess.CalledProcessError(reply['returncode'], ['align_service', str(request_path)])
             return reply['returncode']
-    result = subprocess.run([str(python), '-m', 'batch_dubbing.aligned_finish', str(request_path)],
-                            cwd=NEMO_DIR, check=check, timeout=timeout)
+    command = [str(python), '-m', 'batch_dubbing.aligned_finish', str(request_path)]
+    if device != 'cpu':
+        command += ['--device', device]
+    result = subprocess.run(command, cwd=NEMO_DIR, check=check, timeout=timeout)
     return result.returncode
 
 
-def serve(path=None, *, parent_pid=None, loader=None, runner=None, ready_timeout=900):
-    """Bind first, load in the background, then answer requests one at a time."""
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''   # CPU-only stage; never touch the GPU
-    from batch_dubbing.aligned_finish import load_aligner, make_align, run_request
-    loader = loader or (lambda: load_aligner('cpu'))
-    runner = runner or (lambda model, request: run_request(request, make_align(model, 'cpu', request)))
+def serve(path=None, *, device='cpu', parent_pid=None, loader=None, runner=None, ready_timeout=900):
+    """Bind first, load in the background, then answer requests one at a time.
+
+    cpu: FP32 on CPU, the accepted default. cuda:0: FP16 weights wait in CPU RAM
+    and occupy the GPU only while a request runs (the 6 GB GPU stays free for
+    the TTS model between alignment stages).
+    """
+    if device not in ('cpu', 'cuda:0'):
+        raise ValueError('Alignment device must be cpu or cuda:0')
+    if device == 'cpu':
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''   # CPU-only stage; never touch the GPU
+    from batch_dubbing.aligned_finish import load_aligner, load_aligner_staged, make_align, on_gpu, run_request
+    if device == 'cpu':
+        loader = loader or (lambda: load_aligner('cpu'))
+        runner = runner or (lambda model, request: run_request(request, make_align(model, 'cpu', request)))
+    else:
+        loader = loader or load_aligner_staged
+
+        def gpu_runner(model, request):
+            with on_gpu(model, device) as aligner:
+                return run_request(request, make_align(aligner, device, request))
+        runner = runner or gpu_runner
     path = Path(path or socket_path())
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -162,7 +200,7 @@ def serve(path=None, *, parent_pid=None, loader=None, runner=None, ready_timeout
         ready.set()
 
     threading.Thread(target=load, daemon=True).start()
-    print(f'Alignment service listening on {path} (pid {os.getpid()}); loading CPU aligner', flush=True)
+    print(f'Alignment service listening on {path} (pid {os.getpid()}); loading aligner for {device}', flush=True)
     try:
         while True:
             if parent_pid and not _alive(parent_pid):
@@ -180,7 +218,7 @@ def serve(path=None, *, parent_pid=None, loader=None, runner=None, ready_timeout
                     continue
                 op = message.get('op')
                 if op == 'ping':
-                    _send(conn, dict(ok=True, pid=os.getpid(), protocol=PROTOCOL, code=digest, loaded=ready.is_set(),
+                    _send(conn, dict(ok=True, pid=os.getpid(), protocol=PROTOCOL, code=digest, device=device, loaded=ready.is_set(),
                                      load_error=state['error'], load_seconds=state['load_seconds'], requests=state['requests']))
                 elif op == 'shutdown':
                     _send(conn, dict(ok=True)); break
@@ -218,7 +256,7 @@ def _alive(pid):
 
 
 @contextlib.contextmanager
-def ephemeral(python, *, log=None):
+def ephemeral(python, *, log=None, device='cpu'):
     """Per-run service: started early, shared via ALIGN_SERVICE_SOCKET, stopped after.
 
     Reuses a matching persistent service instead when one already answers.
@@ -226,14 +264,15 @@ def ephemeral(python, *, log=None):
     """
     if os.environ.get('ALIGN_SERVICE', 'auto') == 'off':
         yield None; return
-    if usable(socket_path()):
+    if usable(socket_path(), device):
         os.environ['ALIGN_SERVICE_SOCKET'] = str(socket_path())
         yield socket_path(); return
     path = Path(tempfile.gettempdir()) / f'asr-aligner-{os.getpid()}.sock'
     previous = os.environ.get('ALIGN_SERVICE_SOCKET')
     stream = open(log, 'a') if log else subprocess.DEVNULL
     process = subprocess.Popen([str(python), '-m', 'batch_dubbing.align_service', 'serve', '--socket', str(path),
-                                '--parent-pid', str(os.getpid())], cwd=NEMO_DIR, stdout=stream, stderr=subprocess.STDOUT)
+                                '--device', device, '--parent-pid', str(os.getpid())],
+                               cwd=NEMO_DIR, stdout=stream, stderr=subprocess.STDOUT)
     try:
         for _ in range(100):   # binding is immediate; the model keeps loading in the background
             if path.exists() or process.poll() is not None:
@@ -261,14 +300,17 @@ def main():
     parser.add_argument('command', choices=['serve', 'status', 'stop'])
     parser.add_argument('--socket', type=Path, default=None)
     parser.add_argument('--parent-pid', type=int, default=None)
+    parser.add_argument('--device', default='cuda:0', choices=['cpu', 'cuda:0'],
+                        help='cuda:0 (default; GPU held only during each request) or cpu')
     args = parser.parse_args()
     path = args.socket or socket_path()
     if args.command == 'serve':
-        serve(path, parent_pid=args.parent_pid)
+        serve(path, device=resolve_device(args.device), parent_pid=args.parent_pid)
     elif args.command == 'status':
         status = ping(path)
         if status:
             status['matches_code_on_disk'] = status.get('code') == code_digest()
+            status.pop('code', None)
         print(json.dumps(status or dict(running=False, socket=str(path)), indent=2))
     else:
         try:

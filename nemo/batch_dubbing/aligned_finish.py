@@ -320,6 +320,35 @@ def load_aligner(device='cpu'):
     return Qwen3ForcedAligner.from_pretrained(snapshot_download(MODEL,revision=REVISION),device_map=device,dtype=torch.float32 if device=='cpu' else torch.float16,attn_implementation='sdpa')
 
 
+def load_aligner_staged():
+    """GPU-mode service: FP16 weights parked in CPU RAM, moved to the GPU per request.
+
+    Same FP16 values as load_aligner('cuda:0'); the GPU is free between requests.
+    """
+    import os
+    os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY','1')
+    import torch
+    from huggingface_hub import snapshot_download
+    from qwen_asr import Qwen3ForcedAligner
+    from batch_dubbing.align_continuous_subtitles import MODEL,REVISION
+    torch.set_num_threads(4)
+    return Qwen3ForcedAligner.from_pretrained(snapshot_download(MODEL,revision=REVISION),device_map='cpu',dtype=torch.float16,attn_implementation='sdpa')
+
+
+def on_gpu(aligner,device='cuda:0'):
+    """Context manager: hold the GPU only while one request runs."""
+    import contextlib
+    import torch
+    @contextlib.contextmanager
+    def session():
+        aligner.model.to(device)
+        try:
+            yield aligner
+        finally:
+            aligner.model.to('cpu');torch.cuda.empty_cache()
+    return session()
+
+
 def make_align(model,device,request_path):
     """align(path,text,language) bound to one request's evidence cache."""
     from batch_dubbing.align_continuous_subtitles import MODEL,REVISION

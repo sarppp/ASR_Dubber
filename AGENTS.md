@@ -37,7 +37,8 @@ Model rules for this pipeline:
   image is only a fallback when `moondream` is not importable. It is an explicit
   exception to the Modal-for-everything rule; do not move its media or models to
   Modal unless the user asks.
-- Nothing in this pipeline may talk to a vendor API. moondream/kestrel posts
+- Nothing in this pipeline may talk to a vendor API (sole exception: the
+  opt-in `--tts-engine mai` dubbing voice below). moondream/kestrel posts
   usage telemetry to `api.moondream.ai`; `parakeet_ultra._offline_moondream()`
   stubs it out and that must stay in place.
 - Never copy old outputs into a review folder. Regenerate and ship only the
@@ -76,6 +77,23 @@ deleted.
   source-context provenance, checks, model pins, and exact replay command.
   The user accepted the actual pipeline reproduction on 2026-11-06; do not
   substitute the older raw-continuous or CPU-passage references.
+
+  **Speed changes (2026-11-11, user request):** the forced aligner loads once
+  per run in `batch_dubbing/align_service.py` (warm across runs if left
+  running) and runs on the GPU by default (`--alignment-device cuda:0`, FP16,
+  GPU held only during each alignment; `cpu` remains the FP32 reference and
+  the automatic fallback without a GPU). On fixed audio the GPU moved one
+  English word boundary by one 80 ms aligner step; the German output was
+  byte-identical. With Qwen on the 6 GB card the peak was 5.9 GB.
+
+  **Opt-in MAI-Voice engine (user-approved 2026-11-11):** `--tts-engine mai`
+  calls Microsoft MAI-Voice through OpenRouter (key from `nemo/.env`, never
+  printed; ~$15 per million characters). It is the only allowed vendor API in
+  this pipeline, never a default, preset voices only (no cloning). MAI may be
+  asked to speak at its own native pace between 0.85 and 1.15 (`speed`) to land
+  in the finisher's window, and isolated non-speech blips after the last word
+  are silenced with evidence in `<take>.mai.json`. Audio is never time-stretched
+  faster; the finisher's unchanged 0.90-1.00 rule still decides.
 - **`--pipeline legacy-dubbing`**: the previous NeMo → Canary/Gemma path,
   unchanged. Keep it working, but do not make it the default again.
 
