@@ -80,6 +80,30 @@ qwen3-tts/.venv/bin/python run_pipeline.py \
   --language en --target-lang de
 ```
 
+### Warm forced aligner (2026-11-11)
+
+The CPU forced aligner used to load twice per run (source alignment, then the
+final finish), each time in a fresh process. `pipeline_subtitle.run` now starts
+one CPU-only aligner service (`batch_dubbing/align_service.py`) before ASR, so
+its ~12 s load overlaps the GPU stages, and both `dub.py` alignment stages
+reuse it. Requests run the unchanged `aligned_finish` code path; on the
+accepted 29 s clip, two separate processes and the service produced
+byte-identical source/German word timings, SRT/ASS files and `final_dub.mp4`.
+The aligner portion went from 51.8 s to 35.7 s per run, or 21.4 s when a
+service is already warm.
+
+Keep one running across runs to skip the load entirely (CPU RAM only, no GPU):
+
+```bash
+cd nemo && .venv/bin/python -m batch_dubbing.align_service serve   # leave running
+.venv/bin/python -m batch_dubbing.align_service status              # or: stop
+```
+
+A service whose code differs from the files on disk is never used, and any
+unavailable service falls back to the previous fresh-process stage.
+`ALIGN_SERVICE=off` restores the old behaviour exactly. GPU models (Parakeet,
+Tower, Qwen) still load per run: the 6 GB GPU holds one model at a time.
+
 The user accepted the actual runner result on 2026-11-06: “yes now it mathces!”
 The exact replay below proves the accepted output with original ASR/MT checkpoints
 and newly generated speech/alignments; new media uses the same workflow, subject

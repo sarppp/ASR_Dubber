@@ -687,7 +687,30 @@ def _dub(args, video: Path, srt: Path, base: str, target: str, *, source_srt=Non
     return dub_workdir, rc
 
 
+def _alignment_python() -> Path | None:
+    configured = os.environ.get("ALIGNMENT_PYTHON")
+    candidate = Path(configured) if configured else NEMO_CODE_DIR / ".venv" / "bin" / "python"
+    return candidate if candidate.exists() else None
+
+
 def run(args) -> int:
+    """Run the pipeline; when dubbing, warm the CPU aligner during ASR/MT.
+
+    The aligner loads once in a background CPU process while the GPU stages
+    run, and both alignment stages of dub.py reuse it (ALIGN_SERVICE=off
+    restores one fresh aligner process per stage).
+    """
+    python = _alignment_python()
+    if getattr(args, "skip_dub", False) or python is None:
+        return _run_pipeline(args)
+    from batch_dubbing.align_service import ephemeral
+    log = QWEN_DIR / "output" / "dub" / "align_service.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with ephemeral(python, log=log):
+        return _run_pipeline(args)
+
+
+def _run_pipeline(args) -> int:
     nemo_dir = Path(args.input_dir).resolve() if args.input_dir else NEMO_DIR
     end_product_dir = Path(args.output_dir).resolve() if args.output_dir else END_PRODUCT_DIR
     if args.input_file:

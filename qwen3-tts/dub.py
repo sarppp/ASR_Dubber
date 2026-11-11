@@ -297,8 +297,8 @@ Examples:
         source_request_path = work_dir / "source_alignment_request.json"
         source_request_path.write_text(json.dumps(source_request, indent=2))
         log.info("Aligning original speech before synthesis")
-        subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(source_request_path)],
-                       cwd=nemo_dir, check=True, timeout=max(180, 90*len(segments)))
+        from batch_dubbing.align_service import run_stage
+        run_stage(source_request_path, python=alignment_python, timeout=max(180, 90*len(segments)), check=True)
         comparisons = dict(value.split("=", 1) for value in args.comparison_script)
         alignment_plan = source_plan(args.source_script, srt_path, comparisons, args.source_language, args.language, source_timing=source_timing)
         segments = bundle_segments(segments)
@@ -668,11 +668,11 @@ Examples:
                        takes=takes, bundles=synthesis_bundles, background=str(background) if background else None)
         request_path = work_dir / "alignment_request.json"
         request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
-        result = subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(request_path)],
-                                cwd=nemo_dir, timeout=max(180, 90*len(takes)))
-        if result.returncode:
+        from batch_dubbing.align_service import run_stage
+        returncode = run_stage(request_path, python=alignment_python, timeout=max(180, 90*len(takes)))
+        if returncode:
             log.error("Alignment or native placement failed; see alignment_report.json. No partial final dub is accepted.")
-        return result.returncode
+        return returncode
 
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
     # Preserve the full source video, including scenes after the final subtitle.
