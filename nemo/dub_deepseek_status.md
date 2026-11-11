@@ -1,4 +1,19 @@
-# Subtitle dubbing — status (updated 2026-11-06)
+# Subtitle dubbing — status (updated 2026-11-11)
+
+## Fresh-run review accepted — 2026-11-11
+
+The user watched the fresh-from-excerpt run
+`new_guys/crispr/deepseek_t4_10cues_2026-11-05/local_synced_asr_2026-11-06/result/tower_synced_29__en_to_de/final_dub.mp4`
+(fresh Ultra → Tower → Qwen clone, `continuous-synced`, nine cues, German audio,
+embedded EN/default + DE tracks) and accepted it: "ok its good actually."
+Nine cues instead of the reference's ten is expected from the shorter ASR
+context and is not a subtitle-timing defect.
+
+Merged to `main` the same day (accepted commit `b0bcc35` only; the opt-in GPU
+alignment experiment and the single-clip H100 candidate are not included).
+On the merged tree, 434 offline tests passed and
+`batch_dubbing.reference_regression` against `crispr_29_synced_reference.json`
+passed all nine exact checks versus `DUB_SYNCED.mp4` with zero model calls.
 
 ## Accepted reproduction and production defaults — 2026-11-06
 
