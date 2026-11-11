@@ -41,6 +41,7 @@ _dummy = os.path.join(_tmp, "dummy.nemo.en.diarize.srt")
 with open(_dummy, "w") as _f:
     _f.write("1\n00:00:01,000 --> 00:00:02,000\nHello world\n\n")
 
+os.environ["ALIGN_SERVICE"] = "off"   # never start or reach a real warm aligner from tests
 os.environ.setdefault("INPUT_DIR", _tmp)
 os.environ.setdefault("TARGET_LANG_CODE", "fr")
 os.environ.setdefault("SOURCE_LANG_CODE", "en")

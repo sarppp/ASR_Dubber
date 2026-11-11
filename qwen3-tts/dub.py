@@ -132,8 +132,14 @@ Examples:
                         help="Input video file (auto-discovered in --search-dir if omitted)")
     parser.add_argument("srt",   nargs="?", default=None,
                         help="Pre-translated diarized SRT (auto-discovered if omitted)")
-    parser.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen"],
-                        help="TTS backend (default: supertonic on CPU)")
+    parser.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen", "mai"],
+                        help="TTS backend (default: supertonic on CPU; mai = opt-in MAI-Voice via OpenRouter)")
+    parser.add_argument("--mai-voice", default="",
+                        help="MAI-Voice preset: a name (Mia, Harper, Klaus, ...) or a full id such as "
+                             "de-DE-Mia:MAI-Voice-2.1-Flash (default: a female voice for --language)")
+    parser.add_argument("--mai-model", default="microsoft/mai-voice-2.1-flash",
+                        choices=["microsoft/mai-voice-2.1-flash", "microsoft/mai-voice-2-flash"],
+                        help="MAI-Voice model on OpenRouter (default: 2.1 Flash)")
     parser.add_argument("--supertonic-voice", default="M1",
                         choices=[f"{gender}{i}" for gender in ("M", "F") for i in range(1, 6)],
                         help="Supertonic preset voice (default: M1, same as the comparison)")
@@ -169,6 +175,9 @@ Examples:
                              "(default: '0'). Workers round-robin across devices.")
     parser.add_argument("--source-script", type=Path, help="Original ASR subtitles: enables measured word alignment and final combined subtitles")
     parser.add_argument("--source-language", default="en")
+    parser.add_argument("--alignment-device", default="cuda:0", choices=["cpu", "cuda:0"],
+                        help="Forced-aligner device (cuda:0 default, GPU held only during alignment; "
+                             "falls back to cpu without a GPU)")
     parser.add_argument("--placement-mode", choices=["continuous_synced", "continuous", "source_anchored"], default="continuous_synced",
                         help="With --source-script: bounded continuous sync, raw continuous, or source-anchored placement")
     parser.add_argument("--source-timing", type=Path)
@@ -188,6 +197,15 @@ Examples:
         except ValueError as exc:
             parser.error(str(exc))
         args.qwen_mode = "custom"  # Supertonic uses preset voices, no clone extraction.
+    if args.tts_engine == "mai":
+        import os as _os
+        from mai_tts_worker import language_code as mai_language_code
+        try:
+            mai_language_code(args.language)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.qwen_mode = "custom"  # Preset voices only; MAI cloning is gated and not used.
+        _os.environ["MAI_TTS_MODEL"] = args.mai_model
 
     search_dir = Path(args.search_dir).resolve()
     VIDEO_EXT  = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
@@ -246,7 +264,7 @@ Examples:
         "natural-fit-v8-selected-placement", args.placement_mode, args.strict_timing, args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
         args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
         str(video_path), video_path.stat().st_mtime_ns,
-    )).encode()).hexdigest()[:16]
+    ) + ((args.mai_voice, args.mai_model) if args.tts_engine == "mai" else ())).encode()).hexdigest()[:16]
     cache_dir = work_dir / "cache" / args.tts_engine / cache_key
     temp_dir   = cache_dir / "temp"
     output_dir = work_dir / "output"
@@ -257,8 +275,9 @@ Examples:
 
     script_dir  = Path(__file__).resolve().parent
     qwen_python = _qwen_python(qwen_dir)
-    qwen_worker = (str(script_dir / "supertonic_tts_worker.py")
-                   if args.tts_engine == "supertonic" else _qwen_worker(script_dir))
+    qwen_worker = (str(script_dir / "supertonic_tts_worker.py") if args.tts_engine == "supertonic"
+                   else str(script_dir / "mai_tts_worker.py") if args.tts_engine == "mai"
+                   else _qwen_worker(script_dir))
 
     t_start = time.perf_counter()
 
@@ -297,8 +316,11 @@ Examples:
         source_request_path = work_dir / "source_alignment_request.json"
         source_request_path.write_text(json.dumps(source_request, indent=2))
         log.info("Aligning original speech before synthesis")
-        subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(source_request_path)],
-                       cwd=nemo_dir, check=True, timeout=max(180, 90*len(segments)))
+        from batch_dubbing.align_service import run_stage
+        from batch_dubbing.align_service import resolve_device
+        args.alignment_device = resolve_device(args.alignment_device)
+        run_stage(source_request_path, python=alignment_python, timeout=max(180, 90*len(segments)), check=True,
+                  device=args.alignment_device)
         comparisons = dict(value.split("=", 1) for value in args.comparison_script)
         alignment_plan = source_plan(args.source_script, srt_path, comparisons, args.source_language, args.language, source_timing=source_timing)
         segments = bundle_segments(segments)
@@ -353,6 +375,8 @@ Examples:
     gender_hints = detect_speaker_genders(clone_refs) if clone_refs else {}
     voice_map = ({seg["speaker"]: args.supertonic_voice for seg in segments}
                  if args.tts_engine == "supertonic"
+                 else {seg["speaker"]: args.mai_voice for seg in segments}
+                 if args.tts_engine == "mai"
                  else build_voice_map(segments, gender_hints=gender_hints))
     if args.qwen_mode == "custom":
         log.info("🎤 Voice assignments (custom mode):")
@@ -375,7 +399,7 @@ Examples:
     #   Always use 2 workers for optimal CPU/GPU overlap
     #   Works on any GPU with ~6GB+ VRAM (8GB, 12GB, 16GB+, etc.)
     #   Multi-GPU: same logic, but each GPU gets its own model (not yet implemented)
-    qwen_language = (args.language if args.tts_engine == "supertonic"
+    qwen_language = (args.language if args.tts_engine in ("supertonic", "mai")
                      else _qwen_lang(args.language))
     log.info(f"Qwen language: '{args.language}' → '{qwen_language}'")
     checkpoint_path = cache_dir / "checkpoint.json"
@@ -393,6 +417,31 @@ Examples:
         next_start = segments[idx + 1]["start"] if idx + 1 < len(segments) else None
         _available[seg["index"]] = _fit_window(seg["start"], seg["end"], next_start)
 
+    # MAI adapts its own pace: give it the window the finisher will check
+    # (context start to the earlier of context end / next context start, less 0.10 s).
+    # Mirrors aligned_finish/plan_fit: target = end the 0.90-1.00 fit aims at;
+    # max_end = context deadline under which native speech is accepted unchanged.
+    mai_targets: Dict[int, float] = {}
+    mai_max_ends: Dict[int, float] = {}
+    if args.tts_engine == "mai":
+        plan_passages = {p["index"]: p for p in alignment_plan["passages"]} if alignment_plan else {}
+        video_seconds = float(subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video_path)],
+            text=True, timeout=30).strip())
+        for idx, seg in enumerate(segments):
+            group = seg.get("passage_indices") or []
+            if plan_passages and group:
+                first, last = plan_passages[group[0]], plan_passages[group[-1]]
+                begin = first.get("context_start", first["source_start"])
+                end = last.get("context_end", last["source_end"])
+                following = segments[idx + 1].get("passage_indices") if idx + 1 < len(segments) else None
+                next_start = plan_passages[following[0]].get("context_start", video_seconds) if following else video_seconds
+                deadline = min(video_seconds, end + .25, next_start)
+                mai_targets[seg["index"]] = round(min(deadline, end) - begin - .10, 3)
+                mai_max_ends[seg["index"]] = round(deadline - begin, 3)
+            else:
+                mai_targets[seg["index"]] = round(_available[seg["index"]], 3)
+
     # A whole-script hash is useful for fitted checkpoints, but it used to
     # force every unchanged sentence to be synthesised again on each retry.
     # Share raw speech by exact synthesis identity; refit it for the new slot.
@@ -407,6 +456,9 @@ Examples:
             "voice": voice_map.get(seg["speaker"]), "worker": worker_digest,
             "reference": file_digest(ref) if ref and ref.exists() else None,
         }
+        if args.tts_engine == "mai":   # the pace target and model change the take
+            settings.update(target=mai_targets.get(seg["index"]), max_end=mai_max_ends.get(seg["index"]),
+                            model=args.mai_model)
         key = speech_key(seg["text"], settings)
         raw_keys[seg["index"]] = key
         raw = temp_dir / f"seg_{seg['index']:04d}.wav"
@@ -416,7 +468,7 @@ Examples:
                           or (temp_dir / f"seg_{seg['index']:04d}.wav").stat().st_size <= 500
                           for seg in todo)
 
-    device_ids = ([None] if args.tts_engine == "supertonic"
+    device_ids = ([None] if args.tts_engine in ("supertonic", "mai")
                   else [int(x.strip()) for x in args.tts_devices.split(",")])
     n_workers  = (_auto_workers(device_ids)
                   if args.tts_workers == "auto"
@@ -554,7 +606,7 @@ Examples:
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
 
-                    if not ok and alignment_plan is not None:
+                    if not ok and alignment_plan is not None and args.qwen_mode == "clone":
                         raise RuntimeError("Requested clone synthesis failed; no automatic voice fallback")
 
                     # Fallback to custom mode - load model lazily if needed
@@ -573,7 +625,9 @@ Examples:
                         if custom_manager:
                             voice = voice_map.get(spk, QWEN_FEMALE_VOICES[0])
                             log.info(f"   [{i:04d}] 🔊 custom voice: {voice}")
-                            ok = custom_manager.generate_custom(text, voice, qwen_language, raw_out)
+                            pace = (dict(target_seconds=mai_targets.get(i), max_end_seconds=mai_max_ends.get(i))
+                                    if args.tts_engine == "mai" else {})
+                            ok = custom_manager.generate_custom(text, voice, qwen_language, raw_out, **pace)
                             if not ok:
                                 log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
@@ -668,11 +722,12 @@ Examples:
                        takes=takes, bundles=synthesis_bundles, background=str(background) if background else None)
         request_path = work_dir / "alignment_request.json"
         request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
-        result = subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(request_path)],
-                                cwd=nemo_dir, timeout=max(180, 90*len(takes)))
-        if result.returncode:
+        from batch_dubbing.align_service import run_stage
+        returncode = run_stage(request_path, python=alignment_python, timeout=max(180, 90*len(takes)),
+                               device=args.alignment_device)
+        if returncode:
             log.error("Alignment or native placement failed; see alignment_report.json. No partial final dub is accepted.")
-        return result.returncode
+        return returncode
 
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
     # Preserve the full source video, including scenes after the final subtitle.
@@ -711,8 +766,10 @@ Examples:
     timing_path = output_dir / f"{video_path.stem}_timing_dub.json"
     timing_path.write_text(_json.dumps({
         "tts_engine": args.tts_engine,
-        "tts_device": "cpu" if args.tts_engine == "supertonic" else args.tts_devices,
-        "voice": args.supertonic_voice if args.tts_engine == "supertonic" else args.qwen_mode,
+        "tts_device": "cpu" if args.tts_engine == "supertonic" else "api" if args.tts_engine == "mai" else args.tts_devices,
+        "voice": (args.supertonic_voice if args.tts_engine == "supertonic"
+                  else (args.mai_voice or "default") + f" ({args.mai_model})" if args.tts_engine == "mai"
+                  else args.qwen_mode),
         "video":    video_path.name,
         "srt":      srt_path.name,
         "date":     _dt.datetime.now().isoformat(timespec="seconds"),

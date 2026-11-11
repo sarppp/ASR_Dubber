@@ -307,23 +307,56 @@ def finish(request,align):
         report.update(status='needs_review',error=str(exc));save();raise
 
 
-def main():
-    parser=argparse.ArgumentParser();parser.add_argument('request',type=Path);parser.add_argument('--device',default='cpu',choices=['cpu','cuda:0'])
-    args=parser.parse_args()
+def load_aligner(device='cpu'):
+    """Load the pinned forced aligner exactly as the accepted CLI stage does."""
     import os
     os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY','1')
-    if args.device=='cpu':os.environ['CUDA_VISIBLE_DEVICES']=''
+    if device=='cpu':os.environ['CUDA_VISIBLE_DEVICES']=''
     import torch
     from huggingface_hub import snapshot_download
     from qwen_asr import Qwen3ForcedAligner
     from batch_dubbing.align_continuous_subtitles import MODEL,REVISION
     torch.set_num_threads(4)
-    model=Qwen3ForcedAligner.from_pretrained(snapshot_download(MODEL,revision=REVISION),device_map=args.device,dtype=torch.float32 if args.device=='cpu' else torch.float16,attn_implementation='sdpa')
+    return Qwen3ForcedAligner.from_pretrained(snapshot_download(MODEL,revision=REVISION),device_map=device,dtype=torch.float32 if device=='cpu' else torch.float16,attn_implementation='sdpa')
+
+
+def load_aligner_staged():
+    """GPU-mode service: FP16 weights parked in CPU RAM, moved to the GPU per request.
+
+    Same FP16 values as load_aligner('cuda:0'); the GPU is free between requests.
+    """
+    import os
+    os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY','1')
+    import torch
+    from huggingface_hub import snapshot_download
+    from qwen_asr import Qwen3ForcedAligner
+    from batch_dubbing.align_continuous_subtitles import MODEL,REVISION
+    torch.set_num_threads(4)
+    return Qwen3ForcedAligner.from_pretrained(snapshot_download(MODEL,revision=REVISION),device_map='cpu',dtype=torch.float16,attn_implementation='sdpa')
+
+
+def on_gpu(aligner,device='cuda:0'):
+    """Context manager: hold the GPU only while one request runs."""
+    import contextlib
+    import torch
+    @contextlib.contextmanager
+    def session():
+        aligner.model.to(device)
+        try:
+            yield aligner
+        finally:
+            aligner.model.to('cpu');torch.cuda.empty_cache()
+    return session()
+
+
+def make_align(model,device,request_path):
+    """align(path,text,language) bound to one request's evidence cache."""
+    from batch_dubbing.align_continuous_subtitles import MODEL,REVISION
     names={'en':'English','de':'German','fr':'French','es':'Spanish','it':'Italian'}
     def align(path,text,language):
-        identity=dict(audio_sha256=sha(path),text=text,language=language,model=MODEL,revision=REVISION,device=args.device)
+        identity=dict(audio_sha256=sha(path),text=text,language=language,model=MODEL,revision=REVISION,device=device)
         key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
-        cache=args.request.parent/'word_alignment_cache';cache.mkdir(exist_ok=True)
+        cache=Path(request_path).parent/'word_alignment_cache';cache.mkdir(exist_ok=True)
         evidence=cache/(key+'.json')
         if evidence.exists():
             saved=json.loads(evidence.read_text())
@@ -332,12 +365,23 @@ def main():
         words=[dict(text=w.text,start=float(w.start_time),end=float(w.end_time)) for w in result[0].items]
         evidence.write_text(json.dumps(dict(identity=identity,words=words),ensure_ascii=False,indent=2))
         return words
-    request=json.loads(args.request.read_text())
+    return align
+
+
+def run_request(request_path,align):
+    """Dispatch one source-alignment or final-finish request file."""
+    request=json.loads(Path(request_path).read_text())
     if request.get('operation')=='align_source':
         from batch_dubbing.continuous_context import align_source
-        align_source(request,align)
-    else:
-        finish(request,align)
+        return align_source(request,align)
+    return finish(request,align)
+
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('request',type=Path);parser.add_argument('--device',default='cpu',choices=['cpu','cuda:0'])
+    args=parser.parse_args()
+    model=load_aligner(args.device)
+    run_request(args.request,make_align(model,args.device,args.request))
 
 
 if __name__=='__main__':main()

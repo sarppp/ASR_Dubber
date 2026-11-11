@@ -80,6 +80,54 @@ qwen3-tts/.venv/bin/python run_pipeline.py \
   --language en --target-lang de
 ```
 
+### Warm forced aligner (2026-11-11)
+
+The CPU forced aligner used to load twice per run (source alignment, then the
+final finish), each time in a fresh process. `pipeline_subtitle.run` now starts
+one CPU-only aligner service (`batch_dubbing/align_service.py`) before ASR, so
+its ~12 s load overlaps the GPU stages, and both `dub.py` alignment stages
+reuse it. Requests run the unchanged `aligned_finish` code path; on the
+accepted 29 s clip, two separate processes and the service produced
+byte-identical source/German word timings, SRT/ASS files and `final_dub.mp4`.
+The aligner portion went from 51.8 s to 35.7 s per run, or 21.4 s when a
+service is already warm.
+
+Keep one running across runs to skip the load entirely (CPU RAM only, no GPU):
+
+```bash
+cd nemo && .venv/bin/python -m batch_dubbing.align_service serve   # leave running
+.venv/bin/python -m batch_dubbing.align_service status              # or: stop
+```
+
+A service whose code differs from the files on disk is never used, and any
+unavailable service falls back to the previous fresh-process stage.
+`ALIGN_SERVICE=off` restores the old behaviour exactly. GPU models (Parakeet,
+Tower, Qwen) still load per run: the 6 GB GPU holds one model at a time.
+
+**GPU aligner is the default** (`--alignment-device cuda:0`; `cpu` stays
+selectable and is the fallback without a GPU). FP16 weights wait in CPU RAM and
+move to the GPU only for each request. RTX 2060, accepted 29 s clip, warm:
+source 2.65 s + final 4.87 s on GPU vs 6.04 s + 14.17 s on CPU. Same fixed
+recordings: 84/84 German words identical, final mp4/SRT/ASS byte-identical; one
+English source boundary ("You"/"know") moved by one 80 ms aligner step. Fresh
+full local run with Qwen: 71.7 s (CPU aligner 95.3 s, previous main 126.4 s),
+GPU peak 5.9 of 6.1 GB (Qwen 5.5 GB plus the aligner's 224 MB CUDA context).
+
+### Opt-in MAI-Voice engine
+
+```bash
+qwen3-tts/.venv/bin/python run_pipeline.py --input-file video.mp4 --output-dir out \
+  --language en --target-lang de --tts-engine mai [--mai-voice Harper] [--mai-model microsoft/mai-voice-2-flash]
+```
+
+Paid OpenRouter API (~$15 per million characters, ~$1 per hour of German
+speech), preset voices only (default female per language: Mia for German).
+`qwen3-tts/mai_tts_worker.py` receives each context's finisher target and
+deadline, asks MAI for its own pace within 0.85-1.15 when needed (at most three
+requests), silences isolated trailing blips, and writes `<take>.mai.json`.
+Offline check with the earlier paid take replayed through `MAI_TTS_API_URL`:
+one request, `complete`, ending gap 0.093 s.
+
 The user accepted the actual runner result on 2026-11-06: “yes now it mathces!”
 The exact replay below proves the accepted output with original ASR/MT checkpoints
 and newly generated speech/alignments; new media uses the same workflow, subject

@@ -258,7 +258,9 @@ class PersistentTTSWorker:
             self._start_inner()
 
     def _start_inner(self) -> None:
-        dev = ("cpu" if Path(self._qwen_worker_path).name == "supertonic_tts_worker.py"
+        worker_name = Path(self._qwen_worker_path).name
+        dev = ("cpu" if worker_name == "supertonic_tts_worker.py"
+               else "api" if worker_name == "mai_tts_worker.py"
                else f"cuda:{self._device_id}" if self._device_id is not None else "cuda")
         log.info(f"Starting persistent TTS worker (mode={self.mode}, device={dev})…")
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
@@ -332,11 +334,14 @@ class PersistentTTSWorker:
 
     def generate_custom(
         self, text: str, voice: str, language: str, output: Path,
+        target_seconds: Optional[float] = None, max_end_seconds: Optional[float] = None,
     ) -> bool:
-        return self._send({
-            "text": text, "voice": voice,
-            "language": language, "output": str(output),
-        })
+        request = {"text": text, "voice": voice, "language": language, "output": str(output)}
+        if target_seconds is not None:   # only engines that adapt their own pace use it (MAI)
+            request["target_seconds"] = target_seconds
+        if max_end_seconds is not None:
+            request["max_end_seconds"] = max_end_seconds
+        return self._send(request)
 
     def generate_clone(
         self, text: str, ref_audio: Path, language: str, output: Path,
@@ -493,11 +498,15 @@ class SharedTTSManager:
         
         return result
     
-    def generate_custom(self, text: str, voice: str, language: str, output: Path) -> bool:
-        return self.submit({
-            "text": text, "voice": voice,
-            "language": language, "output": str(output),
-        })
+    def generate_custom(self, text: str, voice: str, language: str, output: Path,
+                        target_seconds: Optional[float] = None,
+                        max_end_seconds: Optional[float] = None) -> bool:
+        request = {"text": text, "voice": voice, "language": language, "output": str(output)}
+        if target_seconds is not None:   # only engines that adapt their own pace use it (MAI)
+            request["target_seconds"] = target_seconds
+        if max_end_seconds is not None:
+            request["max_end_seconds"] = max_end_seconds
+        return self.submit(request)
     
     def generate_clone(self, text: str, ref_audio: Path, language: str, 
                        output: Path, ref_text: str = "") -> bool:

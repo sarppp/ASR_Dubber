@@ -655,11 +655,15 @@ def _dub(args, video: Path, srt: Path, base: str, target: str, *, source_srt=Non
         "--qwen-mode", args.qwen_mode,
         "--workdir", str(dub_workdir),
     ]
+    if args.tts_engine == "mai":
+        cmd += ["--mai-voice", getattr(args, "mai_voice", ""),
+                "--mai-model", getattr(args, "mai_model", "microsoft/mai-voice-2.1-flash")]
     if args.no_demucs:
         cmd.append("--no-demucs")
     cmd += ["--max-speed", "1.0"]
     if source_srt is not None:
         cmd += ["--source-script", str(source_srt), "--source-language", source_language]
+        cmd += ["--alignment-device", getattr(args, "alignment_device", "cuda:0")]
         cmd += ["--placement-mode", getattr(args, "dub_timing", "continuous-synced").replace("-", "_")]
         timing = video.parent / f"{base}.source-timing.json"
         if timing.exists():
@@ -687,7 +691,31 @@ def _dub(args, video: Path, srt: Path, base: str, target: str, *, source_srt=Non
     return dub_workdir, rc
 
 
+def _alignment_python() -> Path | None:
+    configured = os.environ.get("ALIGNMENT_PYTHON")
+    candidate = Path(configured) if configured else NEMO_CODE_DIR / ".venv" / "bin" / "python"
+    return candidate if candidate.exists() else None
+
+
 def run(args) -> int:
+    """Run the pipeline; when dubbing, warm the CPU aligner during ASR/MT.
+
+    The aligner loads once in a background CPU process while the GPU stages
+    run, and both alignment stages of dub.py reuse it (ALIGN_SERVICE=off
+    restores one fresh aligner process per stage).
+    """
+    python = _alignment_python()
+    if getattr(args, "skip_dub", False) or python is None:
+        return _run_pipeline(args)
+    from batch_dubbing.align_service import ephemeral
+    log = QWEN_DIR / "output" / "dub" / "align_service.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    from batch_dubbing.align_service import resolve_device
+    with ephemeral(python, log=log, device=resolve_device(getattr(args, "alignment_device", "cuda:0"))):
+        return _run_pipeline(args)
+
+
+def _run_pipeline(args) -> int:
     nemo_dir = Path(args.input_dir).resolve() if args.input_dir else NEMO_DIR
     end_product_dir = Path(args.output_dir).resolve() if args.output_dir else END_PRODUCT_DIR
     if args.input_file:

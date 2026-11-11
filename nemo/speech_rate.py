@@ -48,6 +48,9 @@ MEASURED_RATES: dict[str, dict[str, float]] = {
     "supertonic": {"en": 15.58, "de": 14.82, "fr": 16.16},
     "audio8": {"en": 14.55, "de": 12.96, "fr": 18.15},
 }
+# MAI-Voice (opt-in engine) has one German measurement so far (MAI-Voice-2 Flash,
+# 533 chars in ~29.0 s = 18.4 chars/s); it uses the conservative defaults until
+# en/fr are measured too.
 
 # The fixed overhead per synthesised segment, in seconds. The voice needs a
 # moment to start and the model adds a pause; a short line pays it in full.

@@ -237,10 +237,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="At most one measured correction (default: 1); 0 disables it. Failed takes are preserved.")
     p.add_argument("--dub-timing", choices=["continuous-synced", "continuous", "source-anchored"], default="continuous-synced",
                    help="Bounded pitch-preserving continuous sync (default); raw continuous or source-anchored remain selectable")
+    p.add_argument("--alignment-device", default="cuda:0", choices=["cpu", "cuda:0"],
+                   help="Forced-aligner device: cuda:0 (default; FP16, GPU held only while each alignment "
+                        "runs, falls back to cpu without a GPU) or cpu (FP32, the 2026-11-06 reference)")
     p.add_argument("--voice-reference", default=None,
                    help="Optional existing reference WAV for a single-speaker Qwen clone")
-    p.add_argument("--tts-engine", default=None, choices=["supertonic", "qwen"],
-                   help="TTS backend (default: qwen for subtitle-dubbing; supertonic for legacy)")
+    p.add_argument("--tts-engine", default=None, choices=["supertonic", "qwen", "mai"],
+                   help="TTS backend (default: qwen for subtitle-dubbing; supertonic for legacy). "
+                        "mai = opt-in MAI-Voice via OpenRouter (paid API, preset voices, no cloning)")
+    p.add_argument("--mai-voice", default="",
+                   help="MAI-Voice preset name (Mia, Harper, Klaus, Grant, ...) or full voice id; "
+                        "default: a female voice for the target language")
+    p.add_argument("--mai-model", default="microsoft/mai-voice-2.1-flash",
+                   choices=["microsoft/mai-voice-2.1-flash", "microsoft/mai-voice-2-flash"])
     p.add_argument("--supertonic-voice", default="M1",
                    choices=[f"{g}{i}" for g in ("M", "F") for i in range(1, 6)])
     p.add_argument("--qwen-mode",      default="clone", choices=["clone", "custom"],
@@ -598,6 +607,8 @@ def main():
             "--qwen-mode", args.qwen_mode,
             "--workdir",   str(dub_workdir),
         ]
+        if args.tts_engine == "mai":
+            dub_cmd += ["--mai-voice", args.mai_voice, "--mai-model", args.mai_model]
         if args.no_demucs:
             dub_cmd.append("--no-demucs")
         if args.max_speed is not None:
