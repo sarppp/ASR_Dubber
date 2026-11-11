@@ -2,4 +2,9 @@
 set -euo pipefail
 control_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$control_root"
-exec "$control_root/speech_model_benchmark_2026-10-27/.runner/bin/python" -m modal_control "$@"
+control_python="${MODAL_CONTROL_PYTHON:-$control_root/modal_control/.state/runtime/bin/python}"
+if [[ ! -x "$control_python" ]]; then
+  echo "Controller environment missing. Install modal_control/requirements.txt into modal_control/.state/runtime, or set MODAL_CONTROL_PYTHON." >&2
+  exit 1
+fi
+exec "$control_python" -m modal_control "$@"

@@ -1,0 +1,25 @@
+# Preserve the source allowlist after moving this archive; generated media stays local.
+/*
+!/.gitignore
+!/HANDOFF.md
+!/RESEARCH_ISOCHRONY_2026-10-29.md
+!/RESEARCH_NEMOTRON_2026-10-29.md
+!/audit_edges.py
+!/audit_existing.py
+!/build_review.py
+!/cheap_native_batch.json
+!/cheap_native_inputs.json
+!/crispr_native/
+/crispr_native/*
+!/crispr_native/README.md
+!/crispr_native/batch.json
+!/crispr_native/inputs.json
+!/crispr_native/scope.json
+!/experiment_inputs.json
+!/review_template.html
+!/run_audio_checks.py
+!/sentence_transition_batch.json
+!/source_validation_inputs.json
+!/sweep_policy.py
+!/transition_release_scope.json
+!/verify_native_trial.py

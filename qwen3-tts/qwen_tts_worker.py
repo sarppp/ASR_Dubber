@@ -21,6 +21,7 @@ All info/debug messages go to stderr so stdout stays clean for the protocol.
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,11 +51,20 @@ def _load_model(mode: str, device: str):
         if mode == "clone"
         else "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     )
+    override = os.environ.get("QWEN_TTS_MODEL_PATH")
+    if override:
+        model_id = override
+    elif mode == "clone" and os.environ.get("QWEN_TTS_CONTINUOUS"):
+        from huggingface_hub import snapshot_download
+        model_id = snapshot_download(
+            model_id, revision="fd4b254389122332181a7c3db7f27e918eec64e3")
     print(f"[worker] Loading {model_id} on {device}…", file=sys.stderr, flush=True)
+    torch.manual_seed(20261105)
     if _use_faster:
-        model = _ModelClass.from_pretrained(model_id, device=device, dtype=torch.bfloat16)
+        model = _ModelClass.from_pretrained(model_id, device=device, dtype=torch.float16,
+                                             max_seq_len=1024 if os.environ.get("QWEN_TTS_CONTINUOUS") else 2048)
     else:
-        model = _ModelClass.from_pretrained(model_id, device_map=device, dtype=torch.bfloat16)
+        model = _ModelClass.from_pretrained(model_id, device_map=device, dtype=torch.float16)
     model._use_faster = _use_faster
     print("[worker] Model loaded successfully", file=sys.stderr, flush=True)
     return model
@@ -80,13 +90,13 @@ def _synthesise(model, req: dict, mode: str) -> str | None:
             ref_text = req.get("ref_text", "")
             if ref_text:
                 wavs, sr = model.generate_voice_clone(
-                    text=text, language=language,
+                    text=text, language=language, max_new_tokens=600 if os.environ.get("QWEN_TTS_CONTINUOUS") else 750,
                     ref_audio=ref_audio, ref_text=ref_text,
                 )
             else:
                 _xvec_kwarg = "xvec_only" if getattr(model, "_use_faster", False) else "x_vector_only_mode"
                 wavs, sr = model.generate_voice_clone(
-                    text=text, language=language,
+                    text=text, language=language, max_new_tokens=600 if os.environ.get("QWEN_TTS_CONTINUOUS") else 750,
                     ref_audio=ref_audio, **{_xvec_kwarg: True},
                 )
         else:

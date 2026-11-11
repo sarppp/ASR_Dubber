@@ -44,7 +44,7 @@ def _srt_ts(t: str) -> float:
     return float(h) * 3600 + float(m) * 60 + float(s)
 
 
-def parse_srt(path: Path) -> List[Dict]:
+def parse_srt(path: Path, *, strict: bool = False) -> List[Dict]:
     """
     Parse a diarized (and already-translated) SRT.
 
@@ -55,18 +55,21 @@ def parse_srt(path: Path) -> List[Dict]:
     Returns list of:
       {"index": int, "start": float, "end": float, "speaker": str, "text": str}
     """
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8-sig")
     blocks = re.split(r"\n\s*\n", text.strip())
     segments = []
+    seen_indices = set()
 
     for block in blocks:
         lines = [l.rstrip() for l in block.splitlines() if l.strip()]
         if len(lines) < 3:
+            if strict: raise ValueError("Malformed subtitle block; refusing to omit speech")
             continue
 
         try:
             idx = int(lines[0].strip())
         except ValueError:
+            if strict: raise ValueError("Invalid subtitle ID; refusing to omit speech")
             continue
 
         ts_match = re.match(
@@ -74,10 +77,14 @@ def parse_srt(path: Path) -> List[Dict]:
             lines[1],
         )
         if not ts_match:
+            if strict: raise ValueError("Invalid subtitle timestamps; refusing to omit speech")
             continue
 
         start = _srt_ts(ts_match.group(1))
         end   = _srt_ts(ts_match.group(2))
+        if strict and (end <= start or idx in seen_indices
+                       or (segments and start < segments[-1]["end"])):
+            raise ValueError("Duplicated, overlapping or invalid subtitle interval")
 
         # Join continuation lines (translate.py sometimes wraps long lines)
         raw_text = " ".join(lines[2:]).strip()
@@ -95,8 +102,10 @@ def parse_srt(path: Path) -> List[Dict]:
         text = text.replace(" | ", " ").replace("|", " ").strip()
 
         if not text:
+            if strict: raise ValueError("Empty subtitle text; refusing to omit speech")
             continue
 
+        seen_indices.add(idx)
         segments.append({
             "index":   idx,
             "start":   start,
@@ -164,7 +173,8 @@ def merge_segments(
         #     or sentence is incomplete and hard cap not yet reached
         if (seg["speaker"] == current["speaker"]
                 and 0 <= gap <= gap_sec
-                and (within_soft_cap or (not sentence_done and within_hard_cap))):
+                and not sentence_done
+                and (within_soft_cap or within_hard_cap)):
             current["end"]  = seg["end"]
             current["text"] = current["text"].rstrip() + " " + seg["text"].lstrip()
             current["subsegments"].append({"start": seg["start"], "end": seg["end"]})

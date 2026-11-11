@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "sentence_transition_probe": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/sentence_transition_worker.py",
+        "--smoke-result",
+        "dubbing_naturalness_2026-10-28/sentence_transition_trial/smoke/report.json"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/sentence_transition_worker.py",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/sentence_transition_worker.py",
+        "batch_dubbing/sentence_transition_probe.py",
+        "batch_dubbing/cheap_native_probe.py"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/sentence_transition_trial/workload/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/sentence_transition_trial/smoke/report.json"
+      ],
+      "max_seconds": 180,
+      "build_timeout_seconds": 30,
+      "startup_timeout_seconds": 45,
+      "idle_timeout_seconds": 155,
+      "review": {
+        "purpose": "Bilingual longer-sentence and short-long-short transition check at native speed",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1; cached image im-40qUTZlx5ttgX1nwrQdvyw",
+        "precision": "ONNX CPU inference; raw FLOAT32 WAV, 44100Hz",
+        "reason": "Check whole sentence endings and lossless placement, before inspecting possible missing words using a separately prepared OpenRouter Nemotron route.",
+        "input": "Frozen build_fixture(): EN short/73-word passage/short then DE short/73-word passage/short; M1, fixed per-sample seeds, explicit speed1.0, eight steps, chunk300 and internal silence0.3. Six API requests/eight internal chunks total. Smoke first English short once; workload remaining5 and reuses hash-verified smoke audio. No source video, translation, ASR or model download inside this Modal job.",
+        "input_seconds": 180,
+        "outputs": "New sentence_transition_trial/smoke and /workload: six unique raw FLOAT32 mono44100 WAVs plus EN/DE sequences assembled from entire unchanged sample arrays with0.4second zero gaps; smoke is copied into workload. Each generated clip<=90s, generatedstage<=300s, transfer<=64MiB including1MiB report reserve. Reports retain SHA/frame evidence and normal failure partials. Abrupt worker death may lose in-memory partials.",
+        "quality_tradeoffs": "Synthetic transition fixture, not source-timed cinema dubbing. Native edge silence adds to inserted gaps; internal chunk pause0.3. Sample retention does not prove spoken word retention, meaning or naturalness. Too-short deadlines/collisions block; no trim/stretch/fade/normalization. Model has no duration/pause conditioning. Cachedimage/cache missing fails without download/rebuild/retry.",
+        "cost_estimate": "Current public rates CPU$0.0000131/core/s RAM$0.00000222/GiB/s. Two180s stages at2CPU4GiB=$0.0126288. Plus24s shutdown/cancellation allowance and128MiB paid egress at$0.04/GiB: about$0.01848. Combined separate180s OpenRouter stage adds at most estimated$0.005994, totalabout$0.02448 under$0.10 target. These are estimates, not provider-enforced currency ceilings. No retries or automatic budget increase.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 360,
+        "max_synthesis_calls_including_smoke": 6,
+        "max_internal_chunks_including_smoke": 8
+      }
+    }
+  }
+}

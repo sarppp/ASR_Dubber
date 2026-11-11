@@ -4,9 +4,19 @@ run_pipeline.py — Master runner for the ASR dubbing pipeline
 =============================================================
 Place in ASR/ root. Runs all three steps end-to-end.
 
+Pipeline modes:
+  --pipeline subtitle-dubbing  (default) Parakeet Ultra + Tower subtitles, then dub
+  --pipeline legacy-dubbing    NeMo + Canary/Gemma in-pass translation (old flow)
+
 Usage:
 # Basic — auto-detects source lang, processes next unprocessed video
 uv run python run_pipeline.py --target-lang fr
+
+# Old flow
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+
+# Only some subtitle languages (target is always included)
+uv run python run_pipeline.py --target-lang fr --subtitle-languages en fr
 
 # With trim (first 30s only)
 uv run python run_pipeline.py --target-lang fr --trim 30
@@ -27,7 +37,7 @@ uv run python run_pipeline.py --target-lang fr --skip-nemo
 uv run python run_pipeline.py --target-lang fr --skip-translate
 uv run python run_pipeline.py --target-lang fr --skip-dub
 
-# TTS defaults to Supertonic CPU, M1. Qwen voice cloning is opt-in.
+# Subtitle dubbing defaults to Qwen cloning with continuous sync; legacy keeps Supertonic.
 uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode clone       # clones original speakers
 uv run python run_pipeline.py --target-lang fr --tts-engine qwen --qwen-mode custom      # uses fixed Qwen voices
 
@@ -210,9 +220,11 @@ def _append_timing_summary(run_dir: Path, pipeline_log: Path) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="ASR dubbing pipeline: NeMo → Gemma translate → Supertonic CPU (Qwen optional)",
+        description=("Dubbing pipeline. Default: Parakeet Ultra + Tower subtitles "
+                     "→ dub in --target-lang. --pipeline legacy-dubbing is the old "
+                     "NeMo + Canary/Gemma flow."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--target-lang",    default=None,
@@ -221,18 +233,27 @@ def main():
                    help="Source language code (auto-detected from SRT if omitted)")
     p.add_argument("--trim",           type=int, default=0, metavar="SEC",
                    help="Process only first N seconds of video (default: full)")
-    p.add_argument("--tts-engine", default="supertonic", choices=["supertonic", "qwen"],
-                   help="TTS backend (default: supertonic on CPU)")
+    p.add_argument("--dub-retries", type=int, choices=[0, 1], default=1,
+                   help="At most one measured correction (default: 1); 0 disables it. Failed takes are preserved.")
+    p.add_argument("--dub-timing", choices=["continuous-synced", "continuous", "source-anchored"], default="continuous-synced",
+                   help="Bounded pitch-preserving continuous sync (default); raw continuous or source-anchored remain selectable")
+    p.add_argument("--voice-reference", default=None,
+                   help="Optional existing reference WAV for a single-speaker Qwen clone")
+    p.add_argument("--tts-engine", default=None, choices=["supertonic", "qwen"],
+                   help="TTS backend (default: qwen for subtitle-dubbing; supertonic for legacy)")
     p.add_argument("--supertonic-voice", default="M1",
                    choices=[f"{g}{i}" for g in ("M", "F") for i in range(1, 6)])
     p.add_argument("--qwen-mode",      default="clone", choices=["clone", "custom"],
                    help="Qwen-only voice mode: clone (default) or custom")
-    p.add_argument("--no-demucs",      action="store_true",
-                   help="Skip demucs — faster, no background music preserved")
-    p.add_argument("--max-speed",      type=float, default=1.35, metavar="SPEED",
-                   help="Max TTS speed-up before capping (default: 1.35)")
-    p.add_argument("--min-speed",      type=float, default=0.65, metavar="SPEED",
-                   help="Min TTS slow-down for short clips (default: 0.65)")
+    background = p.add_mutually_exclusive_group()
+    background.add_argument("--no-demucs", action="store_true", default=None,
+                            help="Replace source audio (default for subtitle-dubbing)")
+    background.add_argument("--preserve-background", dest="no_demucs", action="store_false",
+                            help="Separate and retain background audio with Demucs (legacy default)")
+    p.add_argument("--max-speed",      type=float, default=1.15, metavar="SPEED",
+                   help="Max natural TTS speed-up; overflow requires review (default: 1.15)")
+    p.add_argument("--min-speed",      type=float, default=1.0, metavar="SPEED",
+                   help="Native minimum tempo; only 1.0 is supported (no artificial slowing)")
     p.add_argument("--merge-gap",      type=float, default=1.0, metavar="SEC",
                    help="Merge consecutive same-speaker segments with gap ≤ N s for more natural TTS (default: 1.0, set 0 to disable)")
     p.add_argument("--merge-max-dur",  type=float, default=10.0, metavar="SEC",
@@ -285,7 +306,46 @@ def main():
                    help="VRAM reserve for NeMo chunk estimation (default: 1.5)")
     p.add_argument("--safety-factor",  default=None, type=float, metavar="F",
                    help="VRAM safety multiplier for NeMo chunking (default: 0.85)")
-    args = p.parse_args()
+    # ── Pipeline selection (subtitle-first is the default) ───────────────────
+    p.add_argument("--pipeline", default="subtitle-dubbing",
+                   choices=["subtitle-dubbing", "legacy-dubbing"],
+                   help=("subtitle-dubbing (default): Parakeet Ultra + Tower subtitles, "
+                         "then dub in --target-lang. legacy-dubbing: NeMo + Canary/Gemma "
+                         "in-pass translation, the old flow."))
+    p.add_argument("--subtitle-languages", nargs="+", default=None,
+                   metavar="LANG",
+                   help=("Languages to subtitle in subtitle-dubbing (default: source + target). "
+                         "Known: en de fr."))
+    p.add_argument("--asr-model", default=None,
+                   help="subtitle-dubbing ASR model (default: parakeet-ultra)")
+    p.add_argument("--translator", default=None,
+                   choices=["tower", "gemma", "tower-7b", "canary"],
+                   help="subtitle-dubbing translator (default: tower = tower-plus-2b)")
+    p.add_argument("--fit-target", type=float, default=1.0, metavar="X",
+                   help=("subtitle-dubbing duration budget (default: 1.0); continuous modes "
+                         "keep paired wording and report failures without automatic rewriting"))
+    p.add_argument("--max-sentences", type=int, default=None, metavar="N",
+                   help="subtitle-dubbing: keep only the first N sentence blocks")
+    return p
+
+
+def _resolve_dubbing_defaults(args):
+    """Apply pipeline-specific defaults while preserving explicit user choices."""
+    if args.tts_engine is None:
+        args.tts_engine = "qwen" if args.pipeline == "subtitle-dubbing" else "supertonic"
+    if args.no_demucs is None:
+        args.no_demucs = args.pipeline == "subtitle-dubbing"
+    return args
+
+
+def main():
+    p = build_parser()
+    args = _resolve_dubbing_defaults(p.parse_args())
+    if args.pipeline == "subtitle-dubbing":
+        # Freeze paired wording; continuous sync permits bounded slowdown, never speed-up.
+        args.max_speed = 1.0
+    if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
+        p.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
 
     # Expand translate model shorthands: '4b' → 'translategemma:4b', etc.
     if ":" not in args.translate_model:
@@ -303,6 +363,11 @@ def main():
             p.error("--target-lang is required unless --run-mode transcribe")
         # For transcribe-only runs, target == source (resolved later once source is known)
         args.target_lang = args.language or "same"
+
+    if args.pipeline == "subtitle-dubbing":
+        from pipeline_subtitle import run as run_subtitle_pipeline
+
+        return run_subtitle_pipeline(args)
 
     # ── Apply input/output dir overrides (local vars, no global mutation) ─────
     nemo_dir = _DEFAULT_NEMO_DIR

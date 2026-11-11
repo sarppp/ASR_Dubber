@@ -1,0 +1,164 @@
+[
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 1,
+    "budget": 12,
+    "words": 32,
+    "ratio": 2.667,
+    "seconds": 4.57,
+    "text": "Als wir unsere CRISPR-Forschung veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass sie das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 1,
+    "budget": 16,
+    "words": 32,
+    "ratio": 2.0,
+    "seconds": 1.17,
+    "text": "Als wir unsere CRISPR-Forschung veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass sie das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 1,
+    "budget": 20,
+    "words": 32,
+    "ratio": 1.6,
+    "seconds": 1.07,
+    "text": "Als wir unsere CRISPR-Forschung veröffentlichten, war klar, dass es sich um eine transformative Technologie für die Forschung handeln würde, und wir hofften, dass es das Leben der Menschen in Zukunft beeinflussen würde."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 2,
+    "budget": 12,
+    "words": 34,
+    "ratio": 2.833,
+    "seconds": 1.41,
+    "text": "Es ist jetzt vierzehn Jahre vergangen und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 2,
+    "budget": 16,
+    "words": 34,
+    "ratio": 2.125,
+    "seconds": 1.41,
+    "text": "Es ist jetzt vierzehn Jahre vergangen, und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 2,
+    "budget": 20,
+    "words": 34,
+    "ratio": 1.7,
+    "seconds": 1.27,
+    "text": "Es ist jetzt vierzehn Jahre vergangen, und es ist erstaunlich zu sehen, was passiert ist. Wir haben jetzt das Potenzial, Dinge wie das Ändern von krankheitserregenden Genen zu tun, und das wird bereits getan."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 3,
+    "budget": 12,
+    "words": 29,
+    "ratio": 2.417,
+    "seconds": 1.14,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass wir hin und wieder eine Entdeckung machen und in unserem Bauch wissen, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 3,
+    "budget": 16,
+    "words": 28,
+    "ratio": 1.75,
+    "seconds": 1.18,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass man hin und wieder eine Entdeckung macht und im Bauchgefühl weiß, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "model": "tower-plus-2b:latest",
+    "sentence": 3,
+    "budget": 20,
+    "words": 29,
+    "ratio": 1.45,
+    "seconds": 1.13,
+    "text": "Ich denke, einer der Gründe, warum wir Wissenschaft betreiben, ist, dass wir ab und zu eine Entdeckung machen und in unserem Bauch wissen, dass es etwas wirklich Profundes ist."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 1,
+    "budget": 12,
+    "words": 21,
+    "ratio": 1.75,
+    "seconds": 10.39,
+    "text": "Dieser Technologie ist sehr effizient und kann die Zellen in einem einzigen Zug durch die DNA-Scanning-App auf die neue Form geformen."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 1,
+    "budget": 16,
+    "words": 8,
+    "ratio": 0.5,
+    "seconds": 5.11,
+    "text": "Dieser Technologie ist revolutionär und bietet viele Vorteile."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 1,
+    "budget": 20,
+    "words": 10,
+    "ratio": 0.5,
+    "seconds": 1.96,
+    "text": "Dieser Technologie ist revolutionär und revolutioniert das Leben der Menschen."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 2,
+    "budget": 12,
+    "words": 34,
+    "ratio": 2.833,
+    "seconds": 2.48,
+    "text": "Det är nu vierzehn Jahre später und es ist erstaunlich, zu sehen, was geschehen ist. Wir haben jetzt die Möglichkeit, Dinge wie die Veränderung von krankheitsverursachenden Genen zu tun, und das wird bereits gemacht."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 2,
+    "budget": 16,
+    "words": 0,
+    "ratio": 0.0,
+    "seconds": 0.21,
+    "text": ""
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 2,
+    "budget": 20,
+    "words": 0,
+    "ratio": 0.0,
+    "seconds": 0.31,
+    "text": ""
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 3,
+    "budget": 12,
+    "words": 15,
+    "ratio": 1.25,
+    "seconds": 1.72,
+    "text": "Wir verfolgen wissenschaftliche Forschung, um herauszufinden, was die Natur verborgen hat und wie sie funktioniert."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 3,
+    "budget": 16,
+    "words": 15,
+    "ratio": 0.938,
+    "seconds": 1.74,
+    "text": "Wir verfolgen wissenschaftliche Forschung, um herauszufinden, was die Natur verborgen hält und wie sie funktioniert."
+  },
+  {
+    "model": "hymt2-1.8b:latest",
+    "sentence": 3,
+    "budget": 20,
+    "words": 15,
+    "ratio": 0.75,
+    "seconds": 1.73,
+    "text": "Wir verfolgen wissenschaftliche Forschung, um herauszufinden, was die Natur verborgen hat und wie sie funktioniert."
+  }
+]

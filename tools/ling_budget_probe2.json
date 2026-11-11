@@ -1,0 +1,74 @@
+[
+  {
+    "model": "inclusionai/ling-3.0-flash",
+    "budget": 143,
+    "chars": 197,
+    "over": 1.378,
+    "seconds": 1.06,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass es eine transformative Technologie sein würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde."
+  },
+  {
+    "model": "inclusionai/ling-3.0-flash",
+    "budget": 100,
+    "chars": 190,
+    "over": 1.9,
+    "seconds": 1.51,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde."
+  },
+  {
+    "model": "inclusionai/ling-3.0-flash",
+    "budget": 80,
+    "chars": 190,
+    "over": 2.375,
+    "seconds": 1.05,
+    "text": "Als wir unsere CRISPR-Forschung erstmals veröffentlichten, war klar, dass sie die Forschung transformieren würde, und wir hofften, dass sie künftig das Leben der Menschen beeinflussen würde."
+  },
+  {
+    "model": "google/gemini-2.0-flash-001",
+    "budget": 143,
+    "chars": 247,
+    "over": 1.727,
+    "seconds": 0.13,
+    "text": "HTTP 404: {\"error\":{\"message\":\"google/gemini-2.0-flash-001 is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  },
+  {
+    "model": "google/gemini-2.0-flash-001",
+    "budget": 100,
+    "chars": 247,
+    "over": 2.47,
+    "seconds": 0.16,
+    "text": "HTTP 404: {\"error\":{\"message\":\"google/gemini-2.0-flash-001 is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  },
+  {
+    "model": "google/gemini-2.0-flash-001",
+    "budget": 80,
+    "chars": 247,
+    "over": 3.087,
+    "seconds": 0.15,
+    "text": "HTTP 404: {\"error\":{\"message\":\"google/gemini-2.0-flash-001 is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku",
+    "budget": 143,
+    "chars": 246,
+    "over": 1.72,
+    "seconds": 0.15,
+    "text": "HTTP 404: {\"error\":{\"message\":\"anthropic/claude-3.5-haiku is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku",
+    "budget": 100,
+    "chars": 246,
+    "over": 2.46,
+    "seconds": 0.13,
+    "text": "HTTP 404: {\"error\":{\"message\":\"anthropic/claude-3.5-haiku is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku",
+    "budget": 80,
+    "chars": 246,
+    "over": 3.075,
+    "seconds": 0.16,
+    "text": "HTTP 404: {\"error\":{\"message\":\"anthropic/claude-3.5-haiku is no longer available on OpenRouter: no provider serves this model anymore. See available models at https://openrouter.ai/models\",\"code\":404},\"user_id\":\"user_2oG89lc43Ivt6l1ZfBqxIj59GZO\"}"
+  }
+]

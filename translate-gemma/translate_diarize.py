@@ -300,7 +300,8 @@ try:
     if not warmup_translations:
         print("\n❌ FATAL: group 1 returned nothing after 3 attempts — "
               "Ollama error or model not found.")
-        print(f"   Make sure the model is pulled: ollama pull {MODEL_NAME}")
+        print(f"   Make sure the model exists:  ollama list | grep {MODEL_NAME}")
+        print(f"   GGUF models are registered, not pulled:  ./setup_tower.sh")
         sys.exit(1)
 
     for sub in all_groups[0]:

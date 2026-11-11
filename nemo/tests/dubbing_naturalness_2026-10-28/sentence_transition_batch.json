@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "max_parallel": 1,
+  "max_gpu_parallel": 1,
+  "max_resource_seconds": 360,
+  "max_wall_seconds": 420,
+  "estimated_cost_ceiling_usd": 0.1,
+  "steps": [
+    {
+      "id": "sentence_transition_probe",
+      "catalog": "/home/sarpk/uv_tests/ASR/nemo/modal_control/catalog/sentence_transition_probe.json",
+      "job": "sentence_transition_probe",
+      "depends_on": [],
+      "max_attempts": 1,
+      "cpu_cores": 2,
+      "memory_mib": 4096
+    }
+  ],
+  "notes": "CPUonly; six APIcalls/eight internal chunks total; serial smoke then workload. Separate OpenRouter inference requires the reviewed combined scope and is not automatically launched by this Modal spec. No dollarcap guarantee."
+}

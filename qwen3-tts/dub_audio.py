@@ -602,75 +602,18 @@ def _last_word_boundary(audio_path: Path, before_sec: float) -> float:
 
 
 def speed_fit(audio_path: Path, target_dur: float,
-              max_speed: float = 1.35, min_speed: float = 0.65) -> Path:
+              max_speed: float = 1.15, min_speed: float = 1.0) -> Path:
+    """Fit generated speech conservatively; never slow it or cut trailing words.
+
+    Edge padding is removed before a bounded speed-up. Infeasible speech raises
+    an explicit error, so callers can revise wording or timing before publishing.
+    Short speech retains its native tempo and the stitcher supplies timeline gaps.
     """
-    Fit audio_path into EXACTLY target_dur seconds so the dub timeline
-    stays locked to the video.
-
-    Every branch guarantees the output is exactly target_dur via
-    ``apad,atrim=0:{target_dur}`` — pad if short, trim if long.
-    This eliminates cumulative drift in the stitched dub track.
-
-    - Very short (ratio < min_speed):  slow to min_speed + pad tail.
-    - Short (min_speed ≤ ratio < 1.0): gentle slow-down to fill exactly.
-    - Long (1.0 < ratio ≤ max_speed):  speed up to fill exactly.
-    - Very long (ratio > max_speed):   speed up to max_speed, then trim at
-                                       last word boundary before target_dur
-                                       (avoids mid-syllable cuts).
-
-    min_speed=0.65 means TTS can be slowed up to ~1.54× before we give up
-    and pad the rest with silence.  This matches the deliberate speaking pace
-    of academic/lecture content (~2–2.5 words/s vs TTS ~3 words/s).
-    """
-    curr = _audio_duration(audio_path)
-    if curr <= 0:
-        return audio_path
-
-    out   = audio_path.with_name(audio_path.stem + "_fit.wav")
-    ratio = curr / target_dur
-
-    if ratio < min_speed:
-        # Too short even at max slow-down → use min_speed + pad remainder
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={min_speed:.4f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-    elif ratio <= max_speed:
-        # 0.85–1.0: gentle slow-down;  1.0–max_speed: speed up
-        # apad + atrim guarantee exact target duration (atempo alone drifts by
-        # a few ms due to sample-rate rounding in ffmpeg)
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={ratio:.4f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-    else:
-        # Severely over — speed up to max_speed, then trim at a word boundary
-        # to avoid cutting mid-syllable.
-        compressed = audio_path.with_name(audio_path.stem + "_cmp.wav")
-        subprocess.run(
-            ["ffmpeg", "-i", str(audio_path),
-             "-filter:a", f"atempo={max_speed:.4f}",
-             "-vn", "-y", str(compressed), "-loglevel", "error"],
-            check=True,
-        )
-        cut_at = _last_word_boundary(compressed, target_dur)
-        # Trim at word boundary then pad silence to exact target_dur
-        subprocess.run(
-            ["ffmpeg", "-i", str(compressed),
-             "-filter:a", f"atrim=0:{cut_at:.6f},apad,atrim=0:{target_dur:.6f}",
-             "-vn", "-y", str(out), "-loglevel", "error"],
-            check=True,
-        )
-        try:
-            compressed.unlink()
-        except OSError:
-            pass
-
-    return out if out.exists() else audio_path
+    shared_root = Path(__file__).resolve().parents[1] / "nemo"
+    if str(shared_root) not in sys.path:
+        sys.path.insert(0, str(shared_root))
+    from batch_dubbing.fit_audio import fit_file
+    return fit_file(audio_path, target_dur, max_speed=max_speed, min_speed=min_speed)
 
 
 # ---------------------------------------------------------------------------
@@ -740,120 +683,18 @@ def stitch_and_mix(
     output_dir: Path,
     temp_dir: Path,
     background: Optional[Path] = None,   # None when --no-demucs
-    trim_to: Optional[float] = None,     # trim video to this many seconds (from SRT end)
+    trim_to: Optional[float] = None,     # rejected: excerpt selection belongs upstream
 ) -> Tuple[Path, List[Tuple[float, float, float, float]]]:
+    """Render native takes at absolute source starts and preserve the full video.
+
+    A missing take or overrun fails publication instead of shifting later audio.
     """
-    Concatenate dubbed clips with silence gaps → dub track.
-    Then mix over video:
-      - With demucs:    dub (loud) + background music (quiet) + original video
-      - Without demucs: dub track replaces audio entirely
-    If trim_to is set, the output video is trimmed to that duration.
-
-    Returns (final_video_path, actual_positions) where actual_positions is
-    a list of (actual_start, actual_end, original_start, original_end) for
-    each clip — representing where each segment actually lands in the dubbed
-    audio timeline.
-    """
-    concat_list = temp_dir / "concat.txt"
-    actual_cur = 0.0    # tracks actual position in the dubbed audio timeline
-    actual_positions: List[Tuple[float, float, float, float]] = []
-
-    with open(concat_list, "w") as f:
-        for clip_path, start, end in final_files:
-            if not clip_path.exists():
-                log.warning(f"Missing clip, skipping: {clip_path}")
-                continue
-            # Absolute positioning: place each clip at its original start time.
-            # The gap is computed from actual_cur (real position) so cumulative
-            # drift from previous clips is corrected each iteration.
-            gap = start - actual_cur
-            if gap > 0.001:
-                sil = temp_dir / f"sil_{actual_cur:.3f}.wav"
-                subprocess.run(
-                    f'ffmpeg -f lavfi -i anullsrc=r=24000:cl=mono -t {gap:.6f}'
-                    f' "{sil}" -y -loglevel error',
-                    shell=True, check=True,
-                )
-                f.write(f"file '{sil.resolve()}'\n")
-                actual_cur += gap
-            elif gap < -0.001:
-                # Previous clip overran into this slot (shouldn't happen with
-                # exact speed_fit, but handle gracefully).  The clip will start
-                # slightly late — better than overlapping or crashing.
-                log.warning(
-                    f"Clip at {start:.3f}s: previous segment overran by "
-                    f"{-gap:.3f}s — slight timing shift"
-                )
-            actual_start = actual_cur
-            clip_dur = _audio_duration(clip_path)
-            actual_cur += clip_dur
-            actual_positions.append((actual_start, actual_cur, start, end))
-            f.write(f"file '{clip_path.resolve()}'\n")
-
-    dub_track = output_dir / "dub_track.wav"
-    subprocess.run(
-        f'ffmpeg -f concat -safe 0 -i "{concat_list}" -c copy "{dub_track}" -y -loglevel error',
-        shell=True, check=True,
-    )
-
-    final = output_dir / "final_dub.mp4"
-
-    # Build trim flag if needed (re-encodes video to allow cutting)
-# Build trim flag if needed
-    if trim_to:
-        log.info(f"✂️  Trimming output video to {trim_to:.2f}s (matches SRT duration)")
-        trim_flags  = ["-t", str(trim_to)]
-        
-        # --- NEW GPU DETECTION LOGIC ---
-        try:
-            # Quick check if NVENC is available in this environment
-            check_gpu = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
-            if "nvenc" in check_gpu.stdout.lower():
-                log.info("🚀 RENDER MODE: GPU Accelerated (h264_nvenc)")
-                video_codec = [
-                    "-c:v", "h264_nvenc", 
-                    "-preset", "p4", 
-                    "-tune", "hq", 
-                    "-rc", "vbr", 
-                    "-cq", "19", 
-                    "-b:v", "0"
-                ]
-            else:
-                log.warning("⚠️  GPU Encoder not found! Falling back to CPU (libx264)")
-                video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
-        except Exception:
-            video_codec = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
-        # -------------------------------
-    else:
-        log.info("🚀 RENDER MODE: Stream Copy (No re-encode)")
-        trim_flags  = []
-        video_codec = ["-c:v", "copy"]
-
-    if background and background.exists():
-        subprocess.run(
-            ["ffmpeg",
-             "-i", str(video_path),
-             "-i", str(dub_track),
-             "-i", str(background),
-             *trim_flags,
-             "-filter_complex",
-             "[1:a]volume=1.5[v];[2:a]volume=0.4[b];[v][b]amix=inputs=2:duration=first[out]",
-             "-map", "0:v", "-map", "[out]",
-             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
-            check=True,
-        )
-    else:
-        subprocess.run(
-            ["ffmpeg",
-             "-i", str(video_path),
-             "-i", str(dub_track),
-             *trim_flags,
-             "-map", "0:v", "-map", "1:a",
-             *video_codec, str(final), "-y", "-loglevel", "error", "-stats"],
-            check=True,
-        )
-
-    return final, actual_positions
+    nemo_dir = str(Path(__file__).resolve().parent.parent / "nemo")
+    if nemo_dir not in sys.path:
+        sys.path.insert(0, nemo_dir)
+    from batch_dubbing.anchored_timeline import render
+    return render(final_files, video_path, output_dir, temp_dir,
+                  background=background, trim_to=trim_to)
 
 
 # ---------------------------------------------------------------------------

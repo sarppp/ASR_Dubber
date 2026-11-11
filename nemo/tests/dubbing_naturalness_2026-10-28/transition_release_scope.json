@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "status": "prepared_not_released",
+  "budget_target_usd": 0.1,
+  "estimated_total_usd": 0.02448,
+  "estimate_is_provider_enforced_cap": false,
+  "modal_plan_id_at_preparation": "mb-3cf1b6b0f31da2434a0bcb701a93737f",
+  "modal_plan_file": "sentence_transition_release_plan.json",
+  "source_sha256": {
+    "batch_dubbing/sentence_transition_probe.py": "47748f8d92a2cbc887f1902c3240d713be2e332d4aa4bc4f53d07b56aa142c47",
+    "batch_dubbing/sentence_transition_worker.py": "a0fe9b4e177af3175100ffb0d7aa3ffe931937ee576244542f749a1523859191",
+    "batch_dubbing/cheap_native_probe.py": "1a0d94bfbd0cf20892ac945ff0f85550bdc85c17f0665bf0386c1a4913c921fa",
+    "batch_dubbing/nemotron_probe.py": "c5e3ff7ab38239c308d0047220f27d0d2990a9df927ea68e8fc27fff384a9e1d",
+    "modal_control/catalog/sentence_transition_probe.json": "0e4920374b346aeb1e6542867862408d2bf57940d83e2bb54170733f4fff46d0",
+    "dubbing_naturalness_2026-10-28/sentence_transition_batch.json": "61b6e0195befdf23e115db12b37ee65bd3c52d2e1df786b621e54afc25ab514a"
+  },
+  "fixture": {
+    "schema": 1,
+    "model": "Supertone/supertonic-3",
+    "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323",
+    "package": "supertonic==1.3.1",
+    "image_id": "im-40qUTZlx5ttgX1nwrQdvyw",
+    "speed": 1.0,
+    "steps": 8,
+    "max_chunk_length": 300,
+    "silence_duration": 0.3,
+    "gap_seconds": 0.4,
+    "language_order": [
+      "en",
+      "de"
+    ],
+    "max_api_calls": 6,
+    "max_internal_calls": 8,
+    "max_clip_seconds": 90,
+    "max_stage_seconds": 300,
+    "max_stage_bytes": 67108864,
+    "evidence_kind": "synthetic_fixture",
+    "samples": [
+      {
+        "id": "sample_0",
+        "language": "en",
+        "text": "We can begin this short test.",
+        "voice": "M1",
+        "expected_chunks": 1,
+        "role": "short",
+        "seed": 20261029
+      },
+      {
+        "id": "sample_1",
+        "language": "en",
+        "text": "Before we begin the demonstration, I want to explain why a long sentence needs enough time for every word, why the small pauses between its ideas should remain easy to hear, and why the final part must stay complete even when another speaker is waiting to continue, because a listener should understand the whole explanation without hearing a sudden cut or an unexpected change in the speaking pace. That is the complete explanation.",
+        "voice": "M1",
+        "expected_chunks": 2,
+        "role": "long",
+        "seed": 20261030
+      },
+      {
+        "id": "sample_2",
+        "language": "en",
+        "text": "The next short sentence starts here.",
+        "voice": "M1",
+        "expected_chunks": 1,
+        "role": "short",
+        "seed": 20261031
+      },
+      {
+        "id": "sample_3",
+        "language": "de",
+        "text": "Wir können diesen kurzen Test beginnen.",
+        "voice": "M1",
+        "expected_chunks": 1,
+        "role": "short",
+        "seed": 20261032
+      },
+      {
+        "id": "sample_4",
+        "language": "de",
+        "text": "Bevor wir mit der Vorführung beginnen, möchte ich erklären, warum ein langer Satz genug Zeit für jedes einzelne Wort braucht, warum die kleinen Pausen zwischen seinen Gedanken gut hörbar bleiben sollten und warum sein letzter Teil vollständig erhalten bleiben muss, auch wenn jemand anderes schon darauf wartet weiterzusprechen, denn alle sollen die ganze Erklärung verstehen können, ohne einen plötzlichen Schnitt oder einen unerwarteten Wechsel des Sprechtempos zu hören. Damit ist die Erklärung vollständig.",
+        "voice": "M1",
+        "expected_chunks": 2,
+        "role": "long",
+        "seed": 20261033
+      },
+      {
+        "id": "sample_5",
+        "language": "de",
+        "text": "Der nächste kurze Satz beginnt jetzt.",
+        "voice": "M1",
+        "expected_chunks": 1,
+        "role": "short",
+        "seed": 20261034
+      }
+    ],
+    "quality_limit": "Synthetic phrase-transition test only. No source-video timing, translation, pronunciation or naturalness is verified."
+  },
+  "modal": {
+    "model": "Supertone/supertonic-3",
+    "image": "im-40qUTZlx5ttgX1nwrQdvyw",
+    "max_parallel_containers": 1,
+    "cpu_request_limit": [
+      2,
+      2
+    ],
+    "memory_request_limit_mib": [
+      4096,
+      4096
+    ],
+    "gpu": null,
+    "synthesis_calls": 6,
+    "expected_internal_chunks": 8,
+    "max_retries": 0,
+    "function_timeout_seconds": 150,
+    "startup_timeout_seconds": 30,
+    "controller_stage_seconds": 180,
+    "stages": [
+      "smoke",
+      "workload"
+    ],
+    "maximum_batch_wall_seconds": 420,
+    "downloads": false,
+    "builds": false
+  },
+  "openrouter": {
+    "version": 1,
+    "model": "nvidia/nemotron-3.5-transcribe",
+    "endpoint": "https://openrouter.ai/api/v1/audio/transcriptions",
+    "budget_usd": 0.1,
+    "price_per_second_usd": 3.33e-05,
+    "max_requests": 2,
+    "max_audio_seconds": 180,
+    "max_file_bytes": 16000000,
+    "timeout_seconds": 60,
+    "max_retries": 0,
+    "temperature": 0,
+    "response_format": "verbose_json",
+    "timestamp_granularities": [
+      "word",
+      "segment"
+    ],
+    "input_derivation": "prepare_transition_manifest on successful sentence_transition_trial/workload/report.json only; all WAV, fixture, schedule and slice hashes checked before upload",
+    "input_files": [
+      "sentence_transition_trial/workload/sequence_en.wav",
+      "sentence_transition_trial/workload/sequence_de.wav"
+    ],
+    "first_request_is_smoke": "English; German follows only with valid text/timestamps/cost/receipt",
+    "input_hashes": "Bound after the released synthesis stage produces these exact derived inputs; no new release needed within unchanged scope",
+    "expected_text_sent": false,
+    "outputs": "sentence_transition_trial/nemotron/report.json and two response files maximum",
+    "credential_source": "Existing user-directed Budget_App/.env OPEN_ROUTER; inject into child environment only; no secret in this scope",
+    "hosted_backend_note": "Currently DeepInfra BF16; OpenRouter transcription route cannot enforce provider only/order; actual response identifiers recorded if present"
+  },
+  "local_safety": {
+    "model_execution": false,
+    "cpu_cores": 1,
+    "address_space_mib": 512
+  },
+  "stop_policy": [
+    "Failed Modal smoke blocks workload and ASR",
+    "Missing cache fails without download/rebuild",
+    "Any failed ASR request or missing cost/receipt or invalid timestamp/text response stops remaining requests",
+    "No retries, model fallback or automatic cost increase"
+  ],
+  "excluded": [
+    "source-video ASR",
+    "translation model calls",
+    "duration-conditioned TTS",
+    "source silence alignment",
+    "GPU allocation",
+    "new model download",
+    "video packaging",
+    "publication"
+  ],
+  "quality_claim": "Transition integrity and potential missing-word inspection only; cinematic timing/naturalness not established"
+}

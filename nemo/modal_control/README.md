@@ -24,6 +24,28 @@ From `/home/sarpk/uv_tests/ASR/nemo`:
 ./modal-control backup /tmp/modal-control-backup.tar.gz
 ```
 
+## Container cap (read first)
+
+**What happened:** an agent generated a dataset with `shard.starmap(...)` over 192 jobs and no
+`max_containers`. Modal autoscaled straight to 100 containers at once (the default limit). The owner
+found 99 running containers in the inventory without any warning. Cost $1.50 (the estimate was
+$1.15), and the owner had never agreed to 100 parallel machines.
+**Why:** `.map()`, `.starmap()`, `.spawn()` in a loop and batch submissions autoscale by default up to
+the workspace limit. The agent only checked total cost (CPU-seconds are the same in parallel or in
+series) and never stated or limited how many containers would run. A mistake inside such a burst
+(wrong code, too much memory, a GPU type) is multiplied by 100 before anyone can react.
+**Rules from now on:**
+1. Every Modal function or class gets an explicit `max_containers=` in its decorator: at most 5 for
+   CPU and 1 for GPU, unless the owner approves a higher number for that specific run.
+2. Before the batch, disclose its job count, parallel container cap, hardware, duration, cost and
+   bounded retries. One explicit release covers all launches inside that reviewed batch.
+3. Smoke test with 1-2 jobs first; only then the full run, still within the cap.
+4. While it runs, check `modal container list`; if the owner says stop, run `modal app stop <app-id>`
+   immediately (finished outputs in volumes are kept).
+5. Afterwards report the real cost from `modal billing report --for today`.
+
+Plans must state `max_containers`; a plan without a cap must not be released.
+
 ## Batch release workflow
 
 A user can release one bounded batch once, including its predeclared dependent
@@ -116,12 +138,72 @@ The dashboard is loopback-only and read-only. Alerts are local dashboard/databas
 
 SQLite is the authoritative durable record (WAL, FULL synchronous); JSONL is an additional export. There is no automatic deletion/retention policy. Export evidence and back up `.state` with `backup`, which uses SQLite's backup API; copying a live SQLite file alone can miss WAL data. Disk exhaustion or host loss still requires operational backups. Artifacts are captured after completion; interrupted workers may leave only logs, not complete audio. Existing cloud volume stores model caches, not an off-machine backup of this controller.
 
-Resource samples are observations, not billed GPU seconds. Actual billing, account quotas, container-internal logs not emitted by the attached command, and unrelated apps' stdout are not collected by this version. No fabricated cost estimates are shown. To supervise another project, add its job to the catalog and emit `MC_EVENT {"kind":"worker_ready"}` only after its container entrypoint starts.
+Resource samples are observations, not billed GPU seconds. Account quotas, container-internal logs not emitted by the attached command, and unrelated apps' stdout are not collected. No fabricated cost estimates are shown. To supervise another project, add its job to the catalog and emit `MC_EVENT {"kind":"worker_ready"}` only after its container entrypoint starts.
 
 ## Checks
+
+### Source-linked natural dubbing
+
+The speaker-aware GPU workers retain original ASR words, reconcile speaker
+corridors using overlap evidence, and translate each source utterance by stable
+ID. Their `speech_units[language]` records drive the shared CPU implementation in
+`batch_dubbing/cpu_natural.py`; subtitle display windows do not set speech timing.
+Old subtitle-only JSON inputs fail local validation before remote synthesis.
+
+The CPU path measures conservative outer padding, schedules complete turns at
+native speed or at most 1.15×, and refuses to cut speech or publish a partial dub.
+Native attempts and measurements survive in the mounted cache volume. Impossible
+timing returns `needs_revision`; failed rendering/encoding returns `failed` with
+the stage and error. Local entrypoints save the report and exit unsuccessfully,
+so the controller cannot count either as completed audio.
+
+The provider-independent planner supports an explicitly budgeted revision callback;
+the current Supertonic adapter does **not** configure a translation/revision model.
+These timing checks do not prove translation fidelity or perceptual naturalness.
+Legacy fitting also uses the safe limits, but its subtitle-based input and local
+inference routing remain separate. Do not run local inference without the explicit
+override required by `AGENTS.md`.
+
+Changed code and catalogs require a newly reviewed release plan. Existing output
+files are exclusive, and historical inputs may lack source words or have moved;
+prepare fresh input/output paths and verify their hashes before proposing a new
+experiment. The earlier grouping comparison release does not authorize this changed
+pipeline. See [the investigation handoff](../dubbing_naturalness_2026-10-28/HANDOFF.md)
+for measurements, validation results and remaining work.
+
+### Controller tests
 
 ```bash
 python3 -m unittest discover -s modal_control/tests -v
 ```
 
 Tests cover smoke rejection, success verification, missing readiness, stale artifacts, source changes, secret redaction, owned-app cancellation, deadlines and persisted events. `/metrics` exposes Prometheus run-state gauges and an alert counter; `/api/overview` and `/api/runs/ID/events` expose recorded evidence.
+
+
+## Posted billing at launch and during runs
+
+Every released single job or batch attempts a billing snapshot **before the first
+worker launches**, then every two minutes and after shutdown. The CLI prints
+credits used, cash charged, and the change from the starting snapshot. The
+dashboard and `status` expose the latest observation; each run keeps timestamped
+`billing_snapshot` events and JSON artifacts, including failure/unavailable states.
+
+These are posted Modal figures, not a live meter or a spending cap. Workspace
+changes can include unrelated work. Owned-app cost is selected by recorded app
+IDs, including a batch's child jobs, rather than by matching descriptions. A
+missing credit field, unavailable CLI, or failed request is shown as unknown;
+remaining credits are never calculated from an assumed plan allowance. Month
+rollovers do not produce a misleading cross-month delta.
+
+Install the controller dependencies into its own environment:
+
+```sh
+uv venv modal_control/.state/runtime
+uv pip install --python modal_control/.state/runtime/bin/python -r modal_control/requirements.txt
+```
+
+The launcher uses that environment, or `MODAL_CONTROL_PYTHON` when explicitly set.
+Billing uses the controller's Modal CLI by default, independently of older worker
+CLIs. A catalog can specify `billing_command` as an argument list when it needs a
+separate compatible CLI. Credentials are loaded from the catalog's `env_file` in
+memory and are not saved in billing artifacts.

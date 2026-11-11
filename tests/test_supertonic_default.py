@@ -1,4 +1,6 @@
 import sys
+import json
+import wave
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
@@ -9,21 +11,25 @@ from supertonic_tts_worker import synthesise, language_code
 @pytest.mark.parametrize('engine', ['supertonic', 'qwen'])
 def test_dub_engine_routing_and_cache(engine, tmp_path, monkeypatch):
     video=tmp_path/'video.mp4'; video.touch()
-    srt=tmp_path/'translation.srt'; srt.write_text('translation')
+    srt=tmp_path/'translation.srt'; srt.write_text('1\n00:00:00,000 --> 00:00:02,000\nHallo\n')
     args=['dub.py',str(video),str(srt),'--language','de','--no-demucs','--workdir',str(tmp_path/'work')]
     if engine=='qwen': args+=['--tts-engine','qwen','--qwen-mode','custom']
     monkeypatch.setattr(sys,'argv',args)
-    segments=[dict(index=1,speaker='SPEAKER_00',text='Hallo',start=0,end=2)]
-    monkeypatch.setattr(dub,'parse_srt',lambda p: segments)
     monkeypatch.setattr(dub,'merge_segments',lambda s,**kw:s)
     extract=Mock(); monkeypatch.setattr(dub,'extract_clone_refs',extract)
     monkeypatch.setattr(dub,'write_dub_srt',Mock())
     monkeypatch.setattr(dub,'_audio_duration',lambda p:2)
-    monkeypatch.setattr(dub,'speed_fit',lambda p,*a,**kw:p)
+    def fit(path, *args, **kwargs):
+        path.with_suffix('.json').write_text(json.dumps(dict(tempo=1., edges=dict(retained_seconds=2.))))
+        return path
+    monkeypatch.setattr(dub,'speed_fit',fit)
     monkeypatch.setattr(dub,'stitch_and_mix',lambda *a,**kw:(tmp_path/'final.mp4',[]))
     manager=Mock()
     def generate(text,voice,language,output):
-        output.write_bytes(b'0'*600); return True
+        with wave.open(str(output), 'wb') as wav:
+            wav.setparams((1, 2, 24000, 0, 'NONE', 'not compressed'))
+            wav.writeframes(b'\x01\x00' * 48000)
+        return True
     manager.generate_custom.side_effect=generate
     constructor=Mock(return_value=manager); monkeypatch.setattr(dub,'SharedTTSManager',constructor)
     assert dub.main()==0

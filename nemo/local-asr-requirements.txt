@@ -1,7 +1,9 @@
-# Python 3.12; CUDA 12.4 PyTorch wheels.
---extra-index-url https://download.pytorch.org/whl/cu124
+# Python 3.12; CUDA 12.8 PyTorch wheels (torch >= 2.8 is required by moondream/Parakeet Ultra).
+--extra-index-url https://download.pytorch.org/whl/cu128
 nemo_toolkit[asr]==2.5.3
 numpy<2
-torch==2.6.0+cu124
-torchaudio==2.6.0+cu124
-torchvision==0.21.0+cu124
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+moondream==2.6.1
+soundfile

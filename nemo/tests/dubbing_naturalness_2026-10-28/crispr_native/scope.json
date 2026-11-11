@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "status": "prepared_not_released",
+  "user_selected_range": "Opening74secondsfirstwithcomplete sentences",
+  "excerpt_start": 0,
+  "excerpt_end": 74.24,
+  "plan_id": "mb-c06b3c66dd33827ecddf49e9f1430990",
+  "source_sha256": {
+    "batch_dubbing/native_excerpt_prepare.py": "1a5c1304a3d348f7e883a7f86fef1c572d344afb7cd5bc3264cd6dd38cf8bc6f",
+    "batch_dubbing/native_excerpt_probe.py": "a1247e4438cd8e46e1034e5ddb5d81523300e0aae846899ec124d26e43fd72ee",
+    "batch_dubbing/native_excerpt_worker.py": "1cd4e2142f6b6445f0c20200581fcad5de8986c404868969eed9f313beb6585f",
+    "batch_dubbing/native_excerpt_review.py": "044879ae524ea626f7f846b8d61a34b99af7f0f5e5f84e557a58cd0bf0802b16",
+    "batch_dubbing/cheap_native_probe.py": "1a0d94bfbd0cf20892ac945ff0f85550bdc85c17f0665bf0386c1a4913c921fa",
+    "speech_model_benchmark_2026-10-27/code/telemetry.py": "308b336bc0705ef4725091c00b60e023bdcc41ce26becd205ccd8a430f4c127b",
+    "modal_control/catalog/crispr_native_excerpt.json": "ce16679345ec2700257d1028bd10bbee259010a550bd239b94aade0568562be6",
+    "dubbing_naturalness_2026-10-28/crispr_native/inputs.json": "6361333aa99554583c99732abf6c2768983c2f6ec0f62c243cc422514c58f622",
+    "dubbing_naturalness_2026-10-28/crispr_native/batch.json": "6ac2c35b9f636f836805eb0af4ee6d820daad6bcac50a38d7cdf402b624e92b6"
+  },
+  "synthesis": {
+    "model": "Supertone/supertonic-3",
+    "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323",
+    "package": "supertonic==1.3.1",
+    "image_id": "im-40qUTZlx5ttgX1nwrQdvyw",
+    "voice": "F1",
+    "languages": [
+      "en",
+      "de"
+    ],
+    "speed": 1.0,
+    "steps": 8,
+    "calls": 4,
+    "internal_chunks": 9,
+    "smoke_sample_id": "en_000",
+    "remaining_samples": [
+      "en_001",
+      "de_000",
+      "de_001"
+    ],
+    "smoke_reused": true,
+    "internal_chunk_gap_seconds": 0.3
+  },
+  "hardware": {
+    "type": "CPU",
+    "request_limit_cpu": [
+      2,
+      2
+    ],
+    "request_limit_memory_mib": [
+      4096,
+      4096
+    ],
+    "max_containers": 1,
+    "gpu": null
+  },
+  "limits": {
+    "function_seconds": 150,
+    "startup_seconds": 30,
+    "controller_stage_seconds": 180,
+    "stages": 2,
+    "batch_wall_seconds": 420,
+    "retries": 0,
+    "clip_seconds": 120,
+    "generated_seconds_per_stage": 300,
+    "audio_bytes_per_stage": 66060288,
+    "metadata_bytes_per_stage": 1048576
+  },
+  "local_bounds": {
+    "cpu_cores": 1,
+    "address_space_mib": 512,
+    "thread_stack_mib": 1,
+    "MALLOC_ARENA_MAX": "2",
+    "model_execution": false
+  },
+  "estimated_cost_usd": 0.01848,
+  "budget_target_usd": 0.1,
+  "provider_enforced_currency_cap": false,
+  "local_postprocessing": {
+    "script": "batch_dubbing/native_excerpt_review.py",
+    "input_file": "dubbing_naturalness_2026-10-28/crispr_native/inputs.json",
+    "report_file": "dubbing_naturalness_2026-10-28/crispr_native/trial/workload/report.json",
+    "output_file": "dubbing_naturalness_2026-10-28/crispr_native/review.html",
+    "method": "Reference existing original andolderdub video files andgeneratednativeWAVs; no videoencoding/extraction/subtitleburnin."
+  },
+  "quality_limits": [
+    "Existing wording unchanged; known translation/punctuation defects retained",
+    "Onlycaptionlead/interblock/tailgaps inserted; withinblockpausesmodelcontrolled",
+    "Nooriginalacoustic speech/silence alignment claimed",
+    "Complete native listeningsequence maydiffer from74.24seconds",
+    "Newgeneratedtracks speechonly; no background separation/remix",
+    "Fixed F1preset notvoiceclone or new speaker attribution"
+  ],
+  "excluded": [
+    "Nemotron/OpenRouter/DeepInfra API calls",
+    "newASR/VAD/diarization",
+    "translation ormanualwordingrepair",
+    "GPU",
+    "downloads/builds",
+    "stretch/trim/normalization",
+    "videoencoding",
+    "originalfileoverwrite",
+    "publication"
+  ]
+}

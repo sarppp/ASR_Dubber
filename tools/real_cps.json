@@ -1,0 +1,98 @@
+[
+  {
+    "segment": 3,
+    "raw": 3.44,
+    "target": 3.719999999999999,
+    "over": 0.9247311827956992,
+    "sidecar": "seg_0003_natural_fit_5591f76605c3893a.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 5,
+    "raw": 10.8,
+    "target": 12.880000000000003,
+    "over": 0.8385093167701863,
+    "sidecar": "seg_0005_natural_fit_d649b37f45985227.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 6,
+    "raw": 7.2,
+    "target": 7.799999999999997,
+    "over": 0.9230769230769235,
+    "sidecar": "seg_0006_natural_fit_1d8e523bb453ed2a.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 7,
+    "raw": 12.56,
+    "target": 18.329000000000008,
+    "over": 0.6852528779529704,
+    "sidecar": "seg_0007_natural_fit_88e84897e99437c6.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 8,
+    "raw": 3.6,
+    "target": 4.960000000000008,
+    "over": 0.725806451612902,
+    "sidecar": "seg_0008_natural_fit_19f180987d69239b.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 10,
+    "raw": 9.52,
+    "target": 10.799000000000007,
+    "over": 0.8815631076951563,
+    "sidecar": "seg_0010_natural_fit_bfcb2ef7b8cdb301.json",
+    "cache": "2a047081af87b311"
+  },
+  {
+    "segment": 2,
+    "raw": 5.6,
+    "target": 6.3309999999999995,
+    "over": 0.8845364081503712,
+    "sidecar": "seg_0002_natural_fit_63d2eb7a900d2199.json",
+    "cache": "4a3c5a831cf4316c"
+  },
+  {
+    "segment": 5,
+    "raw": 11.92,
+    "target": 12.880000000000003,
+    "over": 0.9254658385093166,
+    "sidecar": "seg_0005_natural_fit_3f74e66fef22ac30.json",
+    "cache": "4a3c5a831cf4316c"
+  },
+  {
+    "segment": 6,
+    "raw": 6.88,
+    "target": 7.799999999999997,
+    "over": 0.8820512820512824,
+    "sidecar": "seg_0006_natural_fit_0e2fac5412049053.json",
+    "cache": "4a3c5a831cf4316c"
+  },
+  {
+    "segment": 7,
+    "raw": 14.24,
+    "target": 18.329000000000008,
+    "over": 0.7769109062141958,
+    "sidecar": "seg_0007_natural_fit_951a4f7e2a1c2ae2.json",
+    "cache": "4a3c5a831cf4316c"
+  },
+  {
+    "segment": 8,
+    "raw": 3.44,
+    "target": 4.960000000000008,
+    "over": 0.693548387096773,
+    "sidecar": "seg_0008_natural_fit_e7a1be4130c207c9.json",
+    "cache": "4a3c5a831cf4316c"
+  },
+  {
+    "segment": 10,
+    "raw": 10.24,
+    "target": 10.799000000000007,
+    "over": 0.9482359477729414,
+    "sidecar": "seg_0010_natural_fit_84b671166dc64a1e.json",
+    "cache": "4a3c5a831cf4316c"
+  }
+]

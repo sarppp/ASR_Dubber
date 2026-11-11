@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "max_parallel": 1,
+  "max_gpu_parallel": 1,
+  "max_resource_seconds": 2400,
+  "max_wall_seconds": 5400,
+  "estimated_cost_ceiling_usd": 1.0,
+  "steps": [
+    {
+      "id": "source_words",
+      "catalog": "/home/sarpk/uv_tests/ASR/nemo/modal_control/catalog/source_naturalness_validation.json",
+      "job": "source_validation_gpu",
+      "depends_on": [],
+      "max_attempts": 1,
+      "cpu_cores": 4,
+      "memory_mib": 32768
+    },
+    {
+      "id": "natural_audio",
+      "catalog": "/home/sarpk/uv_tests/ASR/nemo/modal_control/catalog/source_naturalness_validation.json",
+      "job": "source_validation_cpu",
+      "depends_on": [
+        "source_words"
+      ],
+      "derived_inputs": {
+        "dubbing_naturalness_2026-10-28/source_validation_2026-10-29/gpu_full.json": "source_words"
+      },
+      "max_attempts": 1,
+      "cpu_cores": 2,
+      "memory_mib": 4096
+    }
+  ]
+}

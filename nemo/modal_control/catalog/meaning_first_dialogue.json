@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "env_file": "/home/sarpk/uv_tests/ASR/nemo/.env",
+  "modal_command": [
+    "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+    "-m",
+    "modal"
+  ],
+  "hardware_policy": {
+    "allowed_gpus": [
+      "T4"
+    ],
+    "fallback_allowed": false
+  },
+  "jobs": {
+    "meaning_first_dialogue": {
+      "cwd": "/home/sarpk/uv_tests/ASR/nemo",
+      "command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/dialogue_trial_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial",
+        "--smoke-result",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial/smoke/report.json"
+      ],
+      "smoke_command": [
+        "/home/sarpk/uv_tests/ASR/nemo/speech_model_benchmark_2026-10-27/.runner/bin/python",
+        "-m",
+        "modal",
+        "run",
+        "batch_dubbing/dialogue_trial_worker.py",
+        "--input-file",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/inputs.json",
+        "--output-root",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial",
+        "--smoke"
+      ],
+      "source_files": [
+        "batch_dubbing/dialogue_trial_worker.py",
+        "batch_dubbing/dialogue_trial.py",
+        "batch_dubbing/native_excerpt_probe.py",
+        "batch_dubbing/cheap_native_probe.py",
+        "batch_dubbing/dialogue_trial_review.py",
+        "speech_model_benchmark_2026-10-27/code/telemetry.py",
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/inputs.json",
+        "modal_control/batch_inputs/video_00.gpu_full.json",
+        "modal_control/batch_inputs/video_04.gpu_full.json"
+      ],
+      "success_files": [
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial/workload/report.json"
+      ],
+      "smoke_success_files": [
+        "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial/smoke/report.json"
+      ],
+      "max_seconds": 180,
+      "build_timeout_seconds": 30,
+      "startup_timeout_seconds": 45,
+      "idle_timeout_seconds": 155,
+      "review": {
+        "purpose": "Meaning-first German dialogue adaptation against old wording at identical native synthesis settings",
+        "model": "Supertone/supertonic-3",
+        "revision": "3cadd1ee6394adea1bd021217a0e650ede09a323; supertonic==1.3.1; cached im-40qUTZlx5ttgX1nwrQdvyw",
+        "precision": "ONNX CPU, complete FLOAT32 mono 44100 Hz WAV",
+        "reason": "User approved the meaning-first approach used for SRT. Isolate revised wording on difficult source-linked phrases, without assuming a naturalness or timing pass.",
+        "input": "Eight frozen English-linked phrases: Bill Ackman327.64..336.28s (four speaker-turn phrases), Mind Control265.9381875..289.7381875s (four contextual phrases). Old German and assistant-adapted German for each, same voice M1/M2 and seed within pair. Sixteen calls/sixteen checked internal chunks. Smoke first old-German phrase once, reused in workload. Existing English transcript not freshly audio-verified. No ASR, external translation or video upload.",
+        "input_seconds": 32.44,
+        "outputs": "dubbing_naturalness_2026-10-28/meaning_first_trial_2026-10-29/trial/smoke and /workload: sixteen unique native WAVs and reports with source IDs, hashes, durations, caption-span differences. Separate local result_review.html, no video encoding or mixing. Max30s perclip,180s newly generated perstage,32MiBaudio plus1MiBmetadata perstage. Originals unchanged.",
+        "quality_tradeoffs": "Tests text adaptation only; original acting, acoustic pause matching, voice cloning and synchronized video are not implemented by this experiment. Same native1.0 may still sound too fast/slow or miss duration. Old wording preserves known defects as a control. No waveform stretching, clipping, padding or revisions/retries. One seed per wording does not establish a population-level result. Cache miss aborts without model download.",
+        "cost_estimate": "Controller pinned-rate compute maximum: two180s stages at2CPU/4GiB approximately $0.01263; allowing cleanup and up to64MiB total audio transfer suggests about $0.02. Declared target $0.10, not a provider-enforced billing cap; current provider charges/overhead may differ. No GPU, paid retry, ASR or translation API cost.",
+        "hardware": "CPU",
+        "max_containers": 1,
+        "max_total_seconds": 360,
+        "max_synthesis_calls_including_smoke": 16,
+        "max_internal_chunks_including_smoke": 16
+      }
+    }
+  }
+}

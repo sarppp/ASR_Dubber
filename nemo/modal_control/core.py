@@ -154,6 +154,7 @@ CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);""")
             "runs": runs,
             "alerts": alerts,
             "state_root": str(self.root),
+            "billing": json.loads((self.root / "latest_billing.json").read_text()) if (self.root / "latest_billing.json").exists() else None,
         }
 
     def get(self, rid):
@@ -180,6 +181,10 @@ def load_catalog(path):
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+", name):
             raise ValueError("Invalid job name")
         for key in ("command", "smoke_command"):
+            if key == "smoke_command" and job.get("smoke_mode") == "offline_receipt":
+                if job.get(key):
+                    raise ValueError("Offline receipt cannot execute a smoke command")
+                continue
             if (
                 not isinstance(job.get(key), list)
                 or not job[key]
@@ -248,6 +253,11 @@ def cancel_apps(store, rid, app_ids, modal_command, env):
 
 
 def stage(store, rid, job, smoke, env, modal_command):
+    if smoke and job.get("smoke_mode") == "offline_receipt":
+        from .offline import verify_receipt
+        verified = verify_receipt(job)
+        store.event(rid, "offline_preflight_verified", {"files": verified, "cloud_calls": 0})
+        return verified
     name = "smoke" if smoke else "workload"
     cmd = job["smoke_command" if smoke else "command"]
     d = store.root / "runs" / rid
@@ -479,6 +489,8 @@ def _run_approved_job(store, catalog_path, name, plan=None):
         except BlockingIOError:
             store.state(rid, "failed", reason="Another supervisor owns this job")
             return rid, 1
+        from .billing import BillingMonitor
+        billing = BillingMonitor(store, rid, catalog).start()
         try:
             try:
                 stage(store, rid, job, True, env, modal_command)
@@ -533,6 +545,8 @@ def _run_approved_job(store, catalog_path, name, plan=None):
             store.alert(rid, "run_failed", str(e))
             store.state(rid, status, error=str(e))
             return rid, 1
+        finally:
+            billing.finish()
 
 
 def recover(store, catalog_path):

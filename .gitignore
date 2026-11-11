@@ -5,6 +5,8 @@
 !/.gitignore
 !/README.md
 !/run_pipeline.py
+!/pipeline_subtitle.py
+!/tools/
 !/pipeline_paths.py
 !/pipeline_utils.py
 !/Dockerfile
@@ -49,6 +51,16 @@ nemo/*
 !nemo/nemo_model.py
 !nemo/nemo_audio.py
 !nemo/qwen3_asr.py
+!nemo/local_mt.py
+!nemo/local_sentence_pipeline.py
+!nemo/parakeet_ultra.py
+!nemo/subtitle_combine.py
+!nemo/dub_deepseek_status.md
+!nemo/speech_rate.py
+!nemo/dub_timing.py
+!nemo/dub_meaning.py
+!nemo/dub_compress.py
+!nemo/dub_rate_findings.md
 !nemo/.python-version
 !nemo/pyproject.toml
 !nemo/uv.lock
@@ -61,6 +73,7 @@ qwen3-tts/*
 !qwen3-tts/dubber_modal.py
 !qwen3-tts/dub_srt.py
 !qwen3-tts/dub_audio.py
+!qwen3-tts/dub_cache.py
 !qwen3-tts/dub_qa.py
 !qwen3-tts/show_segments.py
 !qwen3-tts/test_ipc_mock.py
@@ -74,9 +87,22 @@ translate-gemma/*
 !translate-gemma/translate.py
 !translate-gemma/translate_diarize.py
 !translate-gemma/translate_utils.py
+!translate-gemma/Modelfile.tower-plus-2b
+!translate-gemma/setup_tower.sh
+!translate-gemma/test_tower_flow.py
 !translate-gemma/.python-version
 !translate-gemma/pyproject.toml
 !translate-gemma/uv.lock
+
+# crispr auto_trial: keep the step code and its README, never the media/artifacts
+!nemo/new_guys/
+nemo/new_guys/*
+!nemo/new_guys/crispr/
+nemo/new_guys/crispr/*
+!nemo/new_guys/crispr/auto_trial/
+nemo/new_guys/crispr/auto_trial/*
+!nemo/new_guys/crispr/auto_trial/steps.py
+!nemo/new_guys/crispr/auto_trial/README.md
 
 # Whisper
 whisper/*

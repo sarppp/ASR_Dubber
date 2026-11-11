@@ -1,0 +1,6 @@
+# Preserve the source allowlist after moving this archive; generated media stays local.
+/*
+!/.gitignore
+!/code/
+/code/*
+!/code/telemetry.py

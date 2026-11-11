@@ -24,7 +24,9 @@ Usage:
 
 import argparse
 import logging
+import math
 import queue as _queue
+import json
 import re
 import subprocess
 import sys
@@ -35,8 +37,19 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from tqdm import tqdm
+from dub_cache import file_digest, speech_key, restore as restore_speech, save as save_speech
 
 log = logging.getLogger(__name__)
+
+
+def _needed_seconds(message: str):
+    match = re.search(r"needs ([0-9.]+)s", message or "")
+    return float(match.group(1)) if match else None
+
+
+def _required_tempo(message: str):
+    match = re.search(r"required tempo ([0-9.]+)", message or "")
+    return float(match.group(1)) if match else None
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 from dub_srt import (
@@ -64,6 +77,20 @@ from dub_audio import (
 # ---------------------------------------------------------------------------
 # VRAM auto-detection
 # ---------------------------------------------------------------------------
+
+def _fit_window(start: float, end: float, next_start=None) -> float:
+    """Borrow at most 250 ms; never cross the following utterance onset."""
+    values = (start, end) if next_start is None else (start, end, next_start)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) for value in values):
+        raise ValueError("Speech times must be finite numbers")
+    if start < 0 or end <= start:
+        raise ValueError("Speech timestamps must have a positive duration")
+    deadline = end if next_start is None else min(end + .25, next_start)
+    if deadline <= start:
+        raise ValueError("Speech onsets must be ordered and distinct")
+    return deadline - start
+
 
 def _auto_workers(device_ids: List[int]) -> int:
     """Return the number of TTS worker threads.
@@ -122,12 +149,12 @@ Examples:
                         help="Working directory for intermediate files (default: output/dub)")
     parser.add_argument("--qwen-dir",   default=".",
                         help="Path to the qwen3-tts uv project (default: current folder)")
-    parser.add_argument("--max-speed",  type=float, default=1.35,
-                        help="Max TTS speed-up before capping (default: 1.35)")
-    parser.add_argument("--min-speed",  type=float, default=0.65,
-                        help="Min TTS slow-down for short clips (default: 0.65). "
-                             "Clips shorter than this ratio are slowed to 0.65x speed "
-                             "to fill the slot, matching academic lecture pace.")
+    parser.add_argument("--max-speed",  type=float, default=1.0,
+                        help="Maximum tempo; native speed by default, overflow requires review")
+    parser.add_argument("--strict-timing", action="store_true",
+                        help="Reject native speech ending over 400 ms before its source passage")
+    parser.add_argument("--min-speed",  type=float, default=1.0,
+                        help="Native minimum tempo; only 1.0 is supported (no artificial slowing)")
     parser.add_argument("--merge-gap",  type=float, default=1.0,
                         help="Merge consecutive same-speaker segments with gap ≤ N s "
                              "for more natural TTS (default: 1.0, set 0 to disable)")
@@ -140,7 +167,19 @@ Examples:
     parser.add_argument("--tts-devices", default="0",
                         help="Comma-separated GPU IDs for workers, e.g. '0,1,2' "
                              "(default: '0'). Workers round-robin across devices.")
+    parser.add_argument("--source-script", type=Path, help="Original ASR subtitles: enables measured word alignment and final combined subtitles")
+    parser.add_argument("--source-language", default="en")
+    parser.add_argument("--placement-mode", choices=["continuous_synced", "continuous", "source_anchored"], default="continuous_synced",
+                        help="With --source-script: bounded continuous sync, raw continuous, or source-anchored placement")
+    parser.add_argument("--source-timing", type=Path)
+    parser.add_argument("--comparison-script", action="append", default=[], help="LANG=original-aligned subtitle path")
+    parser.add_argument("--voice-reference", type=Path)
     args = parser.parse_args()
+    if args.min_speed != 1.0 or not 1.0 <= args.max_speed <= 1.15:
+        parser.error("Natural fitting requires --min-speed 1.0 and --max-speed between 1.0 and 1.15")
+
+    if args.strict_timing and args.max_speed != 1.:
+        parser.error("--strict-timing requires --max-speed 1.0")
 
     if args.tts_engine == "supertonic":
         from supertonic_tts_worker import language_code
@@ -204,7 +243,7 @@ Examples:
     work_dir   = Path(args.workdir).resolve()
     import hashlib
     cache_key = hashlib.sha256(srt_path.read_bytes() + repr((
-        args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
+        "natural-fit-v8-selected-placement", args.placement_mode, args.strict_timing, args.tts_engine, args.supertonic_voice, args.qwen_mode, args.language,
         args.merge_gap, args.merge_max_dur, args.min_speed, args.max_speed,
         str(video_path), video_path.stat().st_mtime_ns,
     )).encode()).hexdigest()[:16]
@@ -234,15 +273,52 @@ Examples:
     log.info("=" * 60)
 
     # ── 1. Parse SRT ─────────────────────────────────────────────────────────
-    segments = parse_srt(srt_path)
+    segments = parse_srt(srt_path, strict=True)
     if not segments:
         log.error("No segments parsed — make sure this is a diarized+translated SRT")
         return 1
+    alignment_plan = None
+    synthesis_bundles = None
+    if args.source_script:
+        if args.merge_gap != 0 or args.max_speed != 1.:
+            parser.error("Source-aligned dubbing requires native speed and already grouped passages (--merge-gap 0)")
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nemo"))
+        from batch_dubbing.aligned_finish import source_plan
+        from batch_dubbing.continuous_context import bundle_segments
+        import importlib.util
+        import os
+        nemo_dir = Path(__file__).resolve().parent.parent / "nemo"
+        alignment_python = os.environ.get("ALIGNMENT_PYTHON") or (
+            sys.executable if importlib.util.find_spec("qwen_asr") else str(nemo_dir / ".venv/bin/python"))
+        source_timing = work_dir / "source_forced_alignment.json"
+        source_request = dict(operation="align_source", video=str(video_path),
+                              source_script=str(args.source_script), source_language=args.source_language,
+                              output=str(source_timing))
+        source_request_path = work_dir / "source_alignment_request.json"
+        source_request_path.write_text(json.dumps(source_request, indent=2))
+        log.info("Aligning original speech before synthesis")
+        subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(source_request_path)],
+                       cwd=nemo_dir, check=True, timeout=max(180, 90*len(segments)))
+        comparisons = dict(value.split("=", 1) for value in args.comparison_script)
+        alignment_plan = source_plan(args.source_script, srt_path, comparisons, args.source_language, args.language, source_timing=source_timing)
+        segments = bundle_segments(segments)
+        synthesis_bundles = [seg["passage_indices"] for seg in segments]
+        os.environ["QWEN_TTS_CONTINUOUS"] = "1"
+        log.info("Continuous synthesis: %s contexts for %s complete source passages", len(segments), len(alignment_plan["passages"]))
+        (work_dir / "source_alignment_plan.json").write_text(json.dumps(alignment_plan, ensure_ascii=False, indent=2))
     if args.merge_gap > 0:
         segments = merge_segments(segments, gap_sec=args.merge_gap,
                                   max_dur=args.merge_max_dur)
 
-    # Compute SRT duration early — used for trimming audio AND final video
+    report_path = work_dir / "fit_report.json"
+    report_base = {"schema_version": 2, "script_sha256": file_digest(srt_path),
+                   "engine": args.tts_engine, "language": args.language,
+                   "cache_dir": str(cache_dir), "max_speed": args.max_speed,
+                   "expected_segments": segments}
+    report_path.write_text(json.dumps({**report_base, "status": "running",
+                                       "segments": []}, ensure_ascii=False, indent=1))
+
+    # Compute reference extraction extent; never use it to trim the picture
     srt_end = max(s["end"] for s in segments)
 
     # ── 2. Audio separation or raw extract ───────────────────────────────────
@@ -254,13 +330,20 @@ Examples:
         if args.qwen_mode == "clone":
             extract_audio(video_path, audio_for_refs, trim_sec=srt_end)
     else:
-        vocals, background = separate_audio(video_path, temp_dir, trim_sec=srt_end)
+        vocals, background = separate_audio(video_path, temp_dir, trim_sec=0)
         audio_for_refs = vocals
 
     # ── 3. Clone refs ─────────────────────────────────────────────────────────
     clone_refs: Dict[str, Path] = {}
     if args.qwen_mode == "clone":
-        clone_refs = extract_clone_refs(segments, audio_for_refs, cast_dir)
+        if args.voice_reference:
+            if not args.voice_reference.is_file() or len({seg["speaker"] for seg in segments}) != 1:
+                raise ValueError("A supplied voice reference requires an existing WAV and one source speaker")
+            clone_refs = {seg["speaker"]: args.voice_reference.resolve() for seg in segments}
+        else:
+            clone_refs = extract_clone_refs(segments, audio_for_refs, cast_dir)
+        if alignment_plan is not None and not clone_refs:
+            raise ValueError("No clone reference; refusing an unrequested voice substitution")
         if not clone_refs:
             log.warning("⚠️  No clone refs extracted — falling back to custom mode")
             args.qwen_mode = "custom"
@@ -303,19 +386,35 @@ Examples:
     log.info(f"🗣️  Synthesising {len(segments)} segments "
              f"({len(done_indices)} cached, {len(todo)} remaining)")
 
-    # Pre-compute available window per segment: slot + silence gap to next
-    # speaker.  TTS is allowed to overflow into that gap (no one is talking
-    # there) rather than being hard-compressed into just the slot.
-    # Cap: slot + 5 s max so we never stretch speech unnaturally over a long
-    # pause.
+    # Preserve pauses: only a small end allowance may be borrowed, and the
+    # next utterance onset is always a hard deadline.
     _available: Dict[int, float] = {}
     for idx, seg in enumerate(segments):
-        slot = seg["end"] - seg["start"]
-        if idx + 1 < len(segments):
-            gap_end = segments[idx + 1]["start"]
-        else:
-            gap_end = seg["end"]
-        _available[seg["index"]] = min(gap_end - seg["start"], slot + 5.0)
+        next_start = segments[idx + 1]["start"] if idx + 1 < len(segments) else None
+        _available[seg["index"]] = _fit_window(seg["start"], seg["end"], next_start)
+
+    # A whole-script hash is useful for fitted checkpoints, but it used to
+    # force every unchanged sentence to be synthesised again on each retry.
+    # Share raw speech by exact synthesis identity; refit it for the new slot.
+    raw_cache = work_dir / "raw_speech"
+    raw_keys = {}
+    worker_digest = file_digest(Path(qwen_worker))
+    for seg in todo:
+        ref = clone_refs.get(seg["speaker"])
+        settings = {
+            "engine": args.tts_engine, "mode": args.qwen_mode,
+            "language": qwen_language, "speaker": seg["speaker"],
+            "voice": voice_map.get(seg["speaker"]), "worker": worker_digest,
+            "reference": file_digest(ref) if ref and ref.exists() else None,
+        }
+        key = speech_key(seg["text"], settings)
+        raw_keys[seg["index"]] = key
+        raw = temp_dir / f"seg_{seg['index']:04d}.wav"
+        if not raw.exists():
+            restore_speech(raw_cache, key, raw)
+    needs_synthesis = any(not (temp_dir / f"seg_{seg['index']:04d}.wav").exists()
+                          or (temp_dir / f"seg_{seg['index']:04d}.wav").stat().st_size <= 500
+                          for seg in todo)
 
     device_ids = ([None] if args.tts_engine == "supertonic"
                   else [int(x.strip()) for x in args.tts_devices.split(",")])
@@ -337,8 +436,30 @@ Examples:
     for seg in todo:
         seg_queue.put(seg)
 
-    fit_pool    = ThreadPoolExecutor(max_workers=max(4, n_workers * 2))
+    fit_pool    = ThreadPoolExecutor(max_workers=1)
     fit_futures: List = []
+    fit_report: List[dict] = []
+    fit_report_lock = threading.Lock()
+
+    def _fit_record(seg, fitted=None, error=None):
+        record = {"index": seg["index"], "start": seg["start"],
+                  "end": seg["end"], "text": seg["text"],
+                  "span": _available[seg["index"]]}
+        if error is not None:
+            record.update(needed=_needed_seconds(str(error)),
+                          tempo=_required_tempo(str(error)), error=str(error),
+                          status="failed")
+        else:
+            sidecar = json.loads(fitted.with_suffix(".json").read_text())
+            needed = sidecar["edges"]["retained_seconds"]
+            record.update(needed=needed, tempo=max(1.0, needed / record["span"]),
+                          applied_tempo=sidecar["tempo"], status="native_measured" if alignment_plan is not None else "passed")
+        return record
+
+    by_index = {seg["index"]: seg for seg in segments}
+    for fitted, start, end in final_files:
+        idx = int(fitted.stem.split("_")[1])
+        fit_report.append(_fit_record(by_index[idx], fitted=fitted))
 
     # ── Shared TTS Managers (one model instance per mode) ─────────────────────
     # Instead of each worker loading its own model, we use shared managers.
@@ -349,13 +470,13 @@ Examples:
     clone_broken_global = (args.qwen_mode != "clone")
     
     # Only load clone model if we have clone refs and clone mode is enabled
-    if not clone_broken_global and clone_refs:
+    if needs_synthesis and not clone_broken_global and clone_refs:
         log.info("Loading shared clone TTS model...")
         clone_manager = SharedTTSManager(
             "clone", qwen_python, qwen_worker, device_id=device_ids[0]
         )
         clone_manager.start()
-    elif clone_broken_global:
+    elif needs_synthesis and clone_broken_global:
         # Not in clone mode - load custom model upfront
         log.info("Loading shared custom TTS model...")
         custom_manager = SharedTTSManager(
@@ -366,13 +487,22 @@ Examples:
         # No clone refs but in clone mode - will fallback to custom lazily
         clone_broken_global = True
 
-    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float) -> None:
-        slot = max(0.1, end - start)
-        raw_dur = _audio_duration(raw_out)
-        # Use overflow window only when TTS is too long for the original slot.
-        # Short/fitting clips use the slot so they aren't slowed unnecessarily.
-        target_dur = available_dur if raw_dur > slot * args.max_speed else slot
-        fitted = speed_fit(raw_out, target_dur, max_speed=args.max_speed, min_speed=args.min_speed)
+    def _do_fit(raw_out: Path, available_dur: float, start: float, end: float,
+                seg_index: int = -1) -> None:
+        # The safe fitter measures speech after edge cleanup. Native short
+        # speech stays native even when a small end allowance is available.
+        try:
+            fitted = speed_fit(raw_out, (_audio_duration(raw_out) + .1) if alignment_plan is not None else available_dur, max_speed=args.max_speed,
+                               min_speed=args.min_speed)
+            if args.strict_timing:
+                from batch_dubbing.anchored_timeline import validate_end_timing
+                validate_end_timing(json.loads(fitted.with_suffix(".json").read_text()), start, end)
+        except Exception as exc:
+            with fit_report_lock:
+                fit_report.append(_fit_record(by_index[seg_index], error=exc))
+            raise
+        with fit_report_lock:
+            fit_report.append(_fit_record(by_index[seg_index], fitted=fitted))
         with final_files_lock:
             final_files.append((fitted, start, end))
             _save_checkpoint(checkpoint_path, final_files)
@@ -401,14 +531,17 @@ Examples:
                 spk        = seg["speaker"]
                 text       = seg["text"]
                 start, end = seg["start"], seg["end"]
-                target_dur = max(0.1, _available.get(i, end - start))
+                target_dur = _available[i]
                 log.info(f"   [{i:04d}] text={repr(text)}")
                 raw_out    = temp_dir / f"seg_{i:04d}.wav"
                 ok         = False
+                generated = False
+                used_fallback = False
 
                 if raw_out.exists() and raw_out.stat().st_size > 500:
                     ok = True
                 else:
+                    generated = True
                     # Try clone mode first (if available and not broken)
                     if not clone_broken_local and clone_manager:
                         ref = clone_refs.get(spk)
@@ -421,8 +554,12 @@ Examples:
                         else:
                             log.warning(f"   [{i:04d}] No clone ref for '{spk}'")
 
+                    if not ok and alignment_plan is not None:
+                        raise RuntimeError("Requested clone synthesis failed; no automatic voice fallback")
+
                     # Fallback to custom mode - load model lazily if needed
                     if not ok:
+                        used_fallback = args.qwen_mode == "clone"
                         # Load custom model on first fallback (thread-safe via lock)
                         if custom_manager is None:
                             with fit_lock:  # reuse fit_lock as general lock
@@ -441,7 +578,10 @@ Examples:
                                 log.error(f"   [{i:04d}] Custom TTS also failed — skipping")
 
                 if ok and raw_out.exists():
-                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end)
+                    # Never label a fallback voice as the requested clone.
+                    if generated and not used_fallback:
+                        save_speech(raw_cache, raw_keys[i], raw_out)
+                    fut = fit_pool.submit(_do_fit, raw_out, target_dur, start, end, i)
                     with fit_lock:
                         fit_futures.append(fut)
 
@@ -475,16 +615,31 @@ Examples:
 
     pbar.close()
 
-    # Wait for all speed_fit jobs
+    # Resolve every fit before publishing; a missing phrase is a failed dub.
+    fit_errors = []
     for fut in fit_futures:
         try:
             fut.result()
         except Exception as exc:
-            log.error(f"speed_fit error (segment skipped on resume): {exc}")
+            fit_errors.append(exc)
+            log.error(f"Speech could not fit safely: {exc}")
     fit_pool.shutdown(wait=True)
 
-    if worker_exceptions and not final_files:
-        raise worker_exceptions[0]
+    reported = {row["index"] for row in fit_report}
+    for seg in segments:
+        if seg["index"] not in reported:
+            fit_report.append(_fit_record(seg, error="No audio was generated"))
+    complete = not (fit_errors or worker_exceptions or len(final_files) != len(segments))
+    report_path.write_text(json.dumps({**report_base,
+                                      "status": ("native_measured" if alignment_plan is not None else "passed") if complete else "failed",
+                                      "segments": sorted(fit_report, key=lambda r: r["start"])},
+                                     ensure_ascii=False, indent=1), encoding="utf-8")
+    log.info(f"Fit report → {report_path}")
+
+    if fit_errors or worker_exceptions or len(final_files) != len(segments):
+        log.error("Dubbing incomplete; refusing to publish a track with missing speech. "
+                  "Successful checkpoints are preserved for review and resume.")
+        return 1
 
     # Sort by start time — parallel workers may have appended out of order
     final_files.sort(key=lambda x: x[1])
@@ -493,14 +648,40 @@ Examples:
         log.error("No audio was generated. Check TTS errors above.")
         return 1
 
+    if alignment_plan is not None:
+        import importlib.util
+        import os
+        nemo_dir = Path(__file__).resolve().parent.parent / "nemo"
+        alignment_python = os.environ.get("ALIGNMENT_PYTHON")
+        if not alignment_python:
+            alignment_python = sys.executable if importlib.util.find_spec("qwen_asr") else str(nemo_dir / ".venv/bin/python")
+        takes = []
+        for fitted, start, end in final_files:
+            index = int(fitted.stem.split("_")[1])
+            sidecar = json.loads(fitted.with_suffix(".json").read_text())
+            raw = temp_dir / f"seg_{index:04d}.wav"
+            if not raw.is_file():
+                raise ValueError("Continuous placement requires its complete original recording")
+            takes.append(dict(index=index, file=str(raw.resolve()), text=by_index[index]["text"],
+                              sha256=file_digest(raw), tempo=sidecar["tempo"]))
+        request = dict(video=str(video_path), output=str(output_dir), plan=alignment_plan, placement_mode=args.placement_mode,
+                       takes=takes, bundles=synthesis_bundles, background=str(background) if background else None)
+        request_path = work_dir / "alignment_request.json"
+        request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
+        result = subprocess.run([alignment_python, "-m", "batch_dubbing.aligned_finish", str(request_path)],
+                                cwd=nemo_dir, timeout=max(180, 90*len(takes)))
+        if result.returncode:
+            log.error("Alignment or native placement failed; see alignment_report.json. No partial final dub is accepted.")
+        return result.returncode
+
     # ── 6. Stitch + mix ──────────────────────────────────────────────────────
-    # srt_end already computed above (reused for audio trim + video trim)
+    # Preserve the full source video, including scenes after the final subtitle.
     t_stitch_start = time.perf_counter()
     log.info("🎬 Stitching and mixing…")
     final, actual_positions = stitch_and_mix(
         final_files, video_path, output_dir, temp_dir,
         background=background,   # None when --no-demucs
-        trim_to=srt_end,
+        trim_to=None,
     )
 
     # ── 7. Write dubbed SRT with actual audio timestamps ─────────────────

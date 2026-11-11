@@ -1,24 +1,29 @@
 # ASR Dubber — End-to-End Local Dubbing Stack
 
-## Default dubbing engine
+## Default dubbing workflow
 
-Dubbing now defaults to **Supertonic 3 on CPU**, using preset **M1**, the voice
-used in the German comparison. Both `run_pipeline.py` and `qwen3-tts/dub.py`
-select it automatically. No voice-cloning reference extraction is needed.
-Target language and background-music preservation remain explicit pipeline settings.
+`run_pipeline.py` defaults to **Ultra ASR → whole-passage Tower translation →
+Qwen Base voice cloning with continuous synchronization**. It freezes paired
+subtitle text before synthesis, aligns source speech on CPU, generates bounded
+continuous takes, then measures synchronization and aligns the adjusted speech
+again to produce matching per-language and combined subtitles. The full picture
+and absolute context starts remain intact; failed checks require review.
 
 ```bash
 uv run python run_pipeline.py --target-lang de
-# Optional: previous Qwen 1.7B voice cloning backend
-uv run python run_pipeline.py --target-lang de --tts-engine qwen --qwen-mode clone
+# Optional background separation/preservation (default replaces source audio):
+uv run python run_pipeline.py --target-lang de --preserve-background
+# Optional Supertonic CPU voice:
+uv run python run_pipeline.py --target-lang de --tts-engine supertonic --supertonic-voice M1
 ```
 
-Use `--supertonic-voice M1` (or M2–M5 / F1–F5) to choose a preset.
-Run `uv sync --project qwen3-tts` after updating to install the pinned CPU dependency.
-Model assets download on first synthesis. Cached segments/checkpoints are separated
-by backend, input and synthesis settings; timing JSON records the selected backend.
-The old `dubber_modal.py` wrapper references a retired `fish_qwen_copy.py` entrypoint;
-use the pipeline above. This default change does not deploy or launch Modal jobs.
+The accepted 29-second reproduction, exact recipe, model pins, source-context
+provenance, and replay command are in
+[nemo/batch_dubbing/SYNCED_WORKFLOW.md](nemo/batch_dubbing/SYNCED_WORKFLOW.md).
+The user confirmed the actual pipeline result matches on 2026-11-06.
+Legacy-dubbing and standalone `qwen3-tts/dub.py` retain their Supertonic defaults.
+Model assets download on first synthesis; caches are separated by backend,
+input and synthesis settings. This change launches no Modal jobs.
 
 
 ## What This Project Solves
@@ -125,7 +130,7 @@ Everything can be fired via `run_pipeline.py`, which orchestrates the three stag
 | --- | --- | --- |
 | `run_pipeline.py` | Single entry point | Auto-detects source language, spins up Ollama, supports `--skip-*` flags, enforces logging banners so you can show progress shots. Per-video workdir isolation so checkpoints never bleed between videos; SRT lookup checks both `nemo/` and `nemo/end_product/` for seamless resume after archiving; `--input-dir` / `--output-dir` for custom folder layouts. |
 | `nemo/` | Diarization + transcription + gap filling | **Refactored into modular components**: `nemo_diarize.py` (main orchestration), `nemo_audio.py` (audio processing), `nemo_model.py` (model loading & transcription), `srt_fill_gaps.py` (automatic gap filling), plus helper modules. Canary/Parakeet auto-selection, VRAM-adaptive chunking, windowed diarization (90s windows), 3-pass speaker merging, automatic gap detection with Whisper transcription, TitaNet speaker embedding matching, and checkpoint-based resume capability. |
-| `translate-gemma/` | Translation (Gemma via Ollama) | **Refactored into modular components**: `translate_diarize.py` (main translation logic), `translate.py` (standalone SRT translation), `clean_subs.py` (subtitle cleaning). Chunked SRT translation with strict `[idx]` preservation, Docker-friendly Ollama client, low-temperature prompts for subtitle-safe formatting. |
+| `translate-gemma/` | Translation (Tower / Gemma via Ollama) | **Refactored into modular components**: `translate_diarize.py` (main translation logic), `translate.py` (standalone SRT translation), `clean_subs.py` (subtitle cleaning). Default model is `tower-plus-2b:latest`; `translategemma:4b` remains selectable. Sentences are translated whole and then split back onto the cue boundaries, with strict `[idx]` preservation and a Docker-friendly Ollama client. |
 | `qwen3-tts/` | Dubbing | **Refactored into modular components**: `dub.py` (main orchestration), `dub_audio.py` (audio processing), `dub_srt.py` (SRT parsing & voice assignment), `qwen_tts_worker.py` (TTS worker). Demucs-based vocal separation, clone-vs-custom fallback ladder, per-segment checkpoints, silence synthesis to keep alignment tight, final mix either with preserved background music or direct replacement. Per-video workdir isolation keeps checkpoints segregated. |
 | `whisper/` | Language detection | `detect_language.py` (30s Whisper probe when no diarized SRT exists yet; called automatically from `run_pipeline.py`). |
 
@@ -168,10 +173,50 @@ The main orchestrator has been streamlined while maintaining full compatibility 
 
 
 
+### Current subtitle pipeline (default since 2026-11)
+
+EN/DE/FR subtitles are produced by `nemo/batch_subtitles.py --backend local`,
+which runs `nemo/local_sentence_pipeline.py`:
+
+1. **`parakeet-ultra`** (`moondream/parakeet-ultra`) transcribes once per video,
+   in the source language, with word timestamps.
+2. Words are packed into cues (max 10 words / 5 s / 80 chars).
+3. Cues are grouped into complete sentences.
+4. Each **whole sentence** is translated by `tower-plus-2b:latest` through the
+   local Ollama container (`nemo/local_mt.py`). Fragments are never translated.
+5. The sentence translation is deterministically split back onto the cue
+   boundaries, so all languages share identical timings.
+6. `nemo/subtitle_combine.py` **always** writes the combined deliverables:
+   `<video>.multi.srt` and `<video>.multi.ass` — one cue, one line per language
+   (EN/DE/FR), `DejaVu Sans 28`, 1280x720, UTF-8 with BOM.
+
+```bash
+cd nemo
+.venv-local-asr/bin/python -u batch_subtitles.py --backend local --input-dir new_ones
+# models are selectable: --asr-model parakeet-ultra|parakeet-v3|canary|qwen3-asr
+#                      --translator tower|gemma|tower-7b|canary (legacy)
+```
+
+The model only ever sees the source-language text. `canary` and `gemma` remain
+selectable but are not defaults. Details and known limits:
+`nemo/BATCH_SUBTITLES.md`. The `nemo/new_guys/crispr/ultra_trial/` container is a
+**temporary** scaffold for this work.
+
+Dubbing consumes these subtitles: `run_pipeline.py` defaults to
+`--pipeline subtitle-dubbing`, which produces the target subtitles with Ultra +
+Tower and then applies the confirmed continuous Qwen synchronization workflow. The old NeMo +
+Canary/Gemma flow is `--pipeline legacy-dubbing`.
+
+```bash
+uv run python run_pipeline.py --target-lang fr                  # subtitle-dubbing (default)
+uv run python run_pipeline.py --target-lang fr --pipeline legacy-dubbing
+```
+
 ### Supported ASR Models & Auto-Selection
 
 The pipeline automatically selects the best ASR model based on the source language:
-* **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for all languages in local execution. Extremely fast with word-level timestamps.
+* **Parakeet Ultra** (`moondream/parakeet-ultra`): the default for subtitle generation (see above). Runs in-process in `.venv-local-asr` (torch 2.8.0+cu128 + moondream); the `ultra-asr:local` Docker image is only a fallback.
+* **Parakeet v3** (`nvidia/parakeet-tdt-0.6b-v3`): The default model for all languages in local execution of `run_pipeline.py`. Extremely fast with word-level timestamps.
 * **Parakeet v2** (`nvidia/parakeet-tdt-0.6b-v2`): English-only alternative to v3. Available if preferred via `--nemo-model parakeet-v2`.
 * **Qwen3-ASR 1.7B** (`Qwen/Qwen3-ASR-1.7B`): The default model for non-EN languages in Docker/remote execution (overridden via `NEMO_MODEL_MULTI=qwen3-asr`). Supports 30+ languages with higher accuracy than Parakeet for non-English content.
 * **Canary 1B** (`nvidia/canary-1b-v2`): Optional fallback that supports direct AST translation (EN/DE/FR/ES). One of the best quality models for non EN languages. According to https://huggingface.co/spaces/hf-audio/open_asr_leaderboard
@@ -291,7 +336,7 @@ To handle the limitations of smaller local LLMs (like `translategemma:4b`), the 
 
 #### Standalone `translate.py`
 
-When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the translation model is already pulled (default `translategemma:4b`, override with `TRANSLATE_MODEL` env var), otherwise the first run will fail before translating.
+When you just need to turn an existing SRT into another language or you have srt file already and it has no Speaker tags (no NeMo input required), run `uv run python translate-gemma/translate.py -i input.srt --src fr --tgt de`. It reuses the same micro-chunk prompt logic as the diarized translator but lets you point at any cleaned subtitle file. However, the script auto-starts Ollama if needed, so make sure the `ollama` binary/Docker image is installed and the translation model is already pulled (default `tower-plus-2b:latest`; override with `--model` or `TRANSLATE_MODEL`, e.g. `translategemma:4b`), otherwise the first run will fail before translating.
 
 
 

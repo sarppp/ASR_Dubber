@@ -9,6 +9,7 @@ instead of the local nemo.py file.
 import gc
 import importlib
 import logging
+import os
 import shutil
 import sys
 import time
@@ -202,9 +203,24 @@ def _disable_cuda_graphs_in_decoder(model) -> None:
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
+def _nemo_cache_base() -> Path:
+    """NeMo's HF-hub cache root, resolved for the current user.
+
+    Hardcoding /root broke every non-root run: torch then failed to create its
+    cache and NeMo fell back to a slow CPU load.
+    """
+    override = os.getenv("NEMO_CACHE_DIR")
+    if override:
+        return Path(override).expanduser()
+    torch_home = os.getenv("TORCH_HOME")
+    if torch_home:
+        return Path(torch_home).expanduser() / "NeMo"
+    return Path.home() / ".cache" / "torch" / "NeMo"
+
+
 def _clear_nemo_cache(model_name: str) -> bool:
     """Delete the NeMo HF-hub cache for model_name so it re-downloads cleanly."""
-    base = Path("/root/.cache/torch/NeMo")
+    base = _nemo_cache_base()
     if not base.exists():
         return False
     # model_name is e.g. "nvidia/canary-qwen-2.5b" → org="nvidia", slug="canary-qwen-2.5b"
@@ -251,6 +267,9 @@ def _from_pretrained_with_cache_retry(nemo_asr, model_name: str, device: str):
 
 def _load_model(model_name: str, precision: str, device: str):
     from qwen3_asr import _is_qwen3_asr, _load_qwen3_asr
+    from parakeet_ultra import _is_parakeet_ultra, _load_parakeet_ultra
+    if _is_parakeet_ultra(model_name):
+        return _load_parakeet_ultra(model_name, device, precision)
     if _is_qwen3_asr(model_name):
         return _load_qwen3_asr(model_name, device, precision)
 
@@ -467,8 +486,10 @@ def _transcribe_canary(model, audio_path: str, offset: float, src_lang: str, tgt
 def _transcribe_chunked(model, audio_path: str, model_name: str,
                          src_lang: str, tgt_lang: str, chunk_sec: int):
     from qwen3_asr import _is_qwen3_asr, _transcribe_qwen3_asr
-    is_canary  = "canary" in model_name.lower()
+    from parakeet_ultra import _is_parakeet_ultra, _transcribe_parakeet_ultra
+    is_canary  = "canary" in model_name.lower() and not _is_parakeet_ultra(model_name)
     is_qwen3   = _is_qwen3_asr(model_name)
+    is_ultra   = _is_parakeet_ultra(model_name)
     work_dir = Path(audio_path).parent
     dur = _audio_duration(audio_path)
 
@@ -487,7 +508,9 @@ def _transcribe_chunked(model, audio_path: str, model_name: str,
             for ci, entry in enumerate(manifest):
                 path, offset = entry["path"], entry["offset"]
                 t1 = time.perf_counter()
-                if is_qwen3:
+                if is_ultra:
+                    words, segs = _transcribe_parakeet_ultra(model, path, offset)
+                elif is_qwen3:
                     words, segs = _transcribe_qwen3_asr(model, path, offset, src_lang)
                 elif is_canary:
                     words, segs = _transcribe_canary(model, path, offset, src_lang, tgt_lang)
